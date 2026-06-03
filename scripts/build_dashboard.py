@@ -985,7 +985,7 @@ def apply_gate(html, password):
         '})();\n'
         '</script>\n'
     )
-    return html.replace('<body>\n', '<body>\n' + check_js, 1)
+    return html.replace('<body>', '<body>' + check_js, 1)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -1005,7 +1005,7 @@ def main():
     with open("output/index.html", "w") as f:
         f.write(html)
     size = os.path.getsize("output/index.html") / 1024
-    print("Done — output/index.html written (" + f'{size:.1f}' + " KB)")
+    print("Done — output/index.html written (" + str(round(size,1)) + " KB)")
 
 if __name__ == "__main__":
     main()
