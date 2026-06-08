@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jetty Strategic Dashboard 2026 — Week 21</title>
+<style>
+:root{--surface:#f7f5f0;--ink:#1a1a18;--ink-mid:#3a3a36;--ink-muted:#888780;--rule:#dedad2;--mono:'DM Mono',monospace;--sans:'DM Sans',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-size:13px;line-height:1.5}
+.page{max-width:1200px;margin:0 auto;padding:40px 32px 80px}
+.masthead{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:20px;border-bottom:1.5px solid var(--ink);margin-bottom:36px}
+.masthead-left{display:flex;align-items:baseline;gap:12px}
+.brand{font-size:28px;font-weight:700;letter-spacing:-.02em}
+.dash-title{font-size:28px;font-weight:300;color:var(--ink-muted)}
+.week-badge{background:var(--ink);color:#fff;font-family:var(--mono);font-size:13px;padding:4px 10px;border-radius:3px;font-weight:500}
+.meta{font-family:var(--mono);font-size:12px;color:var(--ink-muted);letter-spacing:.04em}
+.status-pill{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;padding:5px 12px;border:1.5px solid #b8ddd0;border-radius:3px;color:#0d6e4f;background:#eaf4ef}
+.card{background:#fff;border:1px solid var(--rule);border-radius:4px;padding:16px 18px}
+.card-title{font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--rule)}
+.kpi-row{display:grid;gap:12px}.kpi-row.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi-row.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.kpi{background:#fff;border:1px solid var(--rule);border-radius:4px;padding:14px 16px}
+.kpi-label{font-family:var(--mono);font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.kpi-value{font-size:28px;font-weight:700;letter-spacing:-.02em;margin-bottom:4px}
+.kpi-sub{font-family:var(--mono);font-size:11px;color:var(--ink-muted)}
+.pos{color:#0d6e4f}.neg{color:#a82f2f}.neu{color:var(--ink-muted)}
+.ch-row{display:flex;gap:6px;padding:6px 0;border-bottom:1px solid var(--rule);font-size:12px}
+.ch-name{flex:1;color:var(--ink)}
+.chart-wrap{position:relative;width:100%}
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;700&display=swap');
+</style>
+</head>
+<body><script>
+(function(){
+  var H="9064f1b01336be6f306193ea327f4608c60ba98ccc211ddcf358c025ab2952f7";
+  if(sessionStorage.getItem("jd_auth")!==H){
+    document.open();
+    document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jetty Strategic Dashboard 2026</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#f7f5f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.gate{background:#fff;border:1px solid #dedad2;border-radius:6px;padding:44px 48px;width:380px;text-align:center;box-shadow:0 2px 16px rgba(0,0,0,.07)}
+.brand{font-size:28px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px}
+.sub{font-size:11px;color:#888780;margin-bottom:32px;font-family:'DM Mono',monospace;letter-spacing:.07em;text-transform:uppercase}
+input{width:100%;padding:12px 14px;border:1.5px solid #dedad2;border-radius:3px;font-size:15px;font-family:'DM Mono',monospace;letter-spacing:.12em;margin-bottom:12px;outline:none;text-align:center;background:#f7f5f0;color:#1a1a18}
+input:focus{border-color:#1a1a18;background:#fff}
+button{width:100%;padding:12px;background:#1a1a18;color:#fff;border:none;border-radius:3px;font-size:13px;font-weight:500;cursor:pointer}
+button:hover{background:#2d2d2a}
+.err{color:#a82f2f;font-size:11px;font-family:'DM Mono',monospace;margin-top:10px;display:none}
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&display=swap');
+</style>
+</head>
+<body>
+<div class="gate">
+  <div class="brand">Jetty</div>
+  <div class="sub">Strategic Dashboard &middot; 2026</div>
+  <input type="password" id="pw" placeholder="Password" onkeydown="if(event.key==='Enter')check()">
+  <button onclick="check()">View Dashboard</button>
+  <div class="err" id="err">Incorrect password</div>
+</div>
+<script>
+const H="9064f1b01336be6f306193ea327f4608c60ba98ccc211ddcf358c025ab2952f7";
+async function sha256(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');}
+async function check(){const h=await sha256(document.getElementById('pw').value);if(h===H){sessionStorage.setItem('jd_auth',h);location.reload();}else{document.getElementById('err').style.display='block';document.getElementById('pw').value='';document.getElementById('pw').focus();}}
+document.getElementById('pw').focus();
+</script>
+</body>
+</html>`);
+    document.close();
+  }
+})();
+</script>
+
+<div class="page">
+
+  <div class="masthead">
+    <div class="masthead-left">
+      <span class="brand">Jetty</span>
+      <span class="dash-title">/ Strategic Dashboard</span>
+      <span class="week-badge">Week 21 <span style="color:rgba(255,255,255,.5);font-weight:400">of 52</span></span>
+      <span class="meta">2026 · YTD Cumulative</span>
+    </div>
+    <span class="status-pill" >YTD ahead of plan</span>
+  </div>
+
+  <div style="font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:#dedad2;border-left:5px solid var(--ink);padding:11px 32px;margin-bottom:24px;margin-left:-32px;margin-right:-32px;display:block">P&amp;L Summary</div>
+  <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;margin-bottom:28px">
+    <div>
+  <div class="kpi-row cols-3" style="margin-bottom:12px">
+    <div class="kpi"><div class="kpi-label">Total revenue</div><div class="kpi-value">$5.11M</div><div class="kpi-sub">−$91.1K vs plan</div></div>
+    <div class="kpi"><div class="kpi-label">COGS + labor + shipping</div><div class="kpi-value">$3.94M</div><div class="kpi-sub">−$462.1K favorable vs plan</div></div>
+    <div class="kpi"><div class="kpi-label">Total OpEx</div><div class="kpi-value">$1.54M</div><div class="kpi-sub">+$114.8K vs plan</div></div>
+  </div>
+  <div class="kpi-row cols-2">
+    <div class="kpi"><div class="kpi-label">Full-year revenue plan</div><div class="kpi-value">$14.41M</div><div class="kpi-sub">52-week annual budget</div></div>
+    <div class="kpi"><div class="kpi-label">Full-year revenue projection</div><div class="kpi-value">$14.32M</div><div class="kpi-sub">below annual plan</div><div class="kpi-sub neg" style="margin-top:2px">−$91.1K vs annual plan</div></div>
+  </div>
+    </div>
+    <div style="padding:0 0 0 4px">
+      <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:14px">Summary &amp; Outlook</div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#eaf4ef;border-left:3px solid #b8ddd0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#0d6e4f;margin-bottom:4px">Win</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">COGS + Labor + Shipping is $462.1K favorable vs plan through Week 21. Net income is $226.0K ahead of plan.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#fce8e8;border-left:3px solid #f0c0c0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a82f2f;margin-bottom:4px">Watch</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Revenue is $91.1K behind plan YTD. OpEx is $114.8K over plan, driven by advertising ($105.1K over).</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#edf3fb;border-left:3px solid #b8d0ee;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#2e6da4;margin-bottom:4px">Outlook</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Full-year revenue projects at $14.32M vs $14.41M plan. COGS projects $462.1K favorable. Net income is $226.0K ahead of plan.</div>
+      </div>
+    </div>
+  </div>
+  <div style="font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:#dedad2;border-left:5px solid var(--ink);padding:11px 32px;margin-bottom:24px;margin-left:-32px;margin-right:-32px;display:block">Revenue Channels — YTD &amp; Full Year</div>
+  <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;margin-bottom:28px">
+    <div>
+    <div class="card">
+      <div class="card-title">Revenue by channel</div>
+    <div style="display:flex;gap:6px;padding-bottom:6px;font-size:10px;color:var(--ink-muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--rule)">
+      <span style="flex:1">Category</span>
+      <span style="width:72px;text-align:right">YTD Actual</span>
+      <span style="width:68px;text-align:right">YTD Plan</span>
+      <span style="width:62px;text-align:right">YTD Var</span>
+      <span style="width:78px;text-align:right">Ann. Plan</span>
+      <span style="width:78px;text-align:right">Ann. Proj.</span>
+      <span style="width:62px;text-align:right">Ann. Var</span>
+    </div>
+    <div class="ch-row"><span class="ch-name">Jettylife.com (DTC)</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.03M</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$609.1K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$422.3K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$2.34M</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$2.77M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$422.3K</span></div>
+    <div class="ch-row"><span class="ch-name">Wholesale</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$2.55M</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$2.72M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$174.2K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$6.25M</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$6.07M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$174.2K</span></div>
+    <div class="ch-row"><span class="ch-name">Screen printing (INK)</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$961.9K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$1.15M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$189.3K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$3.17M</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$2.98M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$189.3K</span></div>
+    <div class="ch-row"><span class="ch-name">Flagship Store</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$256.8K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$345.6K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$88.8K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$1.26M</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.17M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$88.8K</span></div>
+    <div class="ch-row"><span class="ch-name">Long Branch</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$154.3K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$235.3K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$81.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$776.6K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$695.5K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$81.1K</span></div>
+    <div class="ch-row"><span class="ch-name">Mobile Store & Tent</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$97.0K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$105.8K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$8.8K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$518.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$509.3K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$8.8K</span></div>
+    <div class="ch-row"><span class="ch-name">JRF Screen Printing</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$22.7K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$25.4K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.6K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$60.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$57.4K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.6K</span></div>
+    <div class="ch-row" style="border-top:1.5px solid var(--ink);margin-top:4px;padding-top:8px;font-weight:500"><span class="ch-name">Total Revenue</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$5.11M</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$5.20M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$91.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$14.41M</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$14.32M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$91.1K</span></div>
+    </div>
+    </div>
+    <div style="padding:0 0 0 4px">
+      <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:14px">Summary &amp; Outlook</div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#eaf4ef;border-left:3px solid #b8ddd0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#0d6e4f;margin-bottom:4px">Win</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Jettylife.com is $422.3K above YTD plan through Week 21.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#fce8e8;border-left:3px solid #f0c0c0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a82f2f;margin-bottom:4px">Watch</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Wholesale is $174.2K behind YTD plan. H1 open orders of $450.2K with 5 wks remaining project H1 at $3.00M vs the $3.10M H1 plan. Screen Printing is $22.7K YTD — Playa Bowls franchisee timing continues to weigh.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#edf3fb;border-left:3px solid #b8d0ee;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#2e6da4;margin-bottom:4px">Trend</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">H2 open orders of $2.12M represent 67.4% of H2 plan already on the books. AO sell-in during S27 road shows and collab invoices (KONA, Sun Cruiser, Stone Pony, Ron Jon's) are the key upside levers.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#edf3fb;border-left:3px solid #b8d0ee;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#2e6da4;margin-bottom:4px">Outlook</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Full-year revenue projects at $14.32M. Collab invoices in the WIP pipeline represent meaningful upside not yet in this figure.</div>
+      </div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:28px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--rule)">
+      <div><div class="card-title" style="margin-bottom:2px">Open orders — on order, not yet shipped or invoiced</div>
+      <div style="font-size:11px;color:var(--ink-muted);font-family:var(--mono)">As of Week 21 · Retail orders including discounts applied</div></div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--ink-muted)">Total on order: <span style="color:var(--ink);font-weight:600">$2.57M</span></div>
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px">
+      <div>
+        <div style="display:flex;gap:6px;padding-bottom:6px;font-size:10px;color:var(--ink-muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--rule)">
+          <span style="flex:1">Period</span><span style="width:72px;text-align:right">Wks Left</span><span style="width:105px;text-align:right">On Order</span><span style="width:120px;text-align:right">vs Remaining Plan</span>
+        </div>
+        <div style="display:flex;gap:6px;padding:7px 0;border-bottom:1px solid var(--rule)">
+          <span style="flex:1;font-size:12px;color:var(--ink)">H1 (ends Jul 4)</span>
+          <span style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted)">5 wks</span>
+          <span style="width:105px;text-align:right;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink)">$450.2K</span>
+          <span style="width:120px;text-align:right;font-family:var(--mono);font-size:11px;color:#0d6e4f;font-weight:600">+$71.2K vs plan</span>
+        </div>
+        <div style="display:flex;gap:6px;padding:7px 0;border-bottom:1px solid var(--rule)">
+          <span style="flex:1;font-size:12px;color:var(--ink)">H2 (Jul 5 – Dec 31)</span>
+          <span style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted)">26 wks</span>
+          <span style="width:105px;text-align:right;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink)">$2.12M</span>
+          <span style="width:120px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted)">67.4% of H2 plan</span>
+        </div>
+        <div style="display:flex;gap:6px;padding:8px 0 2px;border-top:1.5px solid var(--ink);margin-top:2px">
+          <span style="flex:1;font-size:12px;font-weight:600;color:var(--ink)">Total on order</span>
+          <span style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted)">35 wks</span>
+          <span style="width:105px;text-align:right;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink)">$2.57M</span>
+          <span style="width:120px"></span>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:10px;font-family:var(--mono);font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-muted);margin-bottom:10px">H1 wholesale gap analysis</div>
+        <table style="width:100%;font-family:var(--mono);font-size:11px;border-collapse:collapse;margin-bottom:14px">
+          <tr style="border-bottom:1px solid var(--rule)"><td style="padding:5px 0;color:var(--ink-muted)">H1 total plan (wks 1–26)</td><td style="text-align:right">$3.10M</td></tr>
+          <tr style="border-bottom:1px solid var(--rule)"><td style="padding:5px 0;color:var(--ink-muted)">YTD actual (wks 1–21)</td><td style="text-align:right;color:#a82f2f;font-weight:600">$2.55M</td></tr>
+          <tr style="border-bottom:1px solid var(--rule)"><td style="padding:5px 0;color:var(--ink-muted)">H1 open orders (wks 22–26)</td><td style="text-align:right">$450.2K</td></tr>
+          <tr style="border-bottom:1px solid var(--rule)"><td style="padding:5px 0;color:var(--ink-muted)">H1 projected total</td><td style="text-align:right;font-weight:600">$3.00M</td></tr>
+          <tr style="border-top:1.5px solid #BA7517"><td style="padding:7px 0 2px;font-weight:600">H1 gap to plan</td><td style="text-align:right;font-weight:700;color:#a82f2f;font-size:12px">−$103.1K</td></tr>
+        </table>
+        <div style="padding:10px 12px;background:#fef9ec;border-left:3px solid #BA7517;border-radius:0 4px 4px 0;font-size:11px;line-height:1.6">
+          <span style="font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#BA7517;display:block;margin-bottom:4px">Action required</span>
+          Wholesale reps must actively sell AO during S27 road shows starting June 1. KONA, Sun Cruiser, Stone Pony, and Ron Jon's collab invoices are in the WIP pipeline and represent meaningful upside.
+        </div>
+      </div>
+    </div>
+  </div>
+  <div style="font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:#dedad2;border-left:5px solid var(--ink);padding:11px 32px;margin-bottom:24px;margin-left:-32px;margin-right:-32px;display:block">COGS + Labor + Shipping — YTD &amp; Full Year</div>
+  <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;margin-bottom:28px">
+    <div>
+    <div class="card">
+      <div class="card-title">Cost detail</div>
+    <div style="display:flex;gap:6px;padding-bottom:6px;font-size:10px;color:var(--ink-muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--rule)">
+      <span style="flex:1">Category</span>
+      <span style="width:72px;text-align:right">YTD Actual</span>
+      <span style="width:68px;text-align:right">YTD Plan</span>
+      <span style="width:62px;text-align:right">YTD Var</span>
+      <span style="width:78px;text-align:right">Ann. Plan</span>
+      <span style="width:78px;text-align:right">Ann. Proj.</span>
+      <span style="width:62px;text-align:right">Ann. Var</span>
+    </div>
+    <div class="ch-row"><span class="ch-name">Contract design — brand</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$4.3K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$2.4K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$1.9K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$15.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$16.9K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$1.9K</span></div>
+    <div class="ch-row"><span class="ch-name">Contract design — INK</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$2.7K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$4.9K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.2K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$10.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$7.8K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.2K</span></div>
+    <div class="ch-row"><span class="ch-name">Shipping — brand</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$282.4K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$153.7K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$128.8K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$600.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$728.8K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$128.8K</span></div>
+    <div class="ch-row"><span class="ch-name">Shipping — INK</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$12.1K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$33.8K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$21.7K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$65.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$43.3K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$21.7K</span></div>
+    <div class="ch-row" style="border-top:1.5px solid var(--ink);margin-top:4px;padding-top:8px;font-weight:500"><span class="ch-name">Total COGS + Labor + Shipping</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$3.94M</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$4.40M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$462.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$10.22M</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$9.76M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$462.1K</span></div>
+    </div>
+    </div>
+    <div style="padding:0 0 0 4px">
+      <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:14px">Summary &amp; Outlook</div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#eaf4ef;border-left:3px solid #b8ddd0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#0d6e4f;margin-bottom:4px">Win</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Total COGS + Labor + Shipping is $462.1K favorable vs plan through Week 21. Full-year projection of $9.76M is $462.1K below the $10.22M plan.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#fce8e8;border-left:3px solid #f0c0c0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a82f2f;margin-bottom:4px">Watch</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Shipping — Brand is over plan: $282.4K actual vs $153.7K planned YTD — a $128.8K overage driven by DTC eComm volume. This is the only COGS line running above budget.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#edf3fb;border-left:3px solid #b8d0ee;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#2e6da4;margin-bottom:4px">Outlook</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Net COGS remains $462.1K below plan — the primary driver of net income being $226.0K ahead of plan.</div>
+      </div>
+    </div>
+  </div>
+  <div style="font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:#dedad2;border-left:5px solid var(--ink);padding:11px 32px;margin-bottom:24px;margin-left:-32px;margin-right:-32px;display:block">Operating Expenses — YTD &amp; Full Year</div>
+  <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;margin-bottom:28px">
+    <div>
+    <div class="card">
+      <div class="card-title">OpEx by category</div>
+    <div style="display:flex;gap:6px;padding-bottom:6px;font-size:10px;color:var(--ink-muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--rule)">
+      <span style="flex:1">Category</span>
+      <span style="width:72px;text-align:right">YTD Actual</span>
+      <span style="width:68px;text-align:right">YTD Plan</span>
+      <span style="width:62px;text-align:right">YTD Var</span>
+      <span style="width:78px;text-align:right">Ann. Plan</span>
+      <span style="width:78px;text-align:right">Ann. Proj.</span>
+      <span style="width:62px;text-align:right">Ann. Var</span>
+    </div>
+    <div class="ch-row"><span class="ch-name">Advertising</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$248.7K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$143.6K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$105.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$525.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$630.1K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$105.1K</span></div>
+    <div class="ch-row"><span class="ch-name">Advertising — INK</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$9.0K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$9.7K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$670</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$14.4K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$13.7K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$670</span></div>
+    <div class="ch-row"><span class="ch-name">Ambassador & influencer</span><span style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$38.8K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$38.8K</span><span class="neu" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">—</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$90.5K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$90.5K</span><span class="neu" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">—</span></div>
+    <div class="ch-row"><span class="ch-name">Box truck</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.2K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$950</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$244</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$2.5K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$2.7K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$244</span></div>
+    <div class="ch-row"><span class="ch-name">Dues & subscriptions</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.2K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$4.0K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.8K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$10.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$7.2K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.8K</span></div>
+    <div class="ch-row"><span class="ch-name">Equipment & repairs</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$20.5K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$6.6K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$13.9K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$24.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$37.9K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$13.9K</span></div>
+    <div class="ch-row"><span class="ch-name">Ford Transit — INK van</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$972</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$606</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$366</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$1.5K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.9K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$366</span></div>
+    <div class="ch-row"><span class="ch-name">INK merch store profit share</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$13.9K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$13.9K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$13.9K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$13.9K</span></div>
+    <div class="ch-row"><span class="ch-name">MKG — bags</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$5.3K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$9.5K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$4.2K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$19.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$14.8K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$4.2K</span></div>
+    <div class="ch-row"><span class="ch-name">MKG — banners, POP & misc.</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$202</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$34.5K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$34.3K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$66.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$31.7K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$34.3K</span></div>
+    <div class="ch-row"><span class="ch-name">MKG — catalogs</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$5.8K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$7.5K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$1.7K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$15.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$13.3K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$1.7K</span></div>
+    <div class="ch-row"><span class="ch-name">MKG — direct mail</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$84</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$633</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$549</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$1.5K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$951</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$549</span></div>
+    <div class="ch-row"><span class="ch-name">MKG — hang tags & size tags</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$3.7K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$4.2K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$485</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$12.5K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$12.0K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$485</span></div>
+    <div class="ch-row"><span class="ch-name">MKG — photography</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$8.6K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$21.3K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$12.7K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$30.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$17.3K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$12.7K</span></div>
+    <div class="ch-row"><span class="ch-name">MKG — stickers</span><span style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$6.1K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$6.2K</span><span class="neu" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$18</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$10.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$10.0K</span><span class="neu" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$18</span></div>
+    <div class="ch-row"><span class="ch-name">MKG — tent sale expenses</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$17.5K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$19.6K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.2K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$45.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$42.8K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.2K</span></div>
+    <div class="ch-row"><span class="ch-name">MKG — trade show</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$44.9K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$44.6K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$240</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$120.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$120.2K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$240</span></div>
+    <div class="ch-row"><span class="ch-name">MKG — video</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$219</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$219</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$219</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$219</span></div>
+    <div class="ch-row"><span class="ch-name">Miscellaneous warehouse exp.</span><span style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$0</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span class="neu" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">—</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$0</span><span class="neu" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">—</span></div>
+    <div class="ch-row"><span class="ch-name">Office supplies</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$3.1K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$5.6K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.5K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$13.8K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$11.3K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.5K</span></div>
+    <div class="ch-row"><span class="ch-name">Payroll service</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$4.4K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$4.2K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$210</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$10.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$10.2K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$210</span></div>
+    <div class="ch-row"><span class="ch-name">Permits — 176 E Bay</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$369</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$504</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$135</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$1.2K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.1K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$135</span></div>
+    <div class="ch-row"><span class="ch-name">Permits — 700 S Main</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$30.5K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$13.2K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$17.3K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$18.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$35.3K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$17.3K</span></div>
+    <div class="ch-row"><span class="ch-name">Permits — Flagship</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$2.3K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$2.4K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$143</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$6.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$5.9K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$143</span></div>
+    <div class="ch-row"><span class="ch-name">Permits — Jetty INK</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$313</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$2.4K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$6.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$3.9K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.1K</span></div>
+    <div class="ch-row"><span class="ch-name">Permits — Long Branch</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$7.0K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$2.4K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$4.6K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$6.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$10.6K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$4.6K</span></div>
+    <div class="ch-row"><span class="ch-name">Screen printing supplies</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$11.6K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$21.0K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$9.4K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$52.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$42.6K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$9.4K</span></div>
+    <div class="ch-row"><span class="ch-name">Selling exp. — rep supplies</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$2.2K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$4.8K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.6K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$12.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$9.4K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.6K</span></div>
+    <div class="ch-row"><span class="ch-name">Selling exp. — rep travel</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$20.6K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$14.5K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$6.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$36.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$42.0K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$6.0K</span></div>
+    <div class="ch-row"><span class="ch-name">Shipping supplies</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$17.5K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$20.2K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.7K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$50.0K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$47.3K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$2.7K</span></div>
+    <div class="ch-row"><span class="ch-name">Software & inventory control</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$50.5K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$51.6K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$1.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$127.7K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$126.6K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$1.1K</span></div>
+    <div class="ch-row"><span class="ch-name">Team building</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$2.3K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$4.2K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$1.9K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$10.5K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$8.6K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$1.9K</span></div>
+    <div class="ch-row"><span class="ch-name">Website expenses</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$43.0K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$37.7K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$5.3K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$93.3K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$98.6K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$5.3K</span></div>
+    <div class="ch-row" style="border-top:1.5px solid var(--ink);margin-top:4px;padding-top:8px;font-weight:500"><span class="ch-name">Total OpEx</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.54M</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$1.42M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$114.8K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$3.75M</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$3.86M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$114.8K</span></div>
+    </div>
+    </div>
+    <div style="padding:0 0 0 4px">
+      <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:14px">Summary &amp; Outlook</div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#fce8e8;border-left:3px solid #f0c0c0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a82f2f;margin-bottom:4px">Watch</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Advertising is $248.7K actual vs $143.6K plan YTD — a $105.1K overage. MER confirms this spend is driving Jettylife.com's DTC outperformance.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#fce8e8;border-left:3px solid #f0c0c0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a82f2f;margin-bottom:4px">Watch</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Permits at 700 S Main are over plan. Selling Expenses — Rep Travel is elevated from S27 road show activity.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#eaf4ef;border-left:3px solid #b8ddd0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#0d6e4f;margin-bottom:4px">Win</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Several MKG lines are running under plan — Banners/POP, Photography, and Trade Show are all favorable.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#edf3fb;border-left:3px solid #b8d0ee;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#2e6da4;margin-bottom:4px">Outlook</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Full-year OpEx projects at $3.86M vs $3.75M plan. H2 advertising discipline is the key lever.</div>
+      </div>
+    </div>
+  </div>
+  <div style="font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:#dedad2;border-left:5px solid var(--ink);padding:11px 32px;margin-bottom:24px;margin-left:-32px;margin-right:-32px;display:block">Cash Flow — YTD &amp; Full Year</div>
+  <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;margin-bottom:28px">
+    <div>
+  <div class="kpi"><div class="kpi-label">Total cash in — YTD actual</div><div class="kpi-value">$4.11M</div><div class="kpi-sub">behind projection by $54.4K</div></div>
+  <div style="margin-bottom:8px;margin-top:16px;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted)">Cash in — actual vs projected</div>
+  <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px">
+    <div class="card"><div class="card-title">Wholesale</div><div class="chart-wrap" style="height:140px"><canvas id="ciWholesale"></canvas></div></div>
+    <div class="card"><div class="card-title">DTC</div><div class="chart-wrap" style="height:140px"><canvas id="ciDTC"></canvas></div></div>
+    <div class="card"><div class="card-title">INK</div><div class="chart-wrap" style="height:140px"><canvas id="ciINK"></canvas></div></div>
+  </div>
+  <div style="margin-bottom:8px;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted)">Cash out — actual vs projected</div>
+  <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px">
+    <div class="card"><div class="card-title">COGS — brand</div><div class="chart-wrap" style="height:140px"><canvas id="coCOGSBrand"></canvas></div></div>
+    <div class="card"><div class="card-title">COGS — INK</div><div class="chart-wrap" style="height:140px"><canvas id="coCOGSINK"></canvas></div></div>
+    <div class="card"><div class="card-title">Other COGS + shipping</div><div class="chart-wrap" style="height:140px"><canvas id="coOther"></canvas></div></div>
+  </div>
+    <div class="card">
+      <div class="card-title">Cumulative cash in vs. cash out</div>
+      <div class="chart-wrap" style="height:190px"><canvas id="cfChart"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Cash in by channel</div>
+    <div style="display:flex;gap:6px;padding-bottom:6px;font-size:10px;color:var(--ink-muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--rule)">
+      <span style="flex:1">Category</span>
+      <span style="width:72px;text-align:right">YTD Actual</span>
+      <span style="width:68px;text-align:right">YTD Plan</span>
+      <span style="width:62px;text-align:right">YTD Var</span>
+      <span style="width:78px;text-align:right">Ann. Plan</span>
+      <span style="width:78px;text-align:right">Ann. Proj.</span>
+      <span style="width:62px;text-align:right">Ann. Var</span>
+    </div>
+    <div class="ch-row"><span class="ch-name">Wholesale</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.73M</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$1.84M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$113.2K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.62M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$1.62M</span></div>
+    <div class="ch-row"><span class="ch-name">DTC</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.53M</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$1.29M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$235.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.76M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$1.76M</span></div>
+    <div class="ch-row"><span class="ch-name">INK</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$850.0K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$1.03M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$176.4K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$673.6K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$673.6K</span></div>
+    <div class="ch-row" style="border-top:1.5px solid var(--ink);margin-top:4px;padding-top:8px;font-weight:500"><span class="ch-name">Total cash in</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$4.11M</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$4.16M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$54.4K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$4.05M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$4.05M</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Cash out by category</div>
+    <div style="display:flex;gap:6px;padding-bottom:6px;font-size:10px;color:var(--ink-muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--rule)">
+      <span style="flex:1">Category</span>
+      <span style="width:72px;text-align:right">YTD Actual</span>
+      <span style="width:68px;text-align:right">YTD Plan</span>
+      <span style="width:62px;text-align:right">YTD Var</span>
+      <span style="width:78px;text-align:right">Ann. Plan</span>
+      <span style="width:78px;text-align:right">Ann. Proj.</span>
+      <span style="width:62px;text-align:right">Ann. Var</span>
+    </div>
+    <div class="ch-row"><span class="ch-name">COGS — brand</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.54M</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$2.53M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$986.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$553.0K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$553.0K</span></div>
+    <div class="ch-row"><span class="ch-name">COGS — INK</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$412.5K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$555.6K</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$143.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$269.4K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$269.4K</span></div>
+    <div class="ch-row"><span class="ch-name">Other COGS + shipping</span><span class="neg" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$324.5K</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$208.4K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$116.1K</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$440.5K</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$440.5K</span></div>
+    <div class="ch-row" style="border-top:1.5px solid var(--ink);margin-top:4px;padding-top:8px;font-weight:500"><span class="ch-name">Total cash out</span><span class="pos" style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$2.28M</span><span style="width:68px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$3.29M</span><span class="pos" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">−$1.01M</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);">$0</span><span style="width:78px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:500;">$1.26M</span><span class="neg" style="width:62px;text-align:right;font-family:var(--mono);font-size:11px;">+$1.26M</span></div>
+    </div>
+    </div>
+    <div style="padding:0 0 0 4px">
+      <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:14px">Summary &amp; Outlook</div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#eaf4ef;border-left:3px solid #b8ddd0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#0d6e4f;margin-bottom:4px">Win</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Total cumulative cash in through Week 21 is $4.11M behind projection by $54.4K. DTC cash in of $1.53M is $235.1K vs projection.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#fce8e8;border-left:3px solid #f0c0c0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a82f2f;margin-bottom:4px">Watch</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Total cash out is $2.28M. The business is cash-flow positive with a $1.83M cumulative surplus.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#edf3fb;border-left:3px solid #b8d0ee;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#2e6da4;margin-bottom:4px">Trend</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">H1 open orders of $450.2K will drive additional cash in over the next 5 weeks as orders ship and invoice.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#edf3fb;border-left:3px solid #b8d0ee;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#2e6da4;margin-bottom:4px">Outlook</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">F26 inventory payments will increase cash out in H2 as product ships — this is planned and expected.</div>
+      </div>
+    </div>
+  </div>
+  <div style="font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:#dedad2;border-left:5px solid var(--ink);padding:11px 32px;margin-bottom:24px;margin-left:-32px;margin-right:-32px;display:block">Inventory Analysis</div>
+  <div class="kpi-row cols-2" style="margin-bottom:16px">
+    <div class="kpi"><div class="kpi-label">Total inventory COG — Week 21</div><div class="kpi-value">$1.69M</div><div class="kpi-sub">+$99.1K vs prev wk</div><div class="kpi-sub neg" style="margin-top:2px">+$719.8K vs prior year (+74.5%)</div></div>
+    <div class="kpi"><div class="kpi-label">Total units on hand — Week 21</div><div class="kpi-value">141,583</div><div class="kpi-sub">+57,548 units vs prior year (+68.5%)</div></div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)">
+      <div><div class="card-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">Total Inventory COG — Week by Week</div>
+      <div style="font-family:var(--mono);font-size:11px;margin-top:4px"><span style="color:#a82f2f;font-weight:600">+$719.8K vs prior year (+74.5%)</span></div></div>
+      <div style="display:flex;gap:16px;font-size:11px;color:var(--ink-muted)">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#B4B2A9;display:inline-block"></span>2024</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#378ADD;display:inline-block"></span>2025</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#0d6e4f;display:inline-block"></span>2026</span>
+      </div>
+    </div>
+    <div class="chart-wrap" style="height:280px"><canvas id="invHistCOG"></canvas></div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)">
+      <div><div class="card-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">Total Units on Hand — Week by Week</div>
+      <div style="font-family:var(--mono);font-size:11px;margin-top:4px"><span style="color:#a82f2f;font-weight:600">+57,548 units vs prior year (+68.5%)</span></div></div>
+      <div style="display:flex;gap:16px;font-size:11px;color:var(--ink-muted)">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#B4B2A9;display:inline-block"></span>2024</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#378ADD;display:inline-block"></span>2025</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#0d6e4f;display:inline-block"></span>2026</span>
+      </div>
+    </div>
+    <div class="chart-wrap" style="height:280px"><canvas id="invTotUnits"></canvas></div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)">
+      <div><div class="card-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">Spring / Summer Sell-Through % — by Week</div>
+      <div style="font-family:var(--mono);font-size:11px;margin-top:4px"><span style="color:#a82f2f;font-weight:600"></span></div></div>
+      <div style="display:flex;gap:16px">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#B4B2A9;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">S24</span></span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#378ADD;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">S25</span></span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#0d6e4f;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">S26</span></span>
+      </div>
+    </div>
+    <div class="chart-wrap" style="height:260px"><canvas id="invSSSellThru"></canvas></div>
+  </div>
+  <div class="card" style="margin-bottom:24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)">
+      <div class="card-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">Fall / Winter Sell-Through % — by Week</div>
+      <div style="display:flex;gap:16px">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#B4B2A9;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">F24</span></span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#BA7517;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">F25</span></span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#a82f2f;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">F26</span></span>
+      </div>
+    </div>
+    <div class="chart-wrap" style="height:260px"><canvas id="invFWSellThru"></canvas></div>
+  </div>
+  <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;margin-bottom:28px">
+    <div>
+      <div class="card">
+        <div class="card-title">Inventory breakdown — week 21</div>
+<table style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        <th style="text-align:left;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 8px 8px 0;border-bottom:1.5px solid var(--ink)">Category</th>
+        <th style="text-align:right;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 6px 8px;border-bottom:1.5px solid var(--ink)">COG</th>
+        <th style="text-align:right;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 6px 8px;border-bottom:1.5px solid var(--ink)">vs prev wk</th>
+        <th style="text-align:right;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 6px 8px;border-bottom:1.5px solid var(--ink)">Units</th>
+        <th style="text-align:right;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 6px 8px;border-bottom:1.5px solid var(--ink)">vs prev wk</th>
+        <th style="text-align:left;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 0 8px 6px;border-bottom:1.5px solid var(--ink);min-width:130px">Sell-through</th>
+      </tr></thead>
+      <tbody>
+        <tr><td colspan="6" style="padding:8px 0 4px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted)">Seasons</td></tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">F25 — Last Season</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">S26 — Current Season</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">F26 — Next Season</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+        <tr><td colspan="6" style="padding:12px 0 4px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted)">Other categories</td></tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">Starboard</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">Past Season</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">Miscellaneous</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">Jetty Rock Foundation</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">3rd Party 2025</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">3rd Party 2026</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">Surfboard — 3rd Party</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">Skateboards — 3rd Party</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">Surfboard — Consignment</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">Collab</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">White Whale</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">—</td>
+      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:var(--ink-muted)"></td>
+      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:0%;background:var(--ink-muted);border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-muted);min-width:38px;text-align:right">—</span>
+        </div>
+      </td>
+    </tr>
+        <tr style="border-top:1.5px solid var(--ink)">
+          <td style="padding:8px 8px 4px 0;font-family:var(--mono);font-size:11px;font-weight:600">Total inventory</td>
+          <td style="padding:8px 6px 4px;font-family:var(--mono);font-size:11px;font-weight:600;text-align:right">$1.69M</td>
+          <td style="padding:8px 6px 4px;font-family:var(--mono);font-size:10px;text-align:right;color:#a82f2f">+$99.1K</td>
+          <td style="padding:8px 6px 4px;font-family:var(--mono);font-size:11px;font-weight:600;text-align:right">141,583</td>
+          <td style="padding:8px 6px 4px;font-family:var(--mono);font-size:10px;text-align:right;color:#a82f2f">+12,357</td>
+          <td style="padding:8px 0 4px 6px;font-family:var(--mono);font-size:10px;color:var(--ink-muted)">Avg cost/unit: $11.91</td>
+        </tr>
+      </tbody>
+    </table>
+      </div>
+    </div>
+    <div style="padding:0 0 0 4px">
+      <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:14px">Summary &amp; Outlook</div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#eaf4ef;border-left:3px solid #b8ddd0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#0d6e4f;margin-bottom:4px">Win</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Total inventory COG $1.69M / 141,583 units. S26 sell-through —. F25 at —.</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#fce8e8;border-left:3px solid #f0c0c0;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a82f2f;margin-bottom:4px">Watch</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">Total COG is $719.8K above prior year ($1.69M vs $966.5K in 2025).</div>
+      </div>
+      <div style="margin-bottom:10px;padding:10px 12px;background:#edf3fb;border-left:3px solid #b8d0ee;border-radius:0 4px 4px 0">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#2e6da4;margin-bottom:4px">Outlook</div>
+        <div style="font-size:12px;color:var(--ink);line-height:1.6">H2 open orders of $2.12M (67.4% of H2 plan) with F26 in house. Shipping F26 against these open orders is the key H2 operational priority.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const fmtK=v=>{const a=Math.abs(v);if(a>=1000000)return"$"+(v<0?"−":"")+(a/1000000).toFixed(2)+"M";if(a>=1000)return"$"+(v<0?"−":"")+(a/1000).toFixed(1)+"K";return"$"+v.toLocaleString();};
+const WKS=["Wk 1","Wk 2","Wk 3","Wk 4","Wk 5","Wk 6","Wk 7","Wk 8","Wk 9","Wk 10","Wk 11","Wk 12","Wk 13","Wk 14","Wk 15","Wk 16","Wk 17","Wk 18","Wk 19","Wk 20","Wk 21"];
+const mkChart=(id,act,proj,color)=>{const el=document.getElementById(id);if(!el)return;new Chart(el,{type:"line",data:{labels:WKS,datasets:[{label:"Actual",data:act,borderColor:color,backgroundColor:"transparent",borderWidth:2,pointRadius:2,tension:0.3},{label:"Projected",data:proj,borderColor:color,backgroundColor:"transparent",borderWidth:2,borderDash:[4,3],pointRadius:2,tension:0.3},]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtK(c.raw)}}},scales:{x:{ticks:{font:{size:9}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}}});};
+mkChart("ciWholesale",[81875,158392,183813,253025,284733,319642,368979,397257,481507,548410,630781,693085,734732,832670,983338,1063318,1183956,1386200,1541923,1595487,1728347],[88599,177198,265797,354396,399913,445430,490948,536465,571467,606470,641472,676475,711477,813449,915420,1017392,1119363,1299908,1480452,1660996,1841540],"#0d6e4f");
+mkChart("ciDTC",      [111739,266703,374427,452114,516184,570068,634841,670462,727802,786087,854398,917411,988344,1057304,1144911,1212087,1269816,1316954,1378882,1450282,1528301],[35317,66444,104407,141881,174214,218068,260669,325414,381949,440799,501116,562160,634573,708905,803179,857529,933762,1030049,1120944,1204761,1293155],"#378ADD");
+mkChart("ciINK",      [33672,46329,66446,78053,88732,104231,120983,142651,191086,238958,334498,373046,403162,438113,495209,528999,573165,648122,706349,723131,849967],[29333,58665,87998,117330,154059,190789,227518,264247,322140,380033,437926,495818,553711,610405,667098,723792,780485,841952,903420,964887,1026354],"#BA7517");
+mkChart("coCOGSBrand",[271363,284524,612332,623164,626466,630215,900521,900521,933578,944584,949639,956342,959956,975192,1029641,1063953,1097174,1434579,1445909,1487195,1539096],[17991,18853,267978,454892,472343,510512,510512,588846,1220506,1274458,1274893,1287601,2237104,2237104,2255714,2308224,2325350,2325350,2392293,2478245,2525202],"#a82f2f");
+mkChart("coCOGSINK",  [45105,95959,129209,140536,153994,160225,168305,170508,196638,210302,265828,280230,295996,318922,319578,334441,352435,362594,383185,397225,412530],[753,9227,21408,32379,61252,69653,76014,84857,108763,212198,232886,261319,340186,358591,381167,410972,452937,474091,503089,533789,555630],"#D85A30");
+mkChart("coOther",    [17318,32861,44663,60353,79087,85699,98357,113630,120692,130158,142317,159571,169297,180956,194911,212155,224527,233675,267512,296569,324469],[6328,8398,20384,28589,38110,41962,45802,54914,59470,66766,71385,80549,88938,114469,129110,142297,155839,172698,186526,197217,208403],"#888780");
+(function(){const el=document.getElementById("cfChart");if(!el)return;new Chart(el,{type:"line",data:{labels:WKS,datasets:[{label:"Cash in", data:[227286,471424,624686,783191,889649,993941,1124804,1210371,1400396,1573455,1819678,1983542,2126238,2328087,2623458,2804404,3026937,3351275,3627155,3768900,4106614],borderColor:"#0d6e4f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3},{label:"Cash out",data:[333786,413344,786204,824053,859547,876139,1167183,1184659,1250908,1285044,1357784,1396143,1425249,1475070,1544130,1610549,1674136,2030848,2096606,2180989,2276095],borderColor:"#a82f2f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3},]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,position:"top",labels:{font:{size:10}}}},scores:{x:{ticks:{font:{size:9}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}}}});})();
+const HL=Array.from({length:52},(_,i)=>"Wk "+(i+1));
+const histOpts={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},scales:{x:{type:"category",ticks:{font:{size:9},maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}};
+(function(){const el=document.getElementById("invHistCOG");if(!el)return;new Chart(el,{type:"line",data:{labels:HL,datasets:[{label:"2024",data:[{x:"Wk 4",y:1683151},{x:"Wk 8",y:2038286},{x:"Wk 13",y:1418077},{x:"Wk 17",y:1191470},{x:"Wk 21",y:1067058},{x:"Wk 26",y:1070466},{x:"Wk 30",y:2161703},{x:"Wk 33",y:1771210},{x:"Wk 34",y:1705212},{x:"Wk 35",y:1591855},{x:"Wk 36",y:1466896},{x:"Wk 37",y:1376241},{x:"Wk 38",y:1329868},{x:"Wk 39",y:1248327},{x:"Wk 40",y:1134696},{x:"Wk 41",y:1171257},{x:"Wk 42",y:1058836},{x:"Wk 43",y:1044127},{x:"Wk 44",y:974618},{x:"Wk 45",y:925393},{x:"Wk 46",y:885012},{x:"Wk 47",y:834987},{x:"Wk 48",y:777775},{x:"Wk 49",y:720708},{x:"Wk 50",y:687457},{x:"Wk 51",y:605687},{x:"Wk 52",y:680985}],borderColor:"#B4B2A9",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},{label:"2025",data:[{x:"Wk 1",y:848645},{x:"Wk 2",y:1142454},{x:"Wk 3",y:1482157},{x:"Wk 4",y:1372512},{x:"Wk 5",y:2052081},{x:"Wk 6",y:1990346},{x:"Wk 7",y:2145515},{x:"Wk 8",y:1965268},{x:"Wk 9",y:2018671},{x:"Wk 10",y:2237061},{x:"Wk 11",y:1825146},{x:"Wk 12",y:1618471},{x:"Wk 13",y:1582084},{x:"Wk 14",y:1427829},{x:"Wk 15",y:1299369},{x:"Wk 16",y:1252152},{x:"Wk 17",y:1154462},{x:"Wk 18",y:1061075},{x:"Wk 19",y:1011050},{x:"Wk 20",y:984755},{x:"Wk 21",y:966463},{x:"Wk 22",y:888874},{x:"Wk 23",y:834794},{x:"Wk 24",y:1047353},{x:"Wk 25",y:1416869},{x:"Wk 26",y:1357179},{x:"Wk 27",y:1286810},{x:"Wk 28",y:1244399},{x:"Wk 29",y:2847159},{x:"Wk 30",y:2641817},{x:"Wk 31",y:2613849},{x:"Wk 32",y:2512015},{x:"Wk 33",y:2530470},{x:"Wk 34",y:2361291},{x:"Wk 35",y:2336975},{x:"Wk 36",y:2378502},{x:"Wk 37",y:2376814},{x:"Wk 38",y:2162408},{x:"Wk 39",y:2026241},{x:"Wk 40",y:1961485},{x:"Wk 41",y:1844964},{x:"Wk 42",y:1744591},{x:"Wk 43",y:1666694},{x:"Wk 44",y:1620198},{x:"Wk 45",y:1557434},{x:"Wk 46",y:1475972},{x:"Wk 47",y:1507995},{x:"Wk 48",y:1359263},{x:"Wk 49",y:1282609},{x:"Wk 50",y:1169396},{x:"Wk 52",y:1059905}],borderColor:"#378ADD",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},{label:"2026",data:[{x:"Wk 1",y:0},{x:"Wk 2",y:1060719},{x:"Wk 3",y:1027841},{x:"Wk 4",y:2185400},{x:"Wk 5",y:2687370},{x:"Wk 6",y:2547228},{x:"Wk 7",y:0},{x:"Wk 8",y:2322232},{x:"Wk 9",y:2151512},{x:"Wk 10",y:2175888},{x:"Wk 11",y:2164005},{x:"Wk 12",y:2151905},{x:"Wk 13",y:2009945},{x:"Wk 14",y:1909795},{x:"Wk 15",y:1808795},{x:"Wk 16",y:1768575},{x:"Wk 17",y:1605647},{x:"Wk 18",y:1515908},{x:"Wk 19",y:1494859},{x:"Wk 20",y:1587161},{x:"Wk 21",y:1686247}],borderColor:"#0d6e4f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,parsing:false},]},options:histOpts});})();
+(function(){const el=document.getElementById("invTotUnits");if(!el)return;new Chart(el,{type:"line",data:{labels:HL,datasets:[{label:"2024",data:[{x:"Wk 33",y:115506},{x:"Wk 34",y:111297},{x:"Wk 35",y:104644},{x:"Wk 36",y:96620},{x:"Wk 37",y:90629},{x:"Wk 38",y:87452},{x:"Wk 39",y:82599},{x:"Wk 40",y:76521},{x:"Wk 41",y:79832},{x:"Wk 42",y:74389},{x:"Wk 43",y:74690},{x:"Wk 44",y:70762},{x:"Wk 45",y:67957},{x:"Wk 46",y:65068},{x:"Wk 47",y:62328},{x:"Wk 48",y:59516},{x:"Wk 49",y:56223},{x:"Wk 50",y:53692},{x:"Wk 51",y:48727},{x:"Wk 52",y:63644}],borderColor:"#B4B2A9",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},{label:"2025",data:[{x:"Wk 1",y:91698},{x:"Wk 2",y:114944},{x:"Wk 3",y:136586},{x:"Wk 4",y:131456},{x:"Wk 5",y:174328},{x:"Wk 6",y:169888},{x:"Wk 7",y:186597},{x:"Wk 8",y:166138},{x:"Wk 9",y:174005},{x:"Wk 10",y:167872},{x:"Wk 11",y:157909},{x:"Wk 12",y:139884},{x:"Wk 13",y:140214},{x:"Wk 14",y:129252},{x:"Wk 15",y:115589},{x:"Wk 16",y:111726},{x:"Wk 17",y:102940},{x:"Wk 18",y:94516},{x:"Wk 19",y:90245},{x:"Wk 20",y:81622},{x:"Wk 21",y:84035},{x:"Wk 22",y:76817},{x:"Wk 23",y:72101},{x:"Wk 24",y:94576},{x:"Wk 25",y:130769},{x:"Wk 26",y:123742},{x:"Wk 27",y:116557},{x:"Wk 28",y:112809},{x:"Wk 29",y:185161},{x:"Wk 30",y:171958},{x:"Wk 31",y:169047},{x:"Wk 32",y:161177},{x:"Wk 33",y:152972},{x:"Wk 34",y:143463},{x:"Wk 35",y:143074},{x:"Wk 36",y:142090},{x:"Wk 37",y:140894},{x:"Wk 38",y:127835},{x:"Wk 39",y:120098},{x:"Wk 40",y:116289},{x:"Wk 41",y:110426},{x:"Wk 42",y:104446},{x:"Wk 43",y:100026},{x:"Wk 44",y:96558},{x:"Wk 45",y:94140},{x:"Wk 46",y:95236},{x:"Wk 47",y:96999},{x:"Wk 48",y:88109},{x:"Wk 49",y:83457},{x:"Wk 50",y:76854},{x:"Wk 52",y:69376}],borderColor:"#378ADD",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},{label:"2026",data:[{x:"Wk 1",y:0},{x:"Wk 2",y:80450},{x:"Wk 3",y:78061},{x:"Wk 4",y:169378},{x:"Wk 5",y:194825},{x:"Wk 6",y:186849},{x:"Wk 7",y:0},{x:"Wk 8",y:171782},{x:"Wk 9",y:158567},{x:"Wk 10",y:159980},{x:"Wk 11",y:161445},{x:"Wk 12",y:170767},{x:"Wk 13",y:159233},{x:"Wk 14",y:142375},{x:"Wk 15",y:134346},{x:"Wk 16",y:130984},{x:"Wk 17",y:119256},{x:"Wk 18",y:110856},{x:"Wk 19",y:112393},{x:"Wk 20",y:129226},{x:"Wk 21",y:141583}],borderColor:"#0d6e4f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,parsing:false},]},options:histOpts});})();
+const stOpts={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+c.parsed.y.toFixed(1)+"%"}}},scales:{x:{type:"category",ticks:{font:{size:9},maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},y:{min:0,max:100,ticks:{callback:v=>v+"%",font:{size:9}}}}};
+const SL=Array.from({length:52},(_,i)=>"Wk "+(i+1));
+function mkST(id,ds){const el=document.getElementById(id);if(!el)return;new Chart(el,{type:"line",data:{labels:SL,datasets:ds.map(d=>{return{label:d.l,data:d.d,borderColor:d.c,backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false};})},options:stOpts});}
+mkST("invSSSellThru",[{l:"S24",d:[],c:"#B4B2A9"},{l:"S25",d:[],c:"#378ADD"},{l:"S26",d:[],c:"#0d6e4f"}]);
+mkST("invFWSellThru",[{l:"F24",d:[],c:"#B4B2A9"},{l:"F25",d:[],c:"#BA7517"},{l:"F26",d:[],c:"#a82f2f"}]);
+</script>
+</body>
+</html>
