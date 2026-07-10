@@ -8,9 +8,11 @@ docs/accounting-email-sync-setup.md for the one-time Workspace admin steps.
 Field mapping is derived from Accounting_Ledger_Email_Extraction_Rules.xlsx.
 """
 import base64
+import html as html_module
 import json
 import os
 import re
+from collections import Counter
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -81,15 +83,17 @@ REVENUE_EXPENSE = "Revenue"  # every rule in scope today is revenue
 # ── Email parsers ────────────────────────────────────────────────────────────
 
 def money(s):
-    return float(s.replace(",", ""))
+    return float(s.replace(",", "").replace("−", "-"))
 
 def parse_shopify(subject, body):
-    m = re.search(r"\(\$([\d,]+\.\d{2})\s*USD\)", subject)
+    # Withdrawals (e.g. Box Truck lease debits) render as "(-$34.00 USD)".
+    m = re.search(r"\((-?)\$([\d,]+\.\d{2})\s*USD\)", subject)
     if not m:
         return None
     store = body.strip().splitlines()[0].strip()
     ref_m = re.search(r"Payout #(\d+)", body)
-    return {"store": store, "amount": money(m.group(1)), "ref": ref_m.group(1) if ref_m else None}
+    sign, amount = m.group(1), m.group(2)
+    return {"store": store, "amount": money(sign + amount), "ref": ref_m.group(1) if ref_m else None}
 
 def parse_stripe(subject, body):
     m = re.search(r"Your \$([\d,]+\.\d{2}) payout for (.+?) is on the way", subject)
@@ -125,14 +129,33 @@ def get_header(headers, name):
             return h["value"]
     return ""
 
-def get_plaintext_body(payload):
-    if payload.get("mimeType") == "text/plain" and payload.get("body", {}).get("data"):
-        return base64.urlsafe_b64decode(payload["body"]["data"] + "===").decode("utf-8", "replace")
+def _decode_part(payload):
+    data = payload.get("body", {}).get("data")
+    return base64.urlsafe_b64decode(data + "===").decode("utf-8", "replace") if data else ""
+
+def get_body_parts(payload):
+    """Returns (plaintext, html) bodies, walking MIME parts recursively."""
+    plain = html_body = ""
+    mime = payload.get("mimeType")
+    if mime == "text/plain":
+        plain = _decode_part(payload)
+    elif mime == "text/html":
+        html_body = _decode_part(payload)
     for part in payload.get("parts", []) or []:
-        text = get_plaintext_body(part)
-        if text:
-            return text
-    return ""
+        p2, h2 = get_body_parts(part)
+        plain = plain or p2
+        html_body = html_body or h2
+    return plain, html_body
+
+def html_to_text(h):
+    text = re.sub(r"<[^>]+>", " ", h)
+    text = html_module.unescape(text)
+    return re.sub(r"[ \t]+", " ", text)
+
+def get_message_text(payload):
+    """Some senders (CardPointe) send HTML-only emails with no text/plain part."""
+    plain, html_body = get_body_parts(payload)
+    return plain if plain.strip() else html_to_text(html_body)
 
 def search_all(gmail, query, cap=500):
     ids, page_token = [], None
@@ -190,23 +213,26 @@ def wrap(table, value):
 # ── Core pipeline ────────────────────────────────────────────────────────────
 
 STATS = {"logged": 0, "skipped": 0, "unparsed": 0, "unrecognized": 0}
+UNPARSED_SUBJECTS = Counter()      # kind -> doesn't apply; keyed by (kind, subject prefix)
+UNRECOGNIZED_KEYS = Counter()      # keyed by (kind, store/entity name)
 
-def process(gmail, msg_id, parser, lookup_rule):
+def process(gmail, msg_id, parser, lookup_rule, kind):
     msg = gmail.users().messages().get(userId="me", id=msg_id, format="full").execute()
     headers = msg["payload"]["headers"]
     subject = get_header(headers, "Subject")
-    body = get_plaintext_body(msg["payload"])
+    body = get_message_text(msg["payload"])
 
     parsed = parser(subject, body)
     if not parsed:
-        print(f"WARN could not parse message {msg_id!r} subject={subject!r}")
         STATS["unparsed"] += 1
+        UNPARSED_SUBJECTS[(kind, subject[:60])] += 1
         return
 
     rule = lookup_rule(parsed)
     if rule is None:
-        print(f"WARN unrecognized entity for message {msg_id!r} subject={subject!r} parsed={parsed}")
+        key = parsed.get("store") or parsed.get("entity") or "?"
         STATS["unrecognized"] += 1
+        UNRECOGNIZED_KEYS[(kind, key)] += 1
         return
 
     table = rule["table"]
@@ -234,34 +260,36 @@ def process(gmail, msg_id, parser, lookup_rule):
         if parsed.get("ref"):
             fields[fids["invoice"]] = int(parsed["ref"]) if table == "JRF" else parsed["ref"]
 
-        if DRY_RUN:
-            print(f"[DRY RUN] would log {table} ${parsed['amount']:.2f} — {subject!r} :: {fields}")
-        else:
+        action = "would log" if DRY_RUN else "logged"
+        if not DRY_RUN:
             create_record(table_id, fields)
-            print(f"LOGGED {table} ${parsed['amount']:.2f} — {subject!r}")
+        print(f"{action} {table}/{rule['label']} ${parsed['amount']:.2f} {date_str}")
         STATS["logged"] += 1
 
-    if DRY_RUN:
-        print(f"[DRY RUN] would label+archive with {rule['label']!r}: {subject!r}")
-    else:
+    if not DRY_RUN:
         label_and_archive(gmail, msg_id, rule["label"])
 
 def main():
     gmail = gmail_service()
 
     for msg_id in search_all(gmail, 'from:mailer@shopify.com subject:"Payout for"'):
-        process(gmail, msg_id, parse_shopify, lambda p: SHOPIFY_STORES.get(p["store"]))
+        process(gmail, msg_id, parse_shopify, lambda p: SHOPIFY_STORES.get(p["store"]), "shopify")
 
     for msg_id in search_all(gmail, 'from:notifications@stripe.com subject:"is on the way"'):
-        process(gmail, msg_id, parse_stripe, lambda p: STRIPE_ENTITIES.get(p["entity"]))
+        process(gmail, msg_id, parse_stripe, lambda p: STRIPE_ENTITIES.get(p["entity"]), "stripe")
 
     for msg_id in search_all(gmail, 'from:donotreply@cardpointe.com subject:"Batch Summary"'):
-        process(gmail, msg_id, parse_cardpointe, lambda p: CARDPOINTE_RULE)
+        process(gmail, msg_id, parse_cardpointe, lambda p: CARDPOINTE_RULE, "cardpointe")
 
     for msg_id in search_all(gmail, 'from:no-reply@gocardless.com subject:"has paid you"'):
-        process(gmail, msg_id, parse_gocardless, lambda p: GOCARDLESS_RULE)
+        process(gmail, msg_id, parse_gocardless, lambda p: GOCARDLESS_RULE, "gocardless")
 
-    print(f"\n{'[DRY RUN] ' if DRY_RUN else ''}Done: {STATS}")
+    prefix = "[DRY RUN] " if DRY_RUN else ""
+    print(f"\n{prefix}Done: {STATS}")
+    if UNRECOGNIZED_KEYS:
+        print(f"{prefix}Unrecognized (kind, name): count -- {dict(UNRECOGNIZED_KEYS.most_common(30))}")
+    if UNPARSED_SUBJECTS:
+        print(f"{prefix}Unparsed (kind, subject): count -- {dict(UNPARSED_SUBJECTS.most_common(30))}")
 
 if __name__ == "__main__":
     main()
