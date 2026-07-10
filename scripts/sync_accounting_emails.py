@@ -87,12 +87,21 @@ REVENUE_EXPENSE = "Revenue"  # every rule in scope today is revenue
 def money(s):
     return float(s.replace(",", "").replace("−", "-"))
 
+_DATE_LINE = re.compile(r"^[A-Za-z]+ \d{1,2}, \d{4}$")
+
 def parse_shopify(subject, body):
     # Withdrawals (e.g. Box Truck lease debits) render as "(-$34.00 USD)".
     m = re.search(r"\((-?)\$([\d,]+\.\d{2})\s*USD\)", subject)
     if not m:
         return None
-    store = body.strip().splitlines()[0].strip()
+    store = ""
+    for line in body.strip().splitlines():
+        line = line.strip()
+        if not line or _DATE_LINE.match(line):
+            continue  # skip blank lines and template variants that lead with the date
+        store = line
+        break
+    store = store.split(" (")[0].strip()  # "Jetty (Jetty Life, LLC)" -> "Jetty"
     ref_m = re.search(r"Payout #(\d+)", body)
     sign, amount = m.group(1), m.group(2)
     return {"store": store, "amount": money(sign + amount), "ref": ref_m.group(1) if ref_m else None}
