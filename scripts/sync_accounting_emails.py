@@ -58,6 +58,8 @@ SHOPIFY_STORES = {
                   bank="TD Bank - Operating", xero=None, type="Shopify", vendor="Shopify"),
     "Jetty Playa Bowls": dict(table="JTY", label="Accounting/Shopify (Playa Bowls)",
                   bank="Columbia", xero="Screen Printing Revenue", type="Shopify", vendor="Playa Bowls"),
+    "Jetty Box Truck": dict(table="JTY", label="Accounting/Shopify (Box Truck)",
+                  bank="BOA", xero="DTC - Mobile Store & Tent", type="Shopify", vendor="Shopify"),
 }
 
 STRIPE_ENTITIES = {
