@@ -283,16 +283,16 @@ def process(gmail, msg_id, parser, lookup_rule, kind):
 def main():
     gmail = gmail_service()
 
-    for msg_id in search_all(gmail, 'from:mailer@shopify.com subject:"Payout for"'):
+    for msg_id in search_all(gmail, 'in:inbox from:mailer@shopify.com subject:"Payout for"'):
         process(gmail, msg_id, parse_shopify, lambda p: SHOPIFY_STORES.get(p["store"]), "shopify")
 
-    for msg_id in search_all(gmail, 'from:notifications@stripe.com subject:"is on the way"'):
+    for msg_id in search_all(gmail, 'in:inbox from:notifications@stripe.com subject:"is on the way"'):
         process(gmail, msg_id, parse_stripe, lambda p: STRIPE_ENTITIES.get(p["entity"]), "stripe")
 
-    for msg_id in search_all(gmail, 'from:donotreply@cardpointe.com subject:"Batch Summary"'):
+    for msg_id in search_all(gmail, 'in:inbox from:donotreply@cardpointe.com subject:"Batch Summary"'):
         process(gmail, msg_id, parse_cardpointe, lambda p: CARDPOINTE_RULE, "cardpointe")
 
-    for msg_id in search_all(gmail, 'from:no-reply@gocardless.com subject:"has paid you"'):
+    for msg_id in search_all(gmail, 'in:inbox from:no-reply@gocardless.com subject:"has paid you"'):
         process(gmail, msg_id, parse_gocardless, lambda p: GOCARDLESS_RULE, "gocardless")
 
     prefix = "[DRY RUN] " if DRY_RUN else ""
