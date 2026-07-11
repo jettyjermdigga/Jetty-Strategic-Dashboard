@@ -40,14 +40,18 @@ FIELD_IDS = {
     "JTY": dict(
         date="fldKN5JIca6YJdyPX", amount="fldEXHOlbd7SpbjGn", xero="fldmVMjQXcIW1NXBw",
         invoice="fldwRKDLhq2mPOjCm", bank="fldwQGud76C3j2AqB", type="fldkFrJePQKT0pQUP",
-        notes="fldTHaIELsXSf6dAg", rev_exp="fldFJpkDAhT4YZ2yW", vendor="fldLbYIFOpcALkFY2",
+        notes="fldTHaIELsXSf6dAg", rev_exp="fldFJpkDAhT4YZ2yW", vendor="fldLbmU95bQFZo7q0",
     ),
     "JRF": dict(
         date="fldLd3Jonw1fWtLay", amount="fldNT7SbPrEq2QtaF", xero="fldWF3pQ0OJOXHt6l",
         invoice="fldgQyWkK8elFNQoG", bank="fldp9NtgwdjVmDgAa", type="fldQTHxp166Nm744t",
-        notes="fldbyBk2ziC9aqJOd", rev_exp="fldOdDxVOzDy7ajc3", vendor="fldnFnzqHwMS89DGS",
+        notes="fldbyBk2ziC9aqJOd", rev_exp="fldOdDxVOzDy7ajc3", vendor="fldxuPJd1kOHtHYe7",
     ),
 }
+
+# "vendor" above is *Vendor* (JTY) / JRF NAME (JRF) — multipleRecordLinks fields linking to
+# the Jetty CRM / JRF - CRM contact tables (same fields Zapier-authored rows use), NOT the
+# plain-select Vendor / Vendor-Donee fields, which nothing else in the base populates.
 
 # ── Routing rules (from Accounting_Ledger_Email_Extraction_Rules.xlsx) ──────
 
@@ -66,11 +70,11 @@ STRIPE_ENTITIES = {
     "Jetty Rock Foundation": dict(table="JRF", label="Accounting/Stripe - JRF",
                   bank="TD Bank - Operating", xero=None, type="Stripe", vendor="Stripe (JRF)"),
     "Jetty Brand": dict(table="JTY", label="Accounting/Stripe - Brand",
-                  bank="Columbia", xero="Wholesale Revenue", type="Stripe", vendor="STRIPE (BRAND)"),
+                  bank="Columbia", xero="Wholesale Revenue", type="Stripe", vendor="Stripe (BRAND)"),
     "Jetty DTC": dict(table="JTY", label="Accounting/Stripe - DTC",
                   bank="Columbia", xero="DTC - Jettylife.com", type="Stripe", vendor="Stripe (DTC)"),
     "Jetty Ink": dict(table="JTY", label="Accounting/Stripe - INK",
-                  bank="Columbia", xero=None, type="Stripe", vendor="STRIPE (INK)"),
+                  bank="Columbia", xero=None, type="Stripe", vendor="Stripe (INK)"),
 }
 
 CARDPOINTE_RULE = dict(table="JRF", label="Accounting/CardPointe",
@@ -262,7 +266,7 @@ def process(gmail, msg_id, parser, lookup_rule, kind):
             fids["amount"]: parsed["amount"],
             fids["bank"]: wrap(table, rule["bank"]),
             fids["type"]: wrap(table, rule["type"]),
-            fids["vendor"]: wrap(table, rule["vendor"]),
+            fids["vendor"]: [rule["vendor"]],  # multipleRecordLinks in both tables
             fids["rev_exp"]: wrap(table, REVENUE_EXPENSE),
             fids["notes"]: f"Gmail msg: {msg_id}\n{subject}",
         }
