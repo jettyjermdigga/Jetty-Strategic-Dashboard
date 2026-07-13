@@ -138,7 +138,8 @@ def parse_cardpointe(subject, body):
     return {"amount": money(amt_m.group(1)), "ref": batch_m.group(1) if batch_m else None}
 
 def parse_printavo(subject, body):
-    m = re.search(r"deposit for \$([\d,]+\.\d{2}) USD for (.+?) has been sent", body)
+    # HTML-only; the amount sits inside a hyperlink, leaving a line break before "for <entity>".
+    m = re.search(r"deposit for \$([\d,]+\.\d{2}) USD\s+for (.+?) has been sent", body)
     if not m:
         return None
     return {"entity": m.group(2).strip(), "amount": money(m.group(1)), "ref": None}
