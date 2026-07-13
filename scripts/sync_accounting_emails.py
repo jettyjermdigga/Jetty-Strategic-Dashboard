@@ -284,19 +284,26 @@ def process(gmail, msg_id, parser, lookup_rule, kind):
     if not DRY_RUN:
         label_and_archive(gmail, msg_id, rule["label"])
 
+# Bounded recency window rather than in:inbox: Jeremy has pre-existing Gmail filters that
+# auto-label + archive some of these senders (e.g. Shopify/Playa Bowls) before this script
+# ever runs, so in:inbox silently missed messages that never sat in the inbox at all. A
+# recency window still avoids reprocessing years of historical mail, and already_synced()
+# plus idempotent label_and_archive() make it safe to re-scan the same window every run.
+SEARCH_WINDOW = "newer_than:3d"
+
 def main():
     gmail = gmail_service()
 
-    for msg_id in search_all(gmail, 'in:inbox from:mailer@shopify.com subject:"Payout for"'):
+    for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:mailer@shopify.com subject:"Payout for"'):
         process(gmail, msg_id, parse_shopify, lambda p: SHOPIFY_STORES.get(p["store"]), "shopify")
 
-    for msg_id in search_all(gmail, 'in:inbox from:notifications@stripe.com subject:"is on the way"'):
+    for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:notifications@stripe.com subject:"is on the way"'):
         process(gmail, msg_id, parse_stripe, lambda p: STRIPE_ENTITIES.get(p["entity"]), "stripe")
 
-    for msg_id in search_all(gmail, 'in:inbox from:donotreply@cardpointe.com subject:"Batch Summary"'):
+    for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:donotreply@cardpointe.com subject:"Batch Summary"'):
         process(gmail, msg_id, parse_cardpointe, lambda p: CARDPOINTE_RULE, "cardpointe")
 
-    for msg_id in search_all(gmail, 'in:inbox from:no-reply@gocardless.com subject:"has paid you"'):
+    for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:no-reply@gocardless.com subject:"has paid you"'):
         process(gmail, msg_id, parse_gocardless, lambda p: GOCARDLESS_RULE, "gocardless")
 
     prefix = "[DRY RUN] " if DRY_RUN else ""
