@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r scripts/requirements.txt
-      - name: Sync Shopify/Stripe/CardPointe/GoCardless emails to Ledger
+      - name: Sync Shopify/Stripe/CardPointe/GoCardless/Printavo emails to Ledger
         env:
           GMAIL_CREDENTIALS: ${{ secrets.GMAIL_CREDENTIALS }}
           GMAIL_DELEGATED_USER: ${{ secrets.GMAIL_DELEGATED_USER }}

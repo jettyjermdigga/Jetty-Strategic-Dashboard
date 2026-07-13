@@ -1,5 +1,5 @@
-"""Sync accounting emails (Shopify, Stripe, CardPointe, GoCardless payouts) into the
-"Ledger 💰" Airtable base, and label + archive the source Gmail messages.
+"""Sync accounting emails (Shopify, Stripe, CardPointe, GoCardless, Printavo payouts) into
+the "Ledger 💰" Airtable base, and label + archive the source Gmail messages.
 
 Auth: a Google service account with domain-wide delegation impersonates
 GMAIL_DELEGATED_USER (jeremy@jettylife.com) to read/modify their inbox. See
@@ -84,6 +84,14 @@ CARDPOINTE_RULE = dict(table="JRF", label="Accounting/CardPointe",
 GOCARDLESS_RULE = dict(table="JTY", label="Accounting/GoCardless",
                   bank="Columbia", xero="Wholesale Revenue", type="ACH", vendor="GoCardless")
 
+# Printavo payouts settle via a processor Xero's bank feed labels "Merchpay". Field mapping
+# matches the one manually-entered Printavo row already in JTY Ledger.
+PRINTAVO_ENTITIES = {
+    "Jetty Ink": dict(table="JTY", label="Accounting/Printavo payouts",
+                  bank="Columbia", xero=["A/R - Jetty INK", "Screen Printing Revenue"],
+                  type="ACH", vendor="Printavo"),
+}
+
 REVENUE_EXPENSE = "Revenue"  # every rule in scope today is revenue
 
 # ── Email parsers ────────────────────────────────────────────────────────────
@@ -128,6 +136,13 @@ def parse_cardpointe(subject, body):
         return None
     batch_m = re.search(r"Batch ID:\s*(\d+)", body)
     return {"amount": money(amt_m.group(1)), "ref": batch_m.group(1) if batch_m else None}
+
+def parse_printavo(subject, body):
+    # HTML-only; the amount sits inside a hyperlink, leaving a line break before "for <entity>".
+    m = re.search(r"deposit for \$([\d,]+\.\d{2}) USD\s+for (.+?) has been sent", body)
+    if not m:
+        return None
+    return {"entity": m.group(2).strip(), "amount": money(m.group(1)), "ref": None}
 
 # ── Gmail helpers ────────────────────────────────────────────────────────────
 
@@ -223,6 +238,8 @@ def create_record(table_id, fields):
 def wrap(table, value):
     if value is None:
         return None
+    if isinstance(value, list):
+        return value if table in MULTI_SELECT_TABLES else value[0]
     return [value] if table in MULTI_SELECT_TABLES else value
 
 # ── Core pipeline ────────────────────────────────────────────────────────────
@@ -305,6 +322,9 @@ def main():
 
     for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:no-reply@gocardless.com subject:"has paid you"'):
         process(gmail, msg_id, parse_gocardless, lambda p: GOCARDLESS_RULE, "gocardless")
+
+    for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:no-reply@notifications.printavo.com subject:"received a deposit"'):
+        process(gmail, msg_id, parse_printavo, lambda p: PRINTAVO_ENTITIES.get(p["entity"]), "printavo")
 
     prefix = "[DRY RUN] " if DRY_RUN else ""
     print(f"\n{prefix}Done: {STATS}")
