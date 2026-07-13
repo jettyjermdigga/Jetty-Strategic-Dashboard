@@ -12,6 +12,7 @@ import html as html_module
 import json
 import os
 import re
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -244,7 +245,7 @@ def wrap(table, value):
 
 # ── Core pipeline ────────────────────────────────────────────────────────────
 
-STATS = {"logged": 0, "skipped": 0, "unparsed": 0, "unrecognized": 0}
+STATS = {"logged": 0, "skipped": 0, "unparsed": 0, "unrecognized": 0, "errors": 0}
 UNPARSED_SUBJECTS = Counter()      # kind -> doesn't apply; keyed by (kind, subject prefix)
 UNRECOGNIZED_KEYS = Counter()      # keyed by (kind, store/entity name)
 
@@ -308,23 +309,32 @@ def process(gmail, msg_id, parser, lookup_rule, kind):
 # plus idempotent label_and_archive() make it safe to re-scan the same window every run.
 SEARCH_WINDOW = "newer_than:3d"
 
+def safe_process(gmail, msg_id, parser, lookup_rule, kind):
+    # A failure on one message (e.g. an Airtable outage on a single table) must not stop the
+    # rest of the run — every other sender/message still deserves its chance to process.
+    try:
+        process(gmail, msg_id, parser, lookup_rule, kind)
+    except Exception as e:
+        STATS["errors"] += 1
+        print(f"ERROR processing {kind} msg {msg_id}: {e}")
+
 def main():
     gmail = gmail_service()
 
     for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:mailer@shopify.com subject:"Payout for"'):
-        process(gmail, msg_id, parse_shopify, lambda p: SHOPIFY_STORES.get(p["store"]), "shopify")
+        safe_process(gmail, msg_id, parse_shopify, lambda p: SHOPIFY_STORES.get(p["store"]), "shopify")
 
     for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:notifications@stripe.com subject:"is on the way"'):
-        process(gmail, msg_id, parse_stripe, lambda p: STRIPE_ENTITIES.get(p["entity"]), "stripe")
+        safe_process(gmail, msg_id, parse_stripe, lambda p: STRIPE_ENTITIES.get(p["entity"]), "stripe")
 
     for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:donotreply@cardpointe.com subject:"Batch Summary"'):
-        process(gmail, msg_id, parse_cardpointe, lambda p: CARDPOINTE_RULE, "cardpointe")
+        safe_process(gmail, msg_id, parse_cardpointe, lambda p: CARDPOINTE_RULE, "cardpointe")
 
     for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:no-reply@gocardless.com subject:"has paid you"'):
-        process(gmail, msg_id, parse_gocardless, lambda p: GOCARDLESS_RULE, "gocardless")
+        safe_process(gmail, msg_id, parse_gocardless, lambda p: GOCARDLESS_RULE, "gocardless")
 
     for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:no-reply@notifications.printavo.com subject:"received a deposit"'):
-        process(gmail, msg_id, parse_printavo, lambda p: PRINTAVO_ENTITIES.get(p["entity"]), "printavo")
+        safe_process(gmail, msg_id, parse_printavo, lambda p: PRINTAVO_ENTITIES.get(p["entity"]), "printavo")
 
     prefix = "[DRY RUN] " if DRY_RUN else ""
     print(f"\n{prefix}Done: {STATS}")
@@ -332,6 +342,8 @@ def main():
         print(f"{prefix}Unrecognized (kind, name): count -- {dict(UNRECOGNIZED_KEYS.most_common(30))}")
     if UNPARSED_SUBJECTS:
         print(f"{prefix}Unparsed (kind, subject): count -- {dict(UNPARSED_SUBJECTS.most_common(30))}")
+    if STATS["errors"]:
+        sys.exit(1)  # keep the run visibly red in Actions even though every sender ran
 
 if __name__ == "__main__":
     main()
