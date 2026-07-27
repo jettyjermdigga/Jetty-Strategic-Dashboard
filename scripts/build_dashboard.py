@@ -971,8 +971,12 @@ document.getElementById('pw').focus();
 def apply_gate(html, password):
     pw_hash = hashlib.sha256(password.encode()).hexdigest()
     gate = GATE_PAGE.replace('HASH_GOES_HERE', pw_hash)
-    # Escape for JS template literal
-    gate_esc = gate.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
+    # Escape for JS template literal. `</script` must also be broken up so the
+    # browser's HTML tokenizer (which closes <script> tags on the raw text
+    # "</script", independent of JS syntax) doesn't end the outer <script>
+    # block early when it hits the gate page's own inline <script>.
+    gate_esc = (gate.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
+                    .replace('</script', '<\\/script'))
     check_js = (
         '<script>\n'
         '(function(){\n'
