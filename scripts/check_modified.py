@@ -19,7 +19,13 @@ def get_drive_modified_time():
         scopes=["https://www.googleapis.com/auth/drive.readonly"],
     )
     service = build("drive", "v3", credentials=creds)
-    meta = service.files().get(fileId=os.environ["GDRIVE_FILE_ID"], fields="modifiedTime").execute()
+    # supportsAllDrives: metadata-only `files.get` calls can 404 on a file
+    # living in a Shared Drive without this flag, even though `get_media`
+    # (used by download_sheet.py) resolves the same file fine — harmless to
+    # pass when the file isn't on a Shared Drive.
+    meta = service.files().get(
+        fileId=os.environ["GDRIVE_FILE_ID"], fields="modifiedTime", supportsAllDrives=True
+    ).execute()
     return meta["modifiedTime"]
 
 
@@ -37,16 +43,23 @@ def get_previous_modified_time():
 
 
 def main():
-    current = get_drive_modified_time()
-    previous = get_previous_modified_time()
-    changed = current != previous
+    # This check is purely an optimization to skip unnecessary rebuilds. If it
+    # can't get a reliable answer for any reason, fail open (rebuild anyway)
+    # rather than letting a Drive API hiccup block real dashboard updates —
+    # that would be a much worse outcome than one extra unneeded rebuild.
+    try:
+        current = get_drive_modified_time()
+        previous = get_previous_modified_time()
+        changed = current != previous
+    except Exception as e:
+        print("WARNING: could not check Drive modifiedTime (" + repr(e) + "); rebuilding to be safe")
+        current, changed = "", True
 
     with open(os.environ["GITHUB_OUTPUT"], "a") as f:
         f.write("changed=" + ("true" if changed else "false") + "\n")
         f.write("modified_time=" + current + "\n")
 
     print("Drive file modifiedTime:    " + current)
-    print("Last published modifiedTime: " + str(previous))
     print("-> " + ("rebuild needed" if changed else "no change, skipping rebuild"))
 
 
