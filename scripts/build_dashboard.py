@@ -1,4 +1,4 @@
-import os, hashlib
+import os, hashlib, json
 import pandas as pd
 import pyxlsb
 
@@ -932,64 +932,79 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
 
 # ── Password gate ─────────────────────────────────────────────────────────────
 
-GATE_PAGE = '''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Jetty Strategic Dashboard 2026</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'DM Sans',sans-serif;background:#f7f5f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
-.gate{background:#fff;border:1px solid #dedad2;border-radius:6px;padding:44px 48px;width:380px;text-align:center;box-shadow:0 2px 16px rgba(0,0,0,.07)}
-.brand{font-size:28px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px}
-.sub{font-size:11px;color:#888780;margin-bottom:32px;font-family:'DM Mono',monospace;letter-spacing:.07em;text-transform:uppercase}
-input{width:100%;padding:12px 14px;border:1.5px solid #dedad2;border-radius:3px;font-size:15px;font-family:'DM Mono',monospace;letter-spacing:.12em;margin-bottom:12px;outline:none;text-align:center;background:#f7f5f0;color:#1a1a18}
-input:focus{border-color:#1a1a18;background:#fff}
-button{width:100%;padding:12px;background:#1a1a18;color:#fff;border:none;border-radius:3px;font-size:13px;font-weight:500;cursor:pointer}
-button:hover{background:#2d2d2a}
-.err{color:#a82f2f;font-size:11px;font-family:'DM Mono',monospace;margin-top:10px;display:none}
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&display=swap');
-</style>
-</head>
-<body>
-<div class="gate">
-  <div class="brand">Jetty</div>
-  <div class="sub">Strategic Dashboard &middot; 2026</div>
-  <input type="password" id="pw" placeholder="Password" onkeydown="if(event.key==='Enter')check()">
-  <button onclick="check()">View Dashboard</button>
-  <div class="err" id="err">Incorrect password</div>
-</div>
-<script>
-const H="HASH_GOES_HERE";
-async function sha256(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');}
-async function check(){const h=await sha256(document.getElementById('pw').value);if(h===H){sessionStorage.setItem('jd_auth',h);location.reload();}else{document.getElementById('err').style.display='block';document.getElementById('pw').value='';document.getElementById('pw').focus();}}
-document.getElementById('pw').focus();
-</script>
-</body>
-</html>'''
-
+# The gate hides/shows real markup already in the page via CSS + a
+# data-authed attribute on <html> — it does NOT use document.write() to swap
+# in a separate page. document.write() called from a synchronous inline
+# script only works as a "replace the whole document" trick when there's no
+# active parser (e.g. called after load, from a timeout/handler); called
+# from a script the parser is still in the middle of executing — exactly our
+# case, an inline <script> right after <body> — it just inserts the written
+# markup at the current parse position and parsing continues normally
+# afterward. That left the password box floating mid-page while the real
+# dashboard content kept rendering right along with it, ungated.
 def apply_gate(html, password):
     pw_hash = hashlib.sha256(password.encode()).hexdigest()
-    gate = GATE_PAGE.replace('HASH_GOES_HERE', pw_hash)
-    # Escape for JS template literal. `</script` must also be broken up so the
-    # browser's HTML tokenizer (which closes <script> tags on the raw text
-    # "</script", independent of JS syntax) doesn't end the outer <script>
-    # block early when it hits the gate page's own inline <script>.
-    gate_esc = (gate.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
-                    .replace('</script', '<\\/script'))
-    check_js = (
+
+    head_inject = (
+        '<script>'
+        'if(sessionStorage.getItem("jd_auth")==="' + pw_hash + '")'
+        'document.documentElement.setAttribute("data-authed","1")'
+        '</script>\n'
+        '<style>\n'
+        '.gate-overlay{position:fixed;inset:0;z-index:9999;background:#f7f5f0;display:flex;'
+        'align-items:center;justify-content:center}\n'
+        'html[data-authed="1"] .gate-overlay{display:none}\n'
+        # visibility:hidden (not display:none) so the .page layout still has
+        # real dimensions while hidden — the dashboard's Chart.js canvases
+        # size themselves against their container on first render, and a
+        # zero-size (display:none) container would leave them blank even
+        # after unlocking.
+        'html:not([data-authed="1"]) .page{visibility:hidden}\n'
+        'html[data-authed="1"] .page{visibility:visible}\n'
+        '.gate{background:#fff;border:1px solid #dedad2;border-radius:6px;padding:44px 48px;'
+        'width:380px;text-align:center;box-shadow:0 2px 16px rgba(0,0,0,.07)}\n'
+        '.gate .brand{font-size:28px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px}\n'
+        '.gate .sub{font-size:11px;color:#888780;margin-bottom:32px;font-family:\'DM Mono\',monospace;'
+        'letter-spacing:.07em;text-transform:uppercase}\n'
+        '.gate input{width:100%;padding:12px 14px;border:1.5px solid #dedad2;border-radius:3px;'
+        'font-size:15px;font-family:\'DM Mono\',monospace;letter-spacing:.12em;margin-bottom:12px;'
+        'outline:none;text-align:center;background:#f7f5f0;color:#1a1a18}\n'
+        '.gate input:focus{border-color:#1a1a18;background:#fff}\n'
+        '.gate button{width:100%;padding:12px;background:#1a1a18;color:#fff;border:none;'
+        'border-radius:3px;font-size:13px;font-weight:500;cursor:pointer}\n'
+        '.gate button:hover{background:#2d2d2a}\n'
+        '.gate .err{color:#a82f2f;font-size:11px;font-family:\'DM Mono\',monospace;margin-top:10px;'
+        'display:none}\n'
+        '</style>\n'
+    )
+
+    body_inject = (
+        '<div class="gate-overlay">\n'
+        '  <div class="gate">\n'
+        '    <div class="brand">Jetty</div>\n'
+        '    <div class="sub">Strategic Dashboard &middot; 2026</div>\n'
+        '    <input type="password" id="pw" placeholder="Password" onkeydown="if(event.key===\'Enter\')check()">\n'
+        '    <button onclick="check()">View Dashboard</button>\n'
+        '    <div class="err" id="err">Incorrect password</div>\n'
+        '  </div>\n'
+        '</div>\n'
         '<script>\n'
-        '(function(){\n'
-        '  var H="' + pw_hash + '";\n'
-        '  if(sessionStorage.getItem("jd_auth")!==H){\n'
-        '    document.open();\n'
-        '    document.write(`' + gate_esc + '`);\n'
-        '    document.close();\n'
-        '  }\n'
-        '})();\n'
+        'const GATE_H="' + pw_hash + '";\n'
+        'async function sha256(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));'
+        'return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");}\n'
+        'async function check(){'
+        'const h=await sha256(document.getElementById("pw").value);'
+        'if(h===GATE_H){sessionStorage.setItem("jd_auth",h);document.documentElement.setAttribute("data-authed","1");}'
+        'else{document.getElementById("err").style.display="block";'
+        'document.getElementById("pw").value="";document.getElementById("pw").focus();}'
+        '}\n'
+        'document.getElementById("pw").focus();\n'
         '</script>\n'
     )
-    return html.replace('<body>', '<body>' + check_js, 1)
+
+    html = html.replace('<head>\n', '<head>\n' + head_inject, 1)
+    html = html.replace('<body>\n', '<body>\n' + body_inject, 1)
+    return html
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -1010,6 +1025,11 @@ def main():
         f.write(html)
     size = os.path.getsize("output/index.html") / 1024
     print("Done — output/index.html written (" + str(round(size,1)) + " KB)")
+
+    source_modified = os.environ.get("SOURCE_MODIFIED_TIME", "")
+    with open("output/meta.json", "w") as f:
+        json.dump({"source_modified": source_modified}, f)
+    print("Recorded source_modified=" + source_modified + " in output/meta.json")
 
 if __name__ == "__main__":
     main()
