@@ -2,8 +2,13 @@ name: Update Jetty Dashboard
 
 on:
   schedule:
-    - cron: '0 9 * * 1'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild even if the source sheet has not changed'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -17,16 +22,36 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r scripts/requirements.txt
+      - name: Fetch previous publish metadata
+        run: git fetch origin gh-pages --depth=1 2>/dev/null || true
+      - name: Check if source sheet changed
+        id: check
+        env:
+          GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
+          GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
+        run: python scripts/check_modified.py
+      - name: Should rebuild?
+        id: gate
+        run: |
+          if [ "${{ steps.check.outputs.changed }}" = "true" ] || [ "${{ github.event_name == 'workflow_dispatch' && inputs.force }}" = "true" ]; then
+            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rebuild=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Download sheet from Google Drive
+        if: steps.gate.outputs.rebuild == 'true'
         env:
           GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
         run: python scripts/download_sheet.py
       - name: Build dashboard
+        if: steps.gate.outputs.rebuild == 'true'
         env:
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          SOURCE_MODIFIED_TIME: ${{ steps.check.outputs.modified_time }}
         run: python scripts/build_dashboard.py
       - uses: peaceiris/actions-gh-pages@v4
+        if: steps.gate.outputs.rebuild == 'true'
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./output

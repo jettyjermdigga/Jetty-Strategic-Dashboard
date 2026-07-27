@@ -1,4 +1,4 @@
-import os, hashlib
+import os, hashlib, json
 import pandas as pd
 import pyxlsb
 
@@ -1010,6 +1010,11 @@ def main():
         f.write(html)
     size = os.path.getsize("output/index.html") / 1024
     print("Done — output/index.html written (" + str(round(size,1)) + " KB)")
+
+    source_modified = os.environ.get("SOURCE_MODIFIED_TIME", "")
+    with open("output/meta.json", "w") as f:
+        json.dump({"source_modified": source_modified}, f)
+    print("Recorded source_modified=" + source_modified + " in output/meta.json")
 
 if __name__ == "__main__":
     main()
