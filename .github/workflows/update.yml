@@ -57,3 +57,10 @@ jobs:
           publish_dir: ./output
           publish_branch: gh-pages
           force_orphan: true
+      - name: Deploy to Cloudflare Workers
+        if: steps.gate.outputs.rebuild == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
