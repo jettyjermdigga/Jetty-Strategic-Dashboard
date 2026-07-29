@@ -47,14 +47,22 @@ jobs:
       - name: Build dashboard
         if: steps.gate.outputs.rebuild == 'true'
         env:
-          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           SOURCE_MODIFIED_TIME: ${{ steps.check.outputs.modified_time }}
         run: python scripts/build_dashboard.py
-      - uses: peaceiris/actions-gh-pages@v4
+      # The dashboard itself now deploys only to Cloudflare Workers (behind
+      # Access). gh-pages no longer serves the site, but check_modified.py
+      # still reads meta.json off that branch to skip unnecessary rebuilds —
+      # publish just that file, not the dashboard, to keep the check working
+      # without exposing the data on an unauthenticated GitHub Pages URL.
+      - name: Prepare metadata-only publish dir
         if: steps.gate.outputs.rebuild == 'true'
+        run: mkdir -p meta_only && cp output/meta.json meta_only/meta.json
+      - name: Publish build metadata to gh-pages
+        if: steps.gate.outputs.rebuild == 'true'
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./output
+          publish_dir: ./meta_only
           publish_branch: gh-pages
           force_orphan: true
       - name: Deploy to Cloudflare Workers
