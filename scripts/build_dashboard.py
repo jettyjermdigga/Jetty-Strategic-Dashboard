@@ -3,6 +3,14 @@ import pandas as pd
 import pyxlsb
 
 FP = "data/budget.xlsb"
+CATEGORIES_SHEET = "Categories"
+OPEX_CATEGORY_ORDER = [
+    "Advertising & Marketing",
+    "Facilities & Permits",
+    "Selling, Travel & Team",
+    "Equipment, Fleet & Warehouse",
+    "Software, Admin & Payroll",
+]
 
 # ── Formatters ──────────────────────────────────────────────────────────────
 
@@ -26,7 +34,7 @@ def cell(val, width, cls="", muted=False, bold=False):
     c = ' class="' + cls + '"' if cls else ""
     return '<span' + c + ' style="width:' + str(width) + 'px;text-align:right;font-family:var(--mono);font-size:11px;' + color + weight + '">' + val + '</span>'
 
-def trow(name, ytd_act, ytd_plan, ann_plan, ann_proj, is_cost=False, is_total=False):
+def trow(name, ytd_act, ytd_plan, ann_plan, ann_proj, is_cost=False, is_total=False, highlight=None):
     ytd_var = ytd_act - ytd_plan
     ann_var = ann_proj - ann_plan
     if is_cost:
@@ -38,7 +46,12 @@ def trow(name, ytd_act, ytd_plan, ann_plan, ann_proj, is_cost=False, is_total=Fa
         avc = "pos" if ann_var > 100  else ("neg" if ann_var < -100 else "neu")
         ac  = "pos" if ytd_var >  50 else ("neg" if ytd_var < -50  else "")
     style = ' style="border-top:1.5px solid var(--ink);margin-top:4px;padding-top:8px;font-weight:500"' if is_total else ""
-    return ('    <div class="ch-row"' + style + '><span class="ch-name">' + name + '</span>'
+    name_html = name
+    if highlight:
+        name_html = ('<span style="color:#BA7517;margin-right:3px">&#9733;</span>' + name
+                      + (' <span style="font-size:10px;color:var(--ink-muted)">— ' + highlight + '</span>'
+                         if isinstance(highlight, str) else ''))
+    return ('    <div class="ch-row"' + style + '><span class="ch-name">' + name_html + '</span>'
             + cell(fk(ytd_act), 72, ac, bold=True)
             + cell(fk(ytd_plan), 68, muted=True)
             + cell(vk(ytd_var), 62, yvc)
@@ -67,6 +80,29 @@ def st_xy(d):
     return '[' + ','.join('{x:"Wk ' + str(k) + '",y:' + str(v) + '}' for k,v in sorted(d.items()) if v) + ']'
 
 # ── Data extraction ──────────────────────────────────────────────────────────
+
+def read_categories():
+    """Optional 'Categories' tab: Line Item | Category | Highlight | Callout Label.
+    Line Item must match the sheet name used in opex_map exactly. Returns {} if the
+    tab doesn't exist yet, so the OpEx section falls back to the flat table."""
+    try:
+        df = pd.read_excel(FP, sheet_name=CATEGORIES_SHEET, engine='pyxlsb', header=0)
+    except Exception:
+        return {}
+    cats = {}
+    for _, row in df.iterrows():
+        name = row.get('Line Item')
+        if pd.isna(name) or not str(name).strip():
+            continue
+        category = row.get('Category')
+        highlight = str(row.get('Highlight', '')).strip().upper() == 'Y'
+        callout = row.get('Callout Label')
+        cats[str(name).strip()] = {
+            'category': str(category).strip() if pd.notna(category) and str(category).strip() else 'Uncategorized',
+            'highlight': highlight,
+            'callout': str(callout).strip() if highlight and pd.notna(callout) and str(callout).strip() else None,
+        }
+    return cats
 
 def read_all():
     d = {}
@@ -167,6 +203,8 @@ def read_all():
         ('Website expenses',             'Website Expenses'),
     ]
     d['opex_lines'] = [(lbl, get_a(k), get_b(k), get_ann(k), proj(k)) for lbl,k in opex_map]
+    d['opex_keys'] = [k for lbl,k in opex_map]
+    d['opex_categories'] = read_categories()
 
     # Cash flow
     cin_w,cin_d,cin_i,cin_t,cout_b,cout_i,cout_o = [],[],[],[],[],[],[]
@@ -620,6 +658,56 @@ def two_col(left, right):
             + right + '\n'
             '  </div>\n')
 
+def build_opex_body(d):
+    opex = d['opex']
+    lines = d['opex_lines']
+    keys = d['opex_keys']
+    cats = d['opex_categories']
+
+    if not cats:
+        tbl = COL_HDR
+        for item in lines: tbl += trow(*item)
+        tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_total=True)
+        return card("OpEx by category", tbl)
+
+    groups = {}
+    order = []
+    for (lbl, act, plan, ann, ap), key in zip(lines, keys):
+        meta = cats.get(key, {})
+        cat_name = meta.get('category', 'Uncategorized')
+        if cat_name not in groups:
+            groups[cat_name] = []
+            order.append(cat_name)
+        groups[cat_name].append((lbl, act, plan, ann, ap, meta.get('highlight'), meta.get('callout')))
+
+    ordered_cats = [c for c in OPEX_CATEGORY_ORDER if c in groups] + [c for c in order if c not in OPEX_CATEGORY_ORDER]
+
+    body = ''
+    for cat_name in ordered_cats:
+        tbl = COL_HDR
+        sub_act = sub_plan = sub_ann_plan = sub_ann_proj = 0
+        for lbl, act, plan, ann, ap, hl, callout in groups[cat_name]:
+            tbl += trow(lbl, act, plan, ann, ap, highlight=(callout or True) if hl else None)
+            sub_act += act; sub_plan += plan; sub_ann_plan += ann; sub_ann_proj += ap
+        tbl += trow(cat_name + " total", sub_act, sub_plan, sub_ann_plan, sub_ann_proj, is_total=True)
+        body += card(cat_name, tbl)
+
+    itemized_act      = sum(l[1] for l in lines)
+    itemized_plan     = sum(l[2] for l in lines)
+    itemized_ann_plan = sum(l[3] for l in lines)
+    itemized_ann_proj = sum(l[4] for l in lines)
+    other = (opex['act'] - itemized_act, opex['plan'] - itemized_plan,
+             opex['ann_plan'] - itemized_ann_plan, opex['ann_proj'] - itemized_ann_proj)
+    if any(abs(v) > 1 for v in other):
+        tbl = COL_HDR
+        tbl += trow("Other / unallocated OpEx", *other)
+        body += card("Unallocated", tbl)
+
+    total_tbl = COL_HDR
+    total_tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_total=True)
+    body += card("Total OpEx", total_tbl)
+    return body
+
 def sec_label(txt):
     return ('  <div style="font-family:var(--mono);font-size:12px;font-weight:700;'
             'letter-spacing:.12em;text-transform:uppercase;color:var(--ink);'
@@ -650,10 +738,8 @@ def build_html(d):
                      cogs['act'], cogs['plan'], cogs['ann_plan'], cogs['ann_proj'],
                      is_cost=True, is_total=True)
 
-    # OpEx table
-    opex_tbl = COL_HDR
-    for item in d['opex_lines']: opex_tbl += trow(*item)
-    opex_tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_total=True)
+    # OpEx section (grouped by category if the sheet's Categories tab is present)
+    opex_body = build_opex_body(d)
 
     # CF tables
     cf = d['cf']
@@ -836,7 +922,7 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
         + two_col(card("Cost detail", cogs_tbl), cogs_c)
 
         + sec_label("Operating Expenses — YTD &amp; Full Year")
-        + two_col(card("OpEx by category", opex_tbl), opex_c)
+        + two_col(opex_body, opex_c)
 
         + sec_label("Cash Flow — YTD &amp; Full Year")
         + two_col(
