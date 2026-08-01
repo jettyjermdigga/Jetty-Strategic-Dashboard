@@ -126,7 +126,7 @@ def read_all():
     d['week']       = WK
     d['net_inc_var']= sc(21, 'D')
     d['ytd_status'] = 'ahead' if d['net_inc_var'] >= 0 else 'behind'
-    for key, row in [('rev',11),('cogs',13),('opex',15)]:
+    for key, row in [('rev',11),('cogs',13),('opex',15),('cf_var_post',81)]:
         d[key] = {k: sc(row, c) for k,c in [('plan','B'),('act','C'),('var','D'),
                                               ('ann_plan','G'),('ann_proj','H'),('ann_var','I')]}
 
@@ -781,14 +781,16 @@ def build_html(d):
     cin_act=p('cin_t'); cin_prj=p('proj_w')+p('proj_d')+p('proj_i')
     cin_tbl += trow("Total cash in", cin_act, cin_prj, 0, cin_act+(cin_act-cin_prj), is_total=True)
 
+    # Cash out variance is colored like cash in (below plan = red, above = green) —
+    # it's tracked against a cash target, not treated as discretionary spend like OpEx/COGS.
     cout_tbl = COL_HDR
     for lbl, act_k, proj_k in [("COGS — brand",'cout_b','proj_b'),("COGS — INK",'cout_i','proj_i2'),("Other COGS + shipping",'cout_o','proj_o'),
                                ("Labor",'cout_l','proj_l'),("OpEx + EBIT",'cout_e','proj_e')]:
         act=p(act_k); prj=p(proj_k)
-        cout_tbl += trow(lbl, act, prj, 0, act+(act-prj), is_cost=True)
+        cout_tbl += trow(lbl, act, prj, 0, act+(act-prj))
     cout_act=p('cout_b')+p('cout_i')+p('cout_o')+p('cout_l')+p('cout_e')
     cout_prj=p('proj_b')+p('proj_i2')+p('proj_o')+p('proj_l')+p('proj_e')
-    cout_tbl += trow("Total cash out", cout_act, cout_prj, 0, cout_act+(cout_act-cout_prj), is_cost=True, is_total=True)
+    cout_tbl += trow("Total cash out", cout_act, cout_prj, 0, cout_act+(cout_act-cout_prj), is_total=True)
 
     # On Order card
     oo=d['on_order']; h1_wks=d['whsl_h1_wks_left']
@@ -958,8 +960,13 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
 
         + sec_label("Cash Flow — YTD &amp; Full Year")
         + two_col(
-            '  ' + kpi("Total cash in — YTD actual", fk(cin_act),
+            '  <div class="kpi-row cols-2" style="margin-bottom:12px">\n'
+            '    ' + kpi("Total cash in — YTD actual", fk(cin_act),
                         ('ahead of' if cf_vs>=0 else 'behind') + ' projection by ' + fk(abs(cf_vs))) + '\n'
+            '    ' + kpi("Net cash flow — after borrowing", fk(d['cf_var_post']['act']),
+                        ('ahead of' if d['cf_var_post']['var']>=0 else 'behind') + ' plan by ' + fk(abs(d['cf_var_post']['var'])),
+                        None, 'pos' if d['cf_var_post']['act']>=0 else 'neg') + '\n'
+            '  </div>\n'
             '  <div style="margin-bottom:8px;margin-top:16px;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted)">Cash in — actual vs projected</div>\n'
             '  <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px">\n'
             '    <div class="card"><div class="card-title">Wholesale</div><div class="chart-wrap" style="height:140px"><canvas id="ciWholesale"></canvas></div></div>\n'
