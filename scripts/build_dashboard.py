@@ -4,13 +4,6 @@ import pyxlsb
 
 FP = "data/budget.xlsb"
 CATEGORIES_SHEET = "Categories"
-OPEX_CATEGORY_ORDER = [
-    "Advertising & Marketing",
-    "Facilities & Permits",
-    "Selling, Travel & Team",
-    "Equipment, Fleet & Warehouse",
-    "Software, Admin & Payroll",
-]
 
 # ── Formatters ──────────────────────────────────────────────────────────────
 
@@ -82,21 +75,31 @@ def st_xy(d):
 # ── Data extraction ──────────────────────────────────────────────────────────
 
 def read_categories():
-    """Optional 'Categories' tab: Line Item | Category | Highlight | Callout Label.
-    Line Item must match the sheet name used in opex_map exactly. Returns {} if the
-    tab doesn't exist yet, so the OpEx section falls back to the flat table."""
+    """Optional 'Categories' tab: <line item> | Category | Highlight | [Callout Label].
+    Columns are matched by position, not header text, and a title/blank row above
+    the header is tolerated — the header row is whichever row has "categ" in its
+    second cell. The line item must match the sheet name used in the Actual/Budget
+    tabs exactly. Returns {} if the tab doesn't exist yet, so the OpEx section
+    falls back to the flat opex_map-driven table."""
     try:
-        df = pd.read_excel(FP, sheet_name=CATEGORIES_SHEET, engine='pyxlsb', header=0)
+        raw = pd.read_excel(FP, sheet_name=CATEGORIES_SHEET, engine='pyxlsb', header=None)
     except Exception:
         return {}
+    header_row = None
+    for i, row in raw.iterrows():
+        if pd.notna(row.get(1)) and 'categ' in str(row[1]).strip().lower():
+            header_row = i
+            break
+    if header_row is None:
+        return {}
     cats = {}
-    for _, row in df.iterrows():
-        name = row.get('Line Item')
+    for _, row in raw.iloc[header_row + 1:].iterrows():
+        name = row.get(0)
         if pd.isna(name) or not str(name).strip():
             continue
-        category = row.get('Category')
-        highlight = str(row.get('Highlight', '')).strip().upper() == 'Y'
-        callout = row.get('Callout Label')
+        category = row.get(1)
+        highlight = pd.notna(row.get(2)) and str(row.get(2)).strip() != ''
+        callout = row.get(3) if len(row) > 3 else None
         cats[str(name).strip()] = {
             'category': str(category).strip() if pd.notna(category) and str(category).strip() else 'Uncategorized',
             'highlight': highlight,
@@ -202,9 +205,19 @@ def read_all():
         ('Team building',                'Team Building'),
         ('Website expenses',             'Website Expenses'),
     ]
-    d['opex_lines'] = [(lbl, get_a(k), get_b(k), get_ann(k), proj(k)) for lbl,k in opex_map]
-    d['opex_keys'] = [k for lbl,k in opex_map]
-    d['opex_categories'] = read_categories()
+    opex_categories = read_categories()
+    if opex_categories:
+        # Categories tab is the authoritative full line-item list once it exists —
+        # it covers every real OpEx row, not just the hand-picked opex_map subset.
+        label_overrides = {k: lbl for lbl, k in opex_map}
+        opex_keys = list(opex_categories.keys())
+        opex_lines = [(label_overrides.get(k, k), get_a(k), get_b(k), get_ann(k), proj(k)) for k in opex_keys]
+    else:
+        opex_keys = [k for lbl, k in opex_map]
+        opex_lines = [(lbl, get_a(k), get_b(k), get_ann(k), proj(k)) for lbl, k in opex_map]
+    d['opex_lines'] = opex_lines
+    d['opex_keys'] = opex_keys
+    d['opex_categories'] = opex_categories
 
     # Cash flow
     cin_w,cin_d,cin_i,cin_t,cout_b,cout_i,cout_o = [],[],[],[],[],[],[]
@@ -666,8 +679,8 @@ def build_opex_body(d):
 
     if not cats:
         tbl = COL_HDR
-        for item in lines: tbl += trow(*item)
-        tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_total=True)
+        for item in lines: tbl += trow(*item, is_cost=True)
+        tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_cost=True, is_total=True)
         return card("OpEx by category", tbl)
 
     groups = {}
@@ -680,16 +693,16 @@ def build_opex_body(d):
             order.append(cat_name)
         groups[cat_name].append((lbl, act, plan, ann, ap, meta.get('highlight'), meta.get('callout')))
 
-    ordered_cats = [c for c in OPEX_CATEGORY_ORDER if c in groups] + [c for c in order if c not in OPEX_CATEGORY_ORDER]
+    ordered_cats = order  # display order follows the Categories tab's row order
 
     body = ''
     for cat_name in ordered_cats:
         tbl = COL_HDR
         sub_act = sub_plan = sub_ann_plan = sub_ann_proj = 0
         for lbl, act, plan, ann, ap, hl, callout in groups[cat_name]:
-            tbl += trow(lbl, act, plan, ann, ap, highlight=(callout or True) if hl else None)
+            tbl += trow(lbl, act, plan, ann, ap, is_cost=True, highlight=(callout or True) if hl else None)
             sub_act += act; sub_plan += plan; sub_ann_plan += ann; sub_ann_proj += ap
-        tbl += trow(cat_name + " total", sub_act, sub_plan, sub_ann_plan, sub_ann_proj, is_total=True)
+        tbl += trow(cat_name + " total", sub_act, sub_plan, sub_ann_plan, sub_ann_proj, is_cost=True, is_total=True)
         body += card(cat_name, tbl)
 
     itemized_act      = sum(l[1] for l in lines)
@@ -700,11 +713,11 @@ def build_opex_body(d):
              opex['ann_plan'] - itemized_ann_plan, opex['ann_proj'] - itemized_ann_proj)
     if any(abs(v) > 1 for v in other):
         tbl = COL_HDR
-        tbl += trow("Other / unallocated OpEx", *other)
+        tbl += trow("Other / unallocated OpEx", *other, is_cost=True)
         body += card("Unallocated", tbl)
 
     total_tbl = COL_HDR
-    total_tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_total=True)
+    total_tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_cost=True, is_total=True)
     body += card("Total OpEx", total_tbl)
     return body
 
