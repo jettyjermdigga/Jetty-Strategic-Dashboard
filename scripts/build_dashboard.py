@@ -220,9 +220,9 @@ def read_all():
     d['opex_categories'] = opex_categories
 
     # Cash flow
-    cin_w,cin_d,cin_i,cin_t,cout_b,cout_i,cout_o = [],[],[],[],[],[],[]
-    proj_w,proj_d,proj_i,proj_b,proj_i2,proj_o   = [],[],[],[],[],[]
-    rw=rd=ri=rb=ri2=ro=0
+    cin_w,cin_d,cin_i,cin_t,cout_b,cout_i,cout_o,cout_l,cout_e = [],[],[],[],[],[],[],[],[]
+    proj_w,proj_d,proj_i,proj_b,proj_i2,proj_o,proj_l,proj_e  = [],[],[],[],[],[],[],[]
+    rw=rd=ri=rb=ri2=ro=rl=re=0
     labels=[]
     for _,row in df_cf.iterrows():
         if pd.notna(row[2]) and str(row[2]) != 'Week':
@@ -235,6 +235,8 @@ def read_all():
             rb  += float(row[15]) if pd.notna(row[15]) else 0
             ri2 += float(row[16]) if pd.notna(row[16]) else 0
             ro  += float(row[17]) if pd.notna(row[17]) else 0
+            rl  += float(row[18]) if pd.notna(row[18]) else 0
+            re  += float(row[19]) if pd.notna(row[19]) else 0
             act  = float(row[13]) if pd.notna(row[13]) else 0
             if act > 0:
                 labels.append("Wk " + str(wk))
@@ -245,14 +247,17 @@ def read_all():
                 cout_b.append(round(float(row[21]) if pd.notna(row[21]) else 0))
                 cout_i.append(round(float(row[22]) if pd.notna(row[22]) else 0))
                 cout_o.append(round(float(row[23]) if pd.notna(row[23]) else 0))
+                cout_l.append(round(float(row[24]) if pd.notna(row[24]) else 0))
+                cout_e.append(round(float(row[25]) if pd.notna(row[25]) else 0))
                 proj_w.append(round(rw));  proj_d.append(round(rd));  proj_i.append(round(ri))
                 proj_b.append(round(rb));  proj_i2.append(round(ri2)); proj_o.append(round(ro))
+                proj_l.append(round(rl));  proj_e.append(round(re))
 
     d['cf'] = dict(labels=labels,
         cin_w=cin_w, cin_d=cin_d, cin_i=cin_i, cin_t=cin_t,
-        cout_b=cout_b, cout_i=cout_i, cout_o=cout_o,
+        cout_b=cout_b, cout_i=cout_i, cout_o=cout_o, cout_l=cout_l, cout_e=cout_e,
         proj_w=proj_w, proj_d=proj_d, proj_i=proj_i,
-        proj_b=proj_b, proj_i2=proj_i2, proj_o=proj_o)
+        proj_b=proj_b, proj_i2=proj_i2, proj_o=proj_o, proj_l=proj_l, proj_e=proj_e)
 
     # Inventory
     cat_cols = {
@@ -497,7 +502,7 @@ def generate_callouts(d):
 
     cin_tot  = cf['cin_t'][-1]  if cf['cin_t']  else 0
     proj_tot = (cf['proj_w'][-1] if cf['proj_w'] else 0) + (cf['proj_d'][-1] if cf['proj_d'] else 0) + (cf['proj_i'][-1] if cf['proj_i'] else 0)
-    cout_tot = (cf['cout_b'][-1] if cf['cout_b'] else 0) + (cf['cout_i'][-1] if cf['cout_i'] else 0) + (cf['cout_o'][-1] if cf['cout_o'] else 0)
+    cout_tot = sum((cf[k][-1] if cf[k] else 0) for k in ('cout_b','cout_i','cout_o','cout_l','cout_e'))
     surplus  = cin_tot - cout_tot
     h1_wks   = d['whsl_h1_wks_left']
     h1_proj  = whsl_act + oo['h1']
@@ -558,7 +563,8 @@ def generate_callouts(d):
         win("Total cumulative cash in through Week " + str(WK) + " is " + fk(cin_tot) + " "
             + ("ahead of" if cin_tot>=proj_tot else "behind") + " projection by " + fk(abs(cin_tot-proj_tot)) + ". "
             "DTC cash in of " + fk(dtc_act) + " is " + fk(abs(dtc_act-dtc_proj)) + " vs projection."),
-        watch("Total cash out is " + fk(cout_tot) + ". The business is cash-flow positive with a " + fk(surplus) + " cumulative surplus."),
+        watch("Total cash out is " + fk(cout_tot) + ". The business is cash-flow " + ("positive" if surplus >= 0 else "negative") +
+              " with a " + fk(abs(surplus)) + " cumulative " + ("surplus" if surplus >= 0 else "deficit") + " before borrowing."),
         trend("H1 open orders of " + fk(oo['h1']) + " will drive additional cash in over the next " + str(h1_wks) + " weeks as orders ship and invoice."),
         outlook("F26 inventory payments will increase cash out in H2 as product ships — this is planned and expected.")
     ])
@@ -586,7 +592,7 @@ def generate_callouts(d):
 def build_chart_js(d):
     cf     = d['cf']
     labels = '[' + ','.join('"' + l + '"' for l in cf['labels']) + ']'
-    cout_tot = [b+i+o for b,i,o in zip(cf['cout_b'],cf['cout_i'],cf['cout_o'])]
+    cout_tot = [b+i+o+l+e for b,i,o,l,e in zip(cf['cout_b'],cf['cout_i'],cf['cout_o'],cf['cout_l'],cf['cout_e'])]
 
     return (
         'const fmtK=v=>{const a=Math.abs(v);'
@@ -609,6 +615,8 @@ def build_chart_js(d):
         'mkChart("coCOGSBrand",' + js_arr(cf['cout_b']) + ',' + js_arr(cf['proj_b'])  + ',"#a82f2f");\n'
         'mkChart("coCOGSINK",  ' + js_arr(cf['cout_i']) + ',' + js_arr(cf['proj_i2']) + ',"#D85A30");\n'
         'mkChart("coOther",    ' + js_arr(cf['cout_o']) + ',' + js_arr(cf['proj_o'])  + ',"#888780");\n'
+        'mkChart("coLabor",    ' + js_arr(cf['cout_l']) + ',' + js_arr(cf['proj_l'])  + ',"#6a4fA0");\n'
+        'mkChart("coOpEx",     ' + js_arr(cf['cout_e']) + ',' + js_arr(cf['proj_e'])  + ',"#2e6da4");\n'
         '(function(){const el=document.getElementById("cfChart");if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:WKS,datasets:['
         '{label:"Cash in", data:' + js_arr(cf['cin_t'])  + ',borderColor:"#0d6e4f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3},'
@@ -774,10 +782,12 @@ def build_html(d):
     cin_tbl += trow("Total cash in", cin_act, cin_prj, 0, cin_act+(cin_act-cin_prj), is_total=True)
 
     cout_tbl = COL_HDR
-    for lbl, act_k, proj_k in [("COGS — brand",'cout_b','proj_b'),("COGS — INK",'cout_i','proj_i2'),("Other COGS + shipping",'cout_o','proj_o')]:
+    for lbl, act_k, proj_k in [("COGS — brand",'cout_b','proj_b'),("COGS — INK",'cout_i','proj_i2'),("Other COGS + shipping",'cout_o','proj_o'),
+                               ("Labor",'cout_l','proj_l'),("OpEx + EBIT",'cout_e','proj_e')]:
         act=p(act_k); prj=p(proj_k)
         cout_tbl += trow(lbl, act, prj, 0, act+(act-prj), is_cost=True)
-    cout_act=p('cout_b')+p('cout_i')+p('cout_o'); cout_prj=p('proj_b')+p('proj_i2')+p('proj_o')
+    cout_act=p('cout_b')+p('cout_i')+p('cout_o')+p('cout_l')+p('cout_e')
+    cout_prj=p('proj_b')+p('proj_i2')+p('proj_o')+p('proj_l')+p('proj_e')
     cout_tbl += trow("Total cash out", cout_act, cout_prj, 0, cout_act+(cout_act-cout_prj), is_cost=True, is_total=True)
 
     # On Order card
@@ -961,6 +971,8 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
             '    <div class="card"><div class="card-title">COGS — brand</div><div class="chart-wrap" style="height:140px"><canvas id="coCOGSBrand"></canvas></div></div>\n'
             '    <div class="card"><div class="card-title">COGS — INK</div><div class="chart-wrap" style="height:140px"><canvas id="coCOGSINK"></canvas></div></div>\n'
             '    <div class="card"><div class="card-title">Other COGS + shipping</div><div class="chart-wrap" style="height:140px"><canvas id="coOther"></canvas></div></div>\n'
+            '    <div class="card"><div class="card-title">Labor</div><div class="chart-wrap" style="height:140px"><canvas id="coLabor"></canvas></div></div>\n'
+            '    <div class="card"><div class="card-title">OpEx + EBIT</div><div class="chart-wrap" style="height:140px"><canvas id="coOpEx"></canvas></div></div>\n'
             '  </div>\n'
             + card("Cumulative cash in vs. cash out",
                    '      <div class="chart-wrap" style="height:190px"><canvas id="cfChart"></canvas></div>\n')
