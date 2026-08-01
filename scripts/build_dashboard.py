@@ -665,6 +665,15 @@ def card(title, body):
             + body +
             '    </div>\n')
 
+def blue_card(title, body):
+    return ('    <div class="card" style="padding:0;overflow:hidden">\n'
+            '      <div style="background:#2e6da4;color:#fff;font-family:var(--mono);font-size:11px;'
+            'font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:10px 18px">' + title + '</div>\n'
+            '      <div style="padding:16px 18px">\n'
+            + body +
+            '      </div>\n'
+            '    </div>\n')
+
 def two_col(left, right):
     return ('  <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;margin-bottom:28px">\n'
             '    <div>\n' + left + '    </div>\n'
@@ -677,11 +686,15 @@ def build_opex_body(d):
     keys = d['opex_keys']
     cats = d['opex_categories']
 
+    total_tbl = COL_HDR
+    total_tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_cost=True, is_total=True)
+    body = blue_card("Total OpEx", total_tbl)
+
     if not cats:
         tbl = COL_HDR
         for item in lines: tbl += trow(*item, is_cost=True)
         tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_cost=True, is_total=True)
-        return card("OpEx by category", tbl)
+        return body + blue_card("OpEx by category", tbl)
 
     groups = {}
     order = []
@@ -695,7 +708,6 @@ def build_opex_body(d):
 
     ordered_cats = order  # display order follows the Categories tab's row order
 
-    body = ''
     for cat_name in ordered_cats:
         tbl = COL_HDR
         sub_act = sub_plan = sub_ann_plan = sub_ann_proj = 0
@@ -703,7 +715,7 @@ def build_opex_body(d):
             tbl += trow(lbl, act, plan, ann, ap, is_cost=True, highlight=(callout or True) if hl else None)
             sub_act += act; sub_plan += plan; sub_ann_plan += ann; sub_ann_proj += ap
         tbl += trow(cat_name + " total", sub_act, sub_plan, sub_ann_plan, sub_ann_proj, is_cost=True, is_total=True)
-        body += card(cat_name, tbl)
+        body += blue_card(cat_name, tbl)
 
     itemized_act      = sum(l[1] for l in lines)
     itemized_plan     = sum(l[2] for l in lines)
@@ -714,11 +726,8 @@ def build_opex_body(d):
     if any(abs(v) > 1 for v in other):
         tbl = COL_HDR
         tbl += trow("Other / unallocated OpEx", *other, is_cost=True)
-        body += card("Unallocated", tbl)
+        body += blue_card("Unallocated", tbl)
 
-    total_tbl = COL_HDR
-    total_tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_cost=True, is_total=True)
-    body += card("Total OpEx", total_tbl)
     return body
 
 def sec_label(txt):
