@@ -132,22 +132,22 @@ def read_all():
 
     def get_a(name):
         for i,row in df_a.iterrows():
-            if str(row[0]) == name: return float(row[WK]) if pd.notna(row[WK]) else 0.0
+            if str(row[0]).strip() == name: return float(row[WK]) if pd.notna(row[WK]) else 0.0
         return 0.0
     def get_b(name, wks=None):
         w = wks or WK
         for i,row in df_b.iterrows():
-            if str(row[0]) == name:
+            if str(row[0]).strip() == name:
                 return sum(float(row[j]) for j in range(1, w+1) if pd.notna(row[j]))
         return 0.0
     def get_r(name):
         for i,row in df_b.iterrows():
-            if str(row[0]) == name:
+            if str(row[0]).strip() == name:
                 return sum(float(row[j]) for j in range(WK+1, 53) if pd.notna(row[j]))
         return 0.0
     def get_ann(name):
         for i,row in df_b.iterrows():
-            if str(row[0]) == name: return float(row[59]) if pd.notna(row[59]) else 0.0
+            if str(row[0]).strip() == name: return float(row[59]) if pd.notna(row[59]) else 0.0
         return 0.0
     def proj(name): return get_a(name) + get_r(name)
 
