@@ -20,49 +20,6 @@ def vk(v):
     if a >= 1_000_000: return sign + "$" + format(a/1_000_000, ".2f") + "M"
     if a >= 1_000:     return sign + "$" + format(a/1_000,     ".1f") + "K"
     return sign + "$" + f"{a:,.0f}"
-
-def cell(val, width, cls="", muted=False, bold=False):
-    color  = "color:var(--ink-muted);" if muted else ""
-    weight = "font-weight:500;"        if bold  else ""
-    c = ' class="' + cls + '"' if cls else ""
-    return '<span' + c + ' style="width:' + str(width) + 'px;text-align:right;font-family:var(--mono);font-size:11px;' + color + weight + '">' + val + '</span>'
-
-def trow(name, ytd_act, ytd_plan, ann_plan, ann_proj, is_cost=False, is_total=False, highlight=None):
-    ytd_var = ytd_act - ytd_plan
-    ann_var = ann_proj - ann_plan
-    if is_cost:
-        yvc = "pos" if ytd_var < -50 else ("neg" if ytd_var >  50 else "neu")
-        avc = "pos" if ann_var < -100 else ("neg" if ann_var > 100 else "neu")
-        ac  = "pos" if ytd_var < -50 else ("neg" if ytd_var >  50 else "")
-    else:
-        yvc = "pos" if ytd_var >  50 else ("neg" if ytd_var < -50  else "neu")
-        avc = "pos" if ann_var > 100  else ("neg" if ann_var < -100 else "neu")
-        ac  = "pos" if ytd_var >  50 else ("neg" if ytd_var < -50  else "")
-    style = ' style="border-top:1.5px solid var(--ink);margin-top:4px;padding-top:8px;font-weight:500"' if is_total else ""
-    name_html = name
-    if highlight:
-        name_html = ('<span style="color:#BA7517;margin-right:3px">&#9733;</span>' + name
-                      + (' <span style="font-size:10px;color:var(--ink-muted)">— ' + highlight + '</span>'
-                         if isinstance(highlight, str) else ''))
-    return ('    <div class="ch-row"' + style + '><span class="ch-name">' + name_html + '</span>'
-            + cell(fk(ytd_act), 72, ac, bold=True)
-            + cell(fk(ytd_plan), 68, muted=True)
-            + cell(vk(ytd_var), 62, yvc)
-            + cell(fk(ann_plan), 78, muted=True)
-            + cell(fk(ann_proj), 78, bold=True)
-            + cell(vk(ann_var), 62, avc)
-            + '</div>\n')
-
-COL_HDR = '''    <div style="display:flex;gap:6px;padding-bottom:6px;font-size:10px;color:var(--ink-muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--rule)">
-      <span style="flex:1">Category</span>
-      <span style="width:72px;text-align:right">YTD Actual</span>
-      <span style="width:68px;text-align:right">YTD Plan</span>
-      <span style="width:62px;text-align:right">YTD Var</span>
-      <span style="width:78px;text-align:right">Ann. Plan</span>
-      <span style="width:78px;text-align:right">Ann. Proj.</span>
-      <span style="width:62px;text-align:right">Ann. Var</span>
-    </div>\n'''
-
 TAB_JS = '''
 document.querySelectorAll(".tab").forEach(function(t){
   t.addEventListener("click", function(){
@@ -143,7 +100,7 @@ def read_all():
     d['week']       = WK
     d['net_inc_var']= sc(21, 'D')
     d['ytd_status'] = 'ahead' if d['net_inc_var'] >= 0 else 'behind'
-    for key, row in [('rev',11),('cogs',13),('opex',15),
+    for key, row in [('rev',11),('cogs',13),('opex',15),('net_income',21),
                       ('cash_in',68),('cash_out',75),('cf_var_pre',77),('cf_var_post',81)]:
         d[key] = {k: sc(row, c) for k,c in [('plan','B'),('act','C'),('var','D'),
                                               ('ann_plan','G'),('ann_proj','H'),('ann_var','I')]}
@@ -248,6 +205,11 @@ def read_all():
     # for a forecast of the remaining schedule.
     cf_weekly, cf_forecast = [], []
     prev_w = prev_d = prev_i = prev_t = 0.0
+    # Full-year plan totals (all 52 weeks), for an annual projection that's
+    # consistent with the actual+remaining-plan convention used everywhere
+    # else: ann_proj = ytd_act + remaining_plan, so ann_var always equals
+    # ytd_var exactly (remaining_plan cancels out of the subtraction).
+    aw_full=ad_full=ai_full=ab_full=ai2_full=ao_full=al_full=ae_full=0.0
     for _,row in df_cf.iterrows():
         if pd.notna(row[2]) and str(row[2]) != 'Week':
             try: wk = int(row[2])
@@ -257,17 +219,24 @@ def read_all():
             plan_d = float(row[6]) if pd.notna(row[6]) else 0.0
             plan_i = float(row[7]) if pd.notna(row[7]) else 0.0
             plan_t = float(row[8]) if pd.notna(row[8]) else (plan_w+plan_d+plan_i)
+            cout_b_plan = float(row[15]) if pd.notna(row[15]) else 0.0
+            cout_i_plan = float(row[16]) if pd.notna(row[16]) else 0.0
+            cout_o_plan = float(row[17]) if pd.notna(row[17]) else 0.0
+            cout_l_plan = float(row[18]) if pd.notna(row[18]) else 0.0
+            cout_e_plan = float(row[19]) if pd.notna(row[19]) else 0.0
+            aw_full+=plan_w; ad_full+=plan_d; ai_full+=plan_i
+            ab_full+=cout_b_plan; ai2_full+=cout_i_plan; ao_full+=cout_o_plan; al_full+=cout_l_plan; ae_full+=cout_e_plan
             if wk > WK:
                 cf_forecast.append(dict(wk=wk, w=plan_w, d=plan_d, i=plan_i, t=plan_t))
                 continue
             rw  += plan_w
             rd  += plan_d
             ri  += plan_i
-            rb  += float(row[15]) if pd.notna(row[15]) else 0
-            ri2 += float(row[16]) if pd.notna(row[16]) else 0
-            ro  += float(row[17]) if pd.notna(row[17]) else 0
-            rl  += float(row[18]) if pd.notna(row[18]) else 0
-            re  += float(row[19]) if pd.notna(row[19]) else 0
+            rb  += cout_b_plan
+            ri2 += cout_i_plan
+            ro  += cout_o_plan
+            rl  += cout_l_plan
+            re  += cout_e_plan
             act  = float(row[13]) if pd.notna(row[13]) else 0
             if act > 0:
                 cum_w = float(row[10]) if pd.notna(row[10]) else prev_w
@@ -295,6 +264,8 @@ def read_all():
         cout_b=cout_b, cout_i=cout_i, cout_o=cout_o, cout_l=cout_l, cout_e=cout_e,
         proj_w=proj_w, proj_d=proj_d, proj_i=proj_i,
         proj_b=proj_b, proj_i2=proj_i2, proj_o=proj_o, proj_l=proj_l, proj_e=proj_e)
+    d['cf_ann_plan'] = dict(w=aw_full, d=ad_full, i=ai_full,
+                             b=ab_full, i2=ai2_full, o=ao_full, l=al_full, e=ae_full)
     d['cf_weekly']   = cf_weekly
     d['cf_forecast'] = cf_forecast
 
@@ -455,6 +426,129 @@ def read_all():
     d['payroll_latest'] = payroll[-1] if payroll else None
 
     return d
+# ── Design assets (fonts + component CSS extracted verbatim from the approved
+#    mockups, so the live dashboard matches what was actually designed) ──────
+
+_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
+
+def _asset(name):
+    with open(os.path.join(_ASSETS_DIR, name)) as f:
+        return f.read()
+
+FONTS_CSS = _asset('fonts.css')
+RC_CSS    = _asset('rc_system.css')
+LOGO_B64  = _asset('logo_base64.txt').strip().split(',', 1)[-1]
+
+EXTRA_CSS = '''
+*{box-sizing:border-box}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+.chart-wrap{position:relative;width:100%}
+.rc-card{overflow-x:auto}
+'''
+
+# ── rc- component helpers ────────────────────────────────────────────────────
+
+def rc_stat(label, value, cls=''):
+    c = ' ' + cls if cls else ''
+    return ('<div class="rc-stat"><span class="rc-stat-label">' + label + '</span>'
+            '<span class="rc-stat-val' + c + '">' + value + '</span></div>')
+
+def rc_box(group_label, plan_val, act_lbl, act_val, var_val, var_cls):
+    return ('<div class="rc-box"><div class="rc-group-label">' + group_label + '</div>'
+            '<div class="rc-row">'
+            + rc_stat('Plan', plan_val) + rc_stat(act_lbl, act_val) + rc_stat('Variance', var_val, var_cls)
+            + '</div></div>')
+
+def var_cls(v, favorable_if_below=False):
+    good = (v <= 0) if favorable_if_below else (v >= 0)
+    return 'pos' if good else 'neg'
+
+def rc_card_kpi(title, cum, full, favorable_if_below=False, desc=None, body_extra=''):
+    """cum/full = (plan, actual_or_proj, var). favorable_if_below flips the
+    variance color convention for cost lines (Labor, OpEx-style spend)."""
+    cum_plan, cum_act, cum_var = cum
+    full_plan, full_proj, full_var = full
+    return (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">' + title + '</div>'
+        + ('<div class="rc-desc">' + desc + '</div>' if desc else '') +
+        '</div>'
+        '<div class="rc-boxrow">'
+        + rc_box('Cumulative to Date', fk(cum_plan), 'Actual', fk(cum_act), vk(cum_var), var_cls(cum_var, favorable_if_below))
+        + rc_box('Full Year', fk(full_plan), 'Projection', fk(full_proj), vk(full_var), var_cls(full_var, favorable_if_below))
+        + '</div>'
+        + body_extra +
+        '</div>\n'
+    )
+
+def rc_divider(title):
+    return '<div class="rc-divider"><div class="rc-divider-title">' + title + '</div></div>\n'
+
+def rc_hltable(rows, is_cost=False):
+    """rows: list of (label, ytd_plan, ytd_act, ann_plan, ann_proj, highlighted).
+    Matches the approved design's 5-metric itemized table (Account Line / YTD
+    Plan / YTD Actual / YTD Var / Ann. Proj. / Ann. Var — no Ann. Plan column,
+    since under the actual+remaining-plan projection model Ann. Var always
+    equals YTD Var, so showing both variance columns is the useful pair)."""
+    body = ''
+    for name, ytd_plan, ytd_act, ann_plan, ann_proj, hl in rows:
+        ytd_var = ytd_act - ytd_plan
+        ann_var = ann_proj - ann_plan
+        star = '<span class="rc-hl-star">&#9733;</span>' if hl else ''
+        body += (
+            '<tr>'
+            '<td>' + star + name + '</td>'
+            '<td>' + fk(ytd_plan) + '</td>'
+            '<td>' + fk(ytd_act) + '</td>'
+            '<td class="' + var_cls(ytd_var, is_cost) + '">' + vk(ytd_var) + '</td>'
+            '<td>' + fk(ann_proj) + '</td>'
+            '<td class="' + var_cls(ann_var, is_cost) + '">' + vk(ann_var) + '</td>'
+            '</tr>\n'
+        )
+    return (
+        '<div class="rc-hl">'
+        '<table class="rc-hltable">'
+        '<colgroup><col class="rc-hl-col-name">'
+        '<col class="rc-hl-col-stat"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat">'
+        '<col class="rc-hl-col-stat"><col class="rc-hl-col-stat"></colgroup>'
+        '<thead><tr><th>Account Line</th><th>YTD Plan</th><th>YTD Actual</th><th>YTD Var</th>'
+        '<th>Ann. Proj.</th><th>Ann. Var</th></tr></thead>'
+        '<tbody>' + body + '</tbody>'
+        '</table></div>'
+    )
+
+def ch_card(name, ytd_act, ytd_plan, ann_proj):
+    var = ytd_act - ytd_plan
+    cls = var_cls(var)
+    pct = max(0, min(100, (ytd_act / ann_proj * 100) if ann_proj else 0))
+    return (
+        '<div class="ch-card">'
+        '<div class="ch-name">' + name + '</div>'
+        '<div class="ch-value">' + fk(ytd_act) + '</div>'
+        '<div class="ch-delta ' + cls + '">' + vk(var) + ' vs plan</div>'
+        '<div class="ch-bar"><div class="ch-bar-fill ' + cls + '" style="width:' + f'{pct:.0f}' + '%"></div></div>'
+        '<div class="ch-foot">Ann. Proj. ' + fk(ann_proj) + '</div>'
+        '</div>'
+    )
+
+def dept_tile(name, value):
+    return (
+        '<div class="dept-tile">'
+        '<div class="dept-tile-top"><span class="dept-tile-name">' + name + '</span></div>'
+        '<div class="dept-tile-val">' + value + '</div>'
+        '</div>'
+    )
+
+def rc_bignum_card(title, value, sub, sub2=None, sub2_cls='pos'):
+    return (
+        '<div class="rc-card">'
+        '<div class="rc-group-label">' + title + '</div>'
+        '<div class="rc-stat-val" style="font-size:26px;margin:6px 0 4px">' + value + '</div>'
+        '<div class="rc-desc">' + sub + '</div>'
+        + (('<div class="rc-desc ' + sub2_cls + '" style="font-family:var(--mono);margin-top:2px">' + sub2 + '</div>') if sub2 else '')
+        + '</div>'
+    )
 
 # ── Inventory table ──────────────────────────────────────────────────────────
 
@@ -477,35 +571,34 @@ def delta_str(curr, prev, is_cog=True):
     return sign + '$' + f'{int(diff):,}' if is_cog else sign + f'{int(diff):,}'
 
 def st_color(p):
-    if p is None: return 'var(--ink-muted)'
-    return '#0d6e4f' if p>=80 else ('#BA7517' if p>=60 else '#888780')
+    if p is None: return 'var(--ink)'
+    return 'var(--good)' if p>=80 else ('#BA7517' if p>=60 else 'var(--ink)')
 
 def inv_trow(name, cc, cu, pc, pu, st, group):
     dc = delta_str(cc, pc, True)
     du = delta_str(cu, pu, False)
     if group=='season' and 'F26' not in name:
-        dcc = '#0d6e4f' if dc.startswith('-') else ('#a82f2f' if dc.startswith('+') else 'var(--ink-muted)')
-        duc = '#0d6e4f' if du.startswith('-') else ('#a82f2f' if du.startswith('+') else 'var(--ink-muted)')
+        dcc = 'var(--good)' if dc.startswith('-') else ('var(--watch)' if dc.startswith('+') else 'var(--ink)')
+        duc = 'var(--good)' if du.startswith('-') else ('var(--watch)' if du.startswith('+') else 'var(--ink)')
     else:
-        dcc = '#a82f2f' if dc.startswith('+') else ('#0d6e4f' if dc.startswith('-') else 'var(--ink-muted)')
-        duc = '#a82f2f' if du.startswith('+') else ('#0d6e4f' if du.startswith('-') else 'var(--ink-muted)')
+        dcc = 'var(--watch)' if dc.startswith('+') else ('var(--good)' if dc.startswith('-') else 'var(--ink)')
+        duc = 'var(--watch)' if du.startswith('+') else ('var(--good)' if du.startswith('-') else 'var(--ink)')
     sv  = (f'{st:.1f}%' if st else '—')
     sc2 = st_color(st)
     bw  = (f'{min(st,100):.0f}%' if st else '0%')
     return (
-        '    <tr>\n'
-        '      <td style="padding:7px 8px 7px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">' + name + '</td>\n'
-        '      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">' + fmt_cog(cc) + '</td>\n'
-        '      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:' + dcc + '">' + dc + '</td>\n'
-        '      <td style="padding:7px 6px;font-family:var(--mono);font-size:11px;font-weight:500;text-align:right;border-bottom:1px solid var(--rule)">' + fmt_units(cu) + '</td>\n'
-        '      <td style="padding:7px 6px;font-family:var(--mono);font-size:10px;text-align:right;border-bottom:1px solid var(--rule);color:' + duc + '">' + du + '</td>\n'
-        '      <td style="padding:7px 0 7px 6px;border-bottom:1px solid var(--rule);min-width:130px">\n'
-        '        <div style="display:flex;align-items:center;gap:8px">\n'
-        '          <div style="flex:1;height:5px;background:var(--rule);border-radius:3px"><div style="height:5px;width:' + bw + ';background:' + sc2 + ';border-radius:3px"></div></div>\n'
-        '          <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:' + sc2 + ';min-width:38px;text-align:right">' + sv + '</span>\n'
-        '        </div>\n'
-        '      </td>\n'
-        '    </tr>\n'
+        '<tr>'
+        '<td style="text-align:left;font-family:var(--body)">' + name + '</td>'
+        '<td>' + fmt_cog(cc) + '</td>'
+        '<td style="color:' + dcc + '">' + dc + '</td>'
+        '<td>' + fmt_units(cu) + '</td>'
+        '<td style="color:' + duc + '">' + du + '</td>'
+        '<td style="min-width:130px">'
+        '<div style="display:flex;align-items:center;gap:8px">'
+        '<div style="flex:1;height:5px;background:var(--surface-alt);border-radius:3px"><div style="height:5px;width:' + bw + ';background:' + sc2 + ';border-radius:3px"></div></div>'
+        '<span style="font-weight:600;color:' + sc2 + ';min-width:38px;text-align:right">' + sv + '</span>'
+        '</div></td>'
+        '</tr>\n'
     )
 
 def build_inv_table(d):
@@ -532,174 +625,35 @@ def build_inv_table(d):
     tc,tu,_ = get('Total',lw); pc2,pu,_ = get('Total',pw)
     dc = delta_str(tc,pc2,True); du = delta_str(tu,pu,False)
     avg = round(tc/tu,2) if tu else 0
-    dcc = '#a82f2f' if dc.startswith('+') else '#0d6e4f'
-    duc = '#a82f2f' if du.startswith('+') else '#0d6e4f'
+    dcc = 'var(--watch)' if dc.startswith('+') else 'var(--good)'
+    duc = 'var(--watch)' if du.startswith('+') else 'var(--good)'
 
+    thstyle = 'text-align:right;font-family:var(--mono);font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--ink);opacity:.55;padding:0 0 6px;border-bottom:1px solid var(--surface-alt)'
+    tdstyle = 'font-family:var(--mono);font-size:11.5px;color:var(--ink);text-align:right;padding:6px 0;border-bottom:1px solid var(--surface-alt);font-variant-numeric:tabular-nums'
     return (
-        '<table style="width:100%;border-collapse:collapse">\n'
+        '<table style="width:100%;border-collapse:collapse;table-layout:fixed" class="rc-hltable-like">\n'
+        '<style>.rc-hltable-like td,.rc-hltable-like th{' + tdstyle + '}.rc-hltable-like th{' + thstyle + '}</style>\n'
         '      <thead><tr>\n'
-        '        <th style="text-align:left;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 8px 8px 0;border-bottom:1.5px solid var(--ink)">Category</th>\n'
-        '        <th style="text-align:right;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 6px 8px;border-bottom:1.5px solid var(--ink)">COG</th>\n'
-        '        <th style="text-align:right;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 6px 8px;border-bottom:1.5px solid var(--ink)">vs prev wk</th>\n'
-        '        <th style="text-align:right;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 6px 8px;border-bottom:1.5px solid var(--ink)">Units</th>\n'
-        '        <th style="text-align:right;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 6px 8px;border-bottom:1.5px solid var(--ink)">vs prev wk</th>\n'
-        '        <th style="text-align:left;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);padding:0 0 8px 6px;border-bottom:1.5px solid var(--ink);min-width:130px">Sell-through</th>\n'
+        '        <th style="text-align:left">Category</th>\n'
+        '        <th>COG</th><th>vs prev wk</th><th>Units</th><th>vs prev wk</th>\n'
+        '        <th style="text-align:left;min-width:130px">Sell-through</th>\n'
         '      </tr></thead>\n'
         '      <tbody>\n'
-        '        <tr><td colspan="6" style="padding:8px 0 4px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted)">Seasons</td></tr>\n'
+        '        <tr><td colspan="6" style="padding:8px 0 4px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);opacity:.6;border-bottom:none">Seasons</td></tr>\n'
         + rows_s +
-        '        <tr><td colspan="6" style="padding:12px 0 4px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted)">Other categories</td></tr>\n'
+        '        <tr><td colspan="6" style="padding:12px 0 4px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);opacity:.6;border-bottom:none">Other categories</td></tr>\n'
         + rows_o +
         '        <tr style="border-top:1.5px solid var(--ink)">\n'
-        '          <td style="padding:8px 8px 4px 0;font-family:var(--mono);font-size:11px;font-weight:600">Total inventory</td>\n'
-        '          <td style="padding:8px 6px 4px;font-family:var(--mono);font-size:11px;font-weight:600;text-align:right">' + fmt_cog(tc) + '</td>\n'
-        '          <td style="padding:8px 6px 4px;font-family:var(--mono);font-size:10px;text-align:right;color:' + dcc + '">' + dc + '</td>\n'
-        '          <td style="padding:8px 6px 4px;font-family:var(--mono);font-size:11px;font-weight:600;text-align:right">' + fmt_units(tu) + '</td>\n'
-        '          <td style="padding:8px 6px 4px;font-family:var(--mono);font-size:10px;text-align:right;color:' + duc + '">' + du + '</td>\n'
-        '          <td style="padding:8px 0 4px 6px;font-family:var(--mono);font-size:10px;color:var(--ink-muted)">Avg cost/unit: $' + f'{avg:,.2f}' + '</td>\n'
+        '          <td style="text-align:left;font-family:var(--body);font-weight:700;border-bottom:none">Total inventory</td>\n'
+        '          <td style="font-weight:700;border-bottom:none">' + fmt_cog(tc) + '</td>\n'
+        '          <td style="color:' + dcc + ';border-bottom:none">' + dc + '</td>\n'
+        '          <td style="font-weight:700;border-bottom:none">' + fmt_units(tu) + '</td>\n'
+        '          <td style="color:' + duc + ';border-bottom:none">' + du + '</td>\n'
+        '          <td style="text-align:left;font-size:10.5px;opacity:.6;border-bottom:none">Avg cost/unit: $' + f'{avg:,.2f}' + '</td>\n'
         '        </tr>\n'
         '      </tbody>\n'
         '    </table>'
     )
-
-# ── Callout boxes ────────────────────────────────────────────────────────────
-
-def box(bg, border, label_color, label, txt):
-    return (
-        '      <div style="margin-bottom:10px;padding:10px 12px;background:' + bg + ';border-left:3px solid ' + border + ';border-radius:0 4px 4px 0">\n'
-        '        <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:' + label_color + ';margin-bottom:4px">' + label + '</div>\n'
-        '        <div style="font-size:12px;color:var(--ink);line-height:1.6">' + txt + '</div>\n'
-        '      </div>'
-    )
-
-def win(t):    return box('#eaf4ef','#b8ddd0','#0d6e4f','Win',t)
-def watch(t):  return box('#fce8e8','#f0c0c0','#a82f2f','Watch',t)
-def trend(t):  return box('#edf3fb','#b8d0ee','#2e6da4','Trend',t)
-def outlook(t):return box('#edf3fb','#b8d0ee','#2e6da4','Outlook',t)
-
-def callout_col(boxes):
-    return (
-        '    <div style="padding:0 0 0 4px">\n'
-        '      <div style="font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:14px">Summary &amp; Outlook</div>\n'
-        + '\n'.join(boxes) + '\n'
-        '    </div>'
-    )
-
-def generate_callouts(d):
-    WK=d['week']; rev=d['rev']; cogs=d['cogs']; opex=d['opex']
-    cf=d['cf']; oo=d['on_order']; net_var=d['net_inc_var']
-
-    jtl_act=jtl_plan=whsl_act=whsl_plan=sp_act=0
-    for lbl,act,plan,ann,ap in d['rev_lines']:
-        if 'Jettylife' in lbl: jtl_act=act; jtl_plan=plan
-        if 'Wholesale' in lbl: whsl_act=act; whsl_plan=plan
-        if 'Screen'    in lbl: sp_act=act
-
-    ship_brand_act=ship_brand_plan=adv_act=adv_plan=0
-    for lbl,act,plan,*_ in d['cogs_lines']:
-        if 'brand' in lbl.lower() and 'ship' in lbl.lower():
-            ship_brand_act=act; ship_brand_plan=plan
-    for lbl,act,plan,*_ in d['opex_lines']:
-        if lbl=='Advertising': adv_act=act; adv_plan=plan
-
-    cin_tot  = cf['cin_t'][-1]  if cf['cin_t']  else 0
-    proj_tot = (cf['proj_w'][-1] if cf['proj_w'] else 0) + (cf['proj_d'][-1] if cf['proj_d'] else 0) + (cf['proj_i'][-1] if cf['proj_i'] else 0)
-    cout_tot = sum((cf[k][-1] if cf[k] else 0) for k in ('cout_b','cout_i','cout_o','cout_l','cout_e'))
-    surplus  = cin_tot - cout_tot
-    h1_wks   = d['whsl_h1_wks_left']
-    h1_proj  = whsl_act + oo['h1']
-    h2_pct   = oo['h2']/d['whsl_h2_plan']*100 if d['whsl_h2_plan'] else 0
-
-    inv=d['inv']; lw=d['inv_latest_wk']
-    pending = lw and lw < WK
-    pend_note = " (showing wk " + str(lw) + ")" if pending else ""
-    if lw:
-        i = d['inv_wks'].index(lw)
-        tc=inv['Total']['cog'][i]; tu=inv['Total']['units'][i]
-        s26_st=inv['S26']['st'][i]; f25_st=inv['F25']['st'][i]
-        yoy_c=d['yoy_cog_2025']
-    else:
-        tc=tu=s26_st=f25_st=yoy_c=0
-
-    pl_c = callout_col([
-        win("COGS + Labor + Shipping is " + fk(abs(cogs['var'])) + " favorable vs plan through Week " + str(WK) + ". "
-            "Net income is " + fk(abs(net_var)) + (" ahead of plan." if net_var>=0 else " behind plan.")),
-        watch("Revenue is " + fk(abs(rev['var'])) + (" ahead of" if rev['var']>=0 else " behind") + " plan YTD. "
-              "OpEx is " + fk(opex['var']) + " over plan, driven by advertising (" + fk(adv_act-adv_plan) + " over)."),
-        outlook("Full-year revenue projects at " + fk(rev['ann_proj']) + " vs " + fk(rev['ann_plan']) + " plan. "
-                "COGS projects " + fk(abs(cogs['ann_var'])) + " favorable. "
-                "Net income is " + fk(abs(net_var)) + " ahead of plan.")
-    ])
-
-    rev_c = callout_col([
-        win("Jettylife.com is " + fk(jtl_act-jtl_plan) + " above YTD plan through Week " + str(WK) + "."),
-        watch("Wholesale is " + fk(abs(whsl_act-whsl_plan)) + (" ahead of" if whsl_act>=whsl_plan else " behind") + " YTD plan. "
-              "H1 open orders of " + fk(oo['h1']) + " with " + str(h1_wks) + " wks remaining "
-              "project H1 at " + fk(h1_proj) + " vs the " + fk(d['whsl_h1_plan']) + " H1 plan. "
-              "Screen Printing is " + fk(abs(sp_act)) + " YTD — Playa Bowls franchisee timing continues to weigh."),
-        trend("H2 open orders of " + fk(oo['h2']) + " represent " + f'{h2_pct:.1f}' + "% of H2 plan already on the books. "
-              "AO sell-in during S27 road shows and collab invoices (KONA, Sun Cruiser, Stone Pony, Ron Jon's) are the key upside levers."),
-        outlook("Full-year revenue projects at " + fk(rev['ann_proj']) + ". "
-                "Collab invoices in the WIP pipeline represent meaningful upside not yet in this figure.")
-    ])
-
-    cogs_c = callout_col([
-        win("Total COGS + Labor + Shipping is " + fk(abs(cogs['var'])) + " favorable vs plan through Week " + str(WK) + ". "
-            "Full-year projection of " + fk(cogs['ann_proj']) + " is " + fk(abs(cogs['ann_var'])) + " below the " + fk(cogs['ann_plan']) + " plan."),
-        watch("Shipping — Brand is over plan: " + fk(ship_brand_act) + " actual vs " + fk(ship_brand_plan) + " planned YTD "
-              "— a " + fk(ship_brand_act-ship_brand_plan) + " overage driven by DTC eComm volume. This is the only COGS line running above budget."),
-        outlook("Net COGS remains " + fk(abs(cogs['var'])) + " below plan — the primary driver of net income being " + fk(abs(net_var)) + " ahead of plan.")
-    ])
-
-    opex_c = callout_col([
-        watch("Advertising is " + fk(adv_act) + " actual vs " + fk(adv_plan) + " plan YTD — a " + fk(adv_act-adv_plan) + " overage. "
-              "MER confirms this spend is driving Jettylife.com's DTC outperformance."),
-        watch("Permits at 700 S Main are over plan. Selling Expenses — Rep Travel is elevated from S27 road show activity."),
-        win("Several MKG lines are running under plan — Banners/POP, Photography, and Trade Show are all favorable."),
-        outlook("Full-year OpEx projects at " + fk(opex['ann_proj']) + " vs " + fk(opex['ann_plan']) + " plan. H2 advertising discipline is the key lever.")
-    ])
-
-    dtc_act = cf['cin_d'][-1] if cf['cin_d'] else 0
-    dtc_proj= cf['proj_d'][-1] if cf['proj_d'] else 0
-    cf_c = callout_col([
-        win("Total cumulative cash in through Week " + str(WK) + " is " + fk(cin_tot) + " "
-            + ("ahead of" if cin_tot>=proj_tot else "behind") + " projection by " + fk(abs(cin_tot-proj_tot)) + ". "
-            "DTC cash in of " + fk(dtc_act) + " is " + fk(abs(dtc_act-dtc_proj)) + " vs projection."),
-        watch("Total cash out is " + fk(cout_tot) + ". The business is cash-flow " + ("positive" if surplus >= 0 else "negative") +
-              " with a " + fk(abs(surplus)) + " cumulative " + ("surplus" if surplus >= 0 else "deficit") + " before borrowing."),
-        trend("H1 open orders of " + fk(oo['h1']) + " will drive additional cash in over the next " + str(h1_wks) + " weeks as orders ship and invoice."),
-        outlook("F26 inventory payments will increase cash out in H2 as product ships — this is planned and expected.")
-    ])
-
-    if not lw:
-        inv_c = callout_col([watch("Inventory data has not yet been entered for this week.")])
-    else:
-        s26_py  = d['st_s25'].get(lw, None)
-        st_diff = round(s26_st-s26_py, 1) if s26_py and s26_st else None
-        inv_c = callout_col([
-            win("Total inventory COG " + fmt_cog(tc) + " / " + fmt_units(tu) + " units" + pend_note + ". "
-                "S26 sell-through " + (f'{s26_st:.1f}%' if s26_st else '—') + ". "
-                "F25 at " + (f'{f25_st:.1f}% sold' if f25_st else '—') + "."),
-            watch((str(abs(st_diff)) + "pts " + ("behind" if st_diff and st_diff<0 else "ahead of") + " S25 at the same week. " if st_diff else '') +
-                  "Total COG is " + fk(abs(tc-yoy_c)) + (" above" if tc>yoy_c else " below") + " prior year "
-                  "(" + fmt_cog(tc) + " vs " + fmt_cog(yoy_c) + " in 2025)."),
-            outlook("H2 open orders of " + fk(oo['h2']) + " (" + f'{h2_pct:.1f}' + "% of H2 plan) with F26 in house. "
-                    "Shipping F26 against these open orders is the key H2 operational priority.")
-        ])
-
-    lt = d['labor_total']; li = d['labor_ink']; lb = d['labor_brand']
-    latest_pr = d['payroll_latest']
-    labor_c = callout_col([
-        win("Total labor is " + fk(abs(lt['ytd_var'])) + (" favorable" if lt['ytd_var']<0 else " over") + " vs plan through Week " + str(WK) + ". "
-            "Brand is " + fk(abs(lb['ytd_var'])) + (" favorable" if lb['ytd_var']<0 else " over") + "; INK is " + fk(abs(li['ytd_var'])) + (" favorable" if li['ytd_var']<0 else " over") + "."),
-        watch("Headcount as of Week " + (str(latest_pr['wk']) if latest_pr else str(WK)) + " is " + (str(latest_pr['total']) if latest_pr else '—') +
-              " (" + (str(latest_pr['ft']) if latest_pr else '—') + " FT / " + (str(latest_pr['pt']) if latest_pr else '—') + " PT). " +
-              ("Overtime ran " + f"{latest_pr['ot_hours']:.1f}" + " hrs (" + fk(latest_pr['ot_amount']) + ") this pay period." if latest_pr else "")),
-        outlook("Full-year labor projects at " + fk(lt['ann_proj']) + " vs " + fk(lt['ann_plan']) + " plan — "
-                + fk(abs(lt['ann_var'])) + (" favorable" if lt['ann_var']<0 else " over") + ".")
-    ])
-
-    return pl_c, rev_c, cogs_c, opex_c, cf_c, inv_c, labor_c
 
 # ── Chart JS ─────────────────────────────────────────────────────────────────
 
@@ -709,6 +663,7 @@ def build_chart_js(d):
     cout_tot = [b+i+o+l+e for b,i,o,l,e in zip(cf['cout_b'],cf['cout_i'],cf['cout_o'],cf['cout_l'],cf['cout_e'])]
 
     return (
+        'Chart.defaults.font.family="\'IBM Plex Mono\',monospace";Chart.defaults.font.size=10;\n'
         'const fmtK=v=>{const a=Math.abs(v);'
         'if(a>=1000000)return"$"+(v<0?"−":"")+(a/1000000).toFixed(2)+"M";'
         'if(a>=1000)return"$"+(v<0?"−":"")+(a/1000).toFixed(1)+"K";'
@@ -716,44 +671,44 @@ def build_chart_js(d):
         'const WKS=' + labels + ';\n'
         '(function(){const el=document.getElementById("cfChart");if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:WKS,datasets:['
-        '{label:"Cash in", data:' + js_arr(cf['cin_t'])  + ',borderColor:"#0d6e4f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,pointHoverRadius:5,tension:0.3},'
-        '{label:"Cash out",data:' + js_arr(cout_tot)     + ',borderColor:"#a82f2f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,pointHoverRadius:5,tension:0.3},'
+        '{label:"Cash in", data:' + js_arr(cf['cin_t'])  + ',borderColor:"#2F7A5C",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,pointHoverRadius:5,tension:0.3},'
+        '{label:"Cash out",data:' + js_arr(cout_tot)     + ',borderColor:"#B4482F",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,pointHoverRadius:5,tension:0.3},'
         ']},options:{responsive:true,maintainAspectRatio:false,'
-        'plugins:{legend:{display:true,position:"top",labels:{font:{size:10}}}},'
-        'scales:{x:{ticks:{font:{size:9}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}'
+        'plugins:{legend:{display:true,position:"top"}},'
+        'scales:{x:{grid:{color:"#EDECED"}},y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}'
         '}});})();\n'
         'const HL=Array.from({length:52},(_,i)=>"Wk "+(i+1));\n'
         'const histOpts={responsive:true,maintainAspectRatio:false,'
         'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
-        'scales:{x:{type:"category",ticks:{font:{size:9},maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}};\n'
+        'scales:{x:{type:"category",grid:{color:"#EDECED"},ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};\n'
         '(function(){const el=document.getElementById("invHistCOG");if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:HL,datasets:['
-        '{label:"2024",data:' + to_xy(d['cog_2024'])   + ',borderColor:"#B4B2A9",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
-        '{label:"2025",data:' + to_xy(d['cog_2025'])   + ',borderColor:"#378ADD",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
-        '{label:"2026",data:' + to_xy(d['cog_2026'])   + ',borderColor:"#0d6e4f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,parsing:false},'
+        '{label:"2024",data:' + to_xy(d['cog_2024'])   + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
+        '{label:"2025",data:' + to_xy(d['cog_2025'])   + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
+        '{label:"2026",data:' + to_xy(d['cog_2026'])   + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,parsing:false},'
         ']},options:histOpts});})();\n'
         '(function(){const el=document.getElementById("invTotUnits");if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:HL,datasets:['
-        '{label:"2024",data:' + to_xy(d['units_2024']) + ',borderColor:"#B4B2A9",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
-        '{label:"2025",data:' + to_xy(d['units_2025']) + ',borderColor:"#378ADD",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
-        '{label:"2026",data:' + to_xy(d['units_2026']) + ',borderColor:"#0d6e4f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,parsing:false},'
+        '{label:"2024",data:' + to_xy(d['units_2024']) + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
+        '{label:"2025",data:' + to_xy(d['units_2025']) + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
+        '{label:"2026",data:' + to_xy(d['units_2026']) + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,parsing:false},'
         ']},options:histOpts});})();\n'
         'const stOpts={responsive:true,maintainAspectRatio:false,'
         'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+c.parsed.y.toFixed(1)+"%"}}},'
-        'scales:{x:{type:"category",ticks:{font:{size:9},maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},y:{min:0,max:100,ticks:{callback:v=>v+"%",font:{size:9}}}}};\n'
+        'scales:{x:{type:"category",grid:{color:"#EDECED"},ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},y:{min:0,max:100,grid:{color:"#EDECED"},ticks:{callback:v=>v+"%"}}}};\n'
         'const SL=Array.from({length:52},(_,i)=>"Wk "+(i+1));\n'
         'function mkST(id,ds){const el=document.getElementById(id);if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:SL,datasets:ds.map(d=>{return{label:d.l,data:d.d,'
         'borderColor:d.c,backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false};})},'
         'options:stOpts});}\n'
         'mkST("invSSSellThru",['
-        '{l:"S24",d:' + st_xy(d['st_s24']) + ',c:"#B4B2A9"},'
-        '{l:"S25",d:' + st_xy(d['st_s25']) + ',c:"#378ADD"},'
-        '{l:"S26",d:' + st_xy(d['st_s26']) + ',c:"#0d6e4f"}]);\n'
+        '{l:"S24",d:' + st_xy(d['st_s24']) + ',c:"#B0B4B8"},'
+        '{l:"S25",d:' + st_xy(d['st_s25']) + ',c:"#586D72"},'
+        '{l:"S26",d:' + st_xy(d['st_s26']) + ',c:"#43575E"}]);\n'
         'mkST("invFWSellThru",['
-        '{l:"F24",d:' + st_xy(d['st_f24']) + ',c:"#B4B2A9"},'
-        '{l:"F25",d:' + st_xy(d['st_f25']) + ',c:"#BA7517"},'
-        '{l:"F26",d:' + st_xy(d['st_f26']) + ',c:"#a82f2f"}]);\n'
+        '{l:"F24",d:' + st_xy(d['st_f24']) + ',c:"#B0B4B8"},'
+        '{l:"F25",d:' + st_xy(d['st_f25']) + ',c:"#586D72"},'
+        '{l:"F26",d:' + st_xy(d['st_f26']) + ',c:"#43575E"}]);\n'
         + build_labor_chart_js(d)
     )
 
@@ -769,68 +724,41 @@ def build_labor_chart_js(d):
     return (
         '(function(){const el=document.getElementById("laborMonthly");if(!el)return;'
         'new Chart(el,{type:"bar",data:{labels:' + mon_labels + ',datasets:['
-        '{label:"Plan",data:' + plan_arr + ',backgroundColor:"rgba(136,135,128,.35)",borderRadius:3},'
-        '{label:"Actual",data:' + act_arr + ',backgroundColor:"#6a4fA0",borderRadius:3},'
+        '{label:"Plan",data:' + plan_arr + ',backgroundColor:"#EDECED",borderRadius:3},'
+        '{label:"Actual",data:' + act_arr + ',backgroundColor:"#43575E",borderRadius:3},'
         ']},options:{responsive:true,maintainAspectRatio:false,'
-        'plugins:{legend:{display:true,position:"top",labels:{font:{size:10}}},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.raw)}}},'
-        'scales:{x:{ticks:{font:{size:9}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}'
+        'plugins:{legend:{display:true,position:"top"},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.raw)}}},'
+        'scales:{x:{grid:{color:"#EDECED"}},y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}'
         '}});})();\n'
         '(function(){const el=document.getElementById("laborOT");if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:' + ot_labels + ',datasets:['
-        '{label:"OT $",data:' + ot_amt + ',borderColor:"#BA7517",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,yAxisID:"y"},'
-        '{label:"OT hrs",data:' + ot_hrs + ',borderColor:"#888780",backgroundColor:"transparent",borderWidth:1.5,borderDash:[4,3],pointRadius:2,tension:0.3,yAxisID:"y1"},'
+        '{label:"OT $",data:' + ot_amt + ',borderColor:"#B4482F",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,yAxisID:"y"},'
+        '{label:"OT hrs",data:' + ot_hrs + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:1.5,borderDash:[4,3],pointRadius:2,tension:0.3,yAxisID:"y1"},'
         ']},options:{responsive:true,maintainAspectRatio:false,'
-        'plugins:{legend:{display:true,position:"top",labels:{font:{size:10}}},tooltip:{callbacks:{label:c=>c.dataset.label+": "+(c.dataset.yAxisID==="y"?fmtK(c.raw):c.raw+"h")}}},'
-        'scales:{x:{ticks:{font:{size:9}}},'
-        'y:{position:"left",ticks:{callback:v=>fmtK(v),font:{size:9}}},'
-        'y1:{position:"right",grid:{drawOnChartArea:false},ticks:{callback:v=>v+"h",font:{size:9}}}}'
+        'plugins:{legend:{display:true,position:"top"},tooltip:{callbacks:{label:c=>c.dataset.label+": "+(c.dataset.yAxisID==="y"?fmtK(c.raw):c.raw+"h")}}},'
+        'scales:{x:{grid:{color:"#EDECED"}},'
+        'y:{position:"left",grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}},'
+        'y1:{position:"right",grid:{drawOnChartArea:false},ticks:{callback:v=>v+"h"}}}'
         '}});})();\n'
     )
 
-# ── HTML assembly ─────────────────────────────────────────────────────────────
+# ── OpEx panel ───────────────────────────────────────────────────────────────
 
-def kpi(label, value, sub, sub2=None, sub2_cls='neg'):
-    s2 = ('<div class="kpi-sub ' + sub2_cls + '" style="margin-top:2px">' + sub2 + '</div>') if sub2 else ''
-    return ('<div class="kpi"><div class="kpi-label">' + label + '</div>'
-            '<div class="kpi-value">' + value + '</div>'
-            '<div class="kpi-sub">' + sub + '</div>' + s2 + '</div>')
-
-def card(title, body):
-    return ('    <div class="card">\n'
-            '      <div class="card-title">' + title + '</div>\n'
-            + body +
-            '    </div>\n')
-
-def blue_card(title, body):
-    return ('    <div class="card" style="padding:0;overflow:hidden">\n'
-            '      <div style="background:#2e6da4;color:#fff;font-family:var(--mono);font-size:11px;'
-            'font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:10px 18px">' + title + '</div>\n'
-            '      <div style="padding:16px 18px">\n'
-            + body +
-            '      </div>\n'
-            '    </div>\n')
-
-def two_col(left, right):
-    return ('  <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;margin-bottom:28px">\n'
-            '    <div>\n' + left + '    </div>\n'
-            + right + '\n'
-            '  </div>\n')
-
-def build_opex_body(d):
+def build_opex_panel(d):
     opex = d['opex']
     lines = d['opex_lines']
     keys = d['opex_keys']
     cats = d['opex_categories']
 
-    total_tbl = COL_HDR
-    total_tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_cost=True, is_total=True)
-    body = blue_card("Total OpEx", total_tbl)
+    body = rc_card_kpi("Total OpEx",
+        (opex['plan'], opex['act'], opex['var']),
+        (opex['ann_plan'], opex['ann_proj'], opex['ann_var']), favorable_if_below=True)
 
     if not cats:
-        tbl = COL_HDR
-        for item in lines: tbl += trow(*item, is_cost=True)
-        tbl += trow("Total OpEx", opex['act'], opex['plan'], opex['ann_plan'], opex['ann_proj'], is_cost=True, is_total=True)
-        return body + blue_card("OpEx by category", tbl)
+        rows = [(lbl, plan, act, ann, ap, False) for lbl, act, plan, ann, ap in lines]
+        body += rc_divider("OpEx by category")
+        body += ('<div class="rc-card" style="grid-column:1 / -1">' + rc_hltable(rows, is_cost=True) + '</div>\n')
+        return body
 
     groups = {}
     order = []
@@ -840,18 +768,19 @@ def build_opex_body(d):
         if cat_name not in groups:
             groups[cat_name] = []
             order.append(cat_name)
-        groups[cat_name].append((lbl, act, plan, ann, ap, meta.get('highlight'), meta.get('callout')))
+        groups[cat_name].append((lbl, act, plan, ann, ap, meta.get('highlight')))
 
-    ordered_cats = order  # display order follows the Categories tab's row order
-
-    for cat_name in ordered_cats:
-        tbl = COL_HDR
-        sub_act = sub_plan = sub_ann_plan = sub_ann_proj = 0
-        for lbl, act, plan, ann, ap, hl, callout in groups[cat_name]:
-            tbl += trow(lbl, act, plan, ann, ap, is_cost=True, highlight=(callout or True) if hl else None)
-            sub_act += act; sub_plan += plan; sub_ann_plan += ann; sub_ann_proj += ap
-        tbl += trow(cat_name + " total", sub_act, sub_plan, sub_ann_plan, sub_ann_proj, is_cost=True, is_total=True)
-        body += blue_card(cat_name, tbl)
+    for cat_name in order:
+        rows = [(lbl, plan, act, ann, ap, hl) for lbl, act, plan, ann, ap, hl in groups[cat_name]]
+        sub_act  = sum(r[1] for r in groups[cat_name])
+        sub_plan = sum(r[2] for r in groups[cat_name])
+        sub_ann  = sum(r[3] for r in groups[cat_name])
+        sub_ap   = sum(r[4] for r in groups[cat_name])
+        body += rc_divider(cat_name)
+        body += rc_card_kpi(cat_name,
+            (sub_plan, sub_act, sub_act-sub_plan),
+            (sub_ann, sub_ap, sub_ap-sub_ann), favorable_if_below=True,
+            body_extra=rc_hltable(rows, is_cost=True))
 
     itemized_act      = sum(l[1] for l in lines)
     itemized_plan     = sum(l[2] for l in lines)
@@ -860,44 +789,17 @@ def build_opex_body(d):
     other = (opex['act'] - itemized_act, opex['plan'] - itemized_plan,
              opex['ann_plan'] - itemized_ann_plan, opex['ann_proj'] - itemized_ann_proj)
     if any(abs(v) > 1 for v in other):
-        tbl = COL_HDR
-        tbl += trow("Other / unallocated OpEx", *other, is_cost=True)
-        body += blue_card("Unallocated", tbl)
-
+        body += rc_divider("Unallocated")
+        body += ('<div class="rc-card" style="grid-column:1 / -1">'
+                 + rc_hltable([("Other / unallocated OpEx", other[1], other[0], other[2], other[3], False)], is_cost=True)
+                 + '</div>\n')
     return body
 
-def cf_stat(label, value, cls=''):
-    color = (';color:#0d6e4f' if cls=='pos' else ';color:#a82f2f' if cls=='neg' else '')
-    return ('<div style="flex:1;min-width:64px">'
-            '<div style="font-family:var(--mono);font-size:9px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">' + label + '</div>'
-            '<div style="font-family:var(--mono);font-size:13px;font-weight:600' + color + '">' + value + '</div>'
-            '</div>')
-
-def cf_box(group_label, plan_val, act_lbl, act_val, var_val, var_cls):
-    return ('<div style="flex:1;background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:10px 12px">'
-            '<div style="font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-muted);margin-bottom:8px">' + group_label + '</div>'
-            '<div style="display:flex;gap:10px">'
-            + cf_stat('Plan', plan_val)
-            + cf_stat(act_lbl, act_val)
-            + cf_stat('Variance', var_val, var_cls)
-            + '</div></div>')
-
-def cf_kpi_card(title, cum, full):
-    """cum/full = (plan, actual_or_proj, var). Higher-than-plan is favorable for all
-    four Cash Flow KPIs (cash in, cash out tracked to a target, and both net cash
-    flow lines), so variance color follows sign directly — no is_cost flag needed."""
-    cum_plan, cum_act, cum_var = cum
-    full_plan, full_proj, full_var = full
-    body = ('<div style="display:flex;gap:12px">'
-            + cf_box('Cumulative to Date', fk(cum_plan), 'Actual', fk(cum_act), vk(cum_var), 'pos' if cum_var>=0 else 'neg')
-            + cf_box('Full Year', fk(full_plan), 'Projection', fk(full_proj), vk(full_var), 'pos' if full_var>=0 else 'neg')
-            + '</div>')
-    return card(title, body)
+# ── Cash Flow panel ──────────────────────────────────────────────────────────
 
 def cf_week_cell(v, plan):
-    color = '#0d6e4f' if v-plan >= 0 else '#a82f2f'
-    return ('<td style="padding:5px 6px;text-align:right;font-family:var(--mono);font-size:11px;'
-            'color:' + color + ';border-bottom:1px solid var(--rule)">' + fk(v) + '</td>')
+    color = 'var(--good)' if v-plan >= 0 else 'var(--watch)'
+    return '<td style="color:' + color + '">' + fk(v) + '</td>'
 
 def build_cf_weekly_table(d):
     """Full 52-week cash-collection schedule: actual weeks (through the current week)
@@ -905,98 +807,121 @@ def build_cf_weekly_table(d):
     weeks shown as a muted plan-only forecast."""
     weekly = d['cf_weekly']; forecast = d['cf_forecast']
 
-    def th(txt, align='right'):
-        return ('<th style="padding:0 6px 8px;text-align:' + align + ';font-family:var(--mono);font-size:10px;'
-                'font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);'
-                'border-bottom:1.5px solid var(--ink)">' + txt + '</th>')
-
     rows = ''
     tot_w=tot_d=tot_i=tot_t=tot_pt=0.0
     for wkr in weekly:
         var_t = wkr['t'] - wkr['pt']
-        vcolor = '#0d6e4f' if var_t >= 0 else '#a82f2f'
+        vcolor = 'var(--good)' if var_t >= 0 else 'var(--watch)'
         tot_w+=wkr['w']; tot_d+=wkr['d']; tot_i+=wkr['i']; tot_t+=wkr['t']; tot_pt+=wkr['pt']
         rows += (
             '<tr>'
-            '<td style="padding:5px 8px 5px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">Wk ' + str(wkr['wk']) + '</td>'
+            '<td style="text-align:left;font-family:var(--body)">Wk ' + str(wkr['wk']) + '</td>'
             + cf_week_cell(wkr['w'], wkr['pw'])
             + cf_week_cell(wkr['d'], wkr['pd_'])
             + cf_week_cell(wkr['i'], wkr['pi'])
-            + '<td style="padding:5px 6px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600;border-bottom:1px solid var(--rule)">' + fk(wkr['t']) + '</td>'
-            + '<td style="padding:5px 0 5px 6px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600;color:' + vcolor + ';border-bottom:1px solid var(--rule)">' + vk(var_t) + '</td>'
+            + '<td style="font-weight:600">' + fk(wkr['t']) + '</td>'
+            + '<td style="font-weight:600;color:' + vcolor + '">' + vk(var_t) + '</td>'
             '</tr>\n'
         )
     total_var = tot_t - tot_pt
-    tcolor = '#0d6e4f' if total_var >= 0 else '#a82f2f'
+    tcolor = 'var(--good)' if total_var >= 0 else 'var(--watch)'
     rows += (
         '<tr style="border-top:1.5px solid var(--ink)">'
-        '<td style="padding:7px 8px 3px 0;font-family:var(--mono);font-size:11px;font-weight:600">Total</td>'
-        + ''.join('<td style="padding:7px 6px 3px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600">' + fk(v) + '</td>'
-                  for v in (tot_w,tot_d,tot_i,tot_t))
-        + '<td style="padding:7px 0 3px 6px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600;color:' + tcolor + '">' + vk(total_var) + '</td>'
+        '<td style="text-align:left;font-family:var(--body);font-weight:700;border-bottom:none">Total</td>'
+        + ''.join('<td style="font-weight:700;border-bottom:none">' + fk(v) + '</td>' for v in (tot_w,tot_d,tot_i,tot_t))
+        + '<td style="font-weight:700;color:' + tcolor + ';border-bottom:none">' + vk(total_var) + '</td>'
         '</tr>\n'
     )
 
     fc_rows = ''
     for wkr in forecast:
         fc_rows += (
-            '<tr>'
-            '<td style="padding:5px 8px 5px 0;font-size:12px;color:var(--ink-muted);border-bottom:1px solid var(--rule)">Wk ' + str(wkr['wk']) + '</td>'
-            + ''.join('<td style="padding:5px 6px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);border-bottom:1px solid var(--rule)">' + fk(v) + '</td>'
-                      for v in (wkr['w'],wkr['d'],wkr['i'],wkr['t']))
-            + '<td style="border-bottom:1px solid var(--rule)"></td>'
+            '<tr style="opacity:.55">'
+            '<td style="text-align:left;font-family:var(--body)">Wk ' + str(wkr['wk']) + '</td>'
+            + ''.join('<td>' + fk(v) + '</td>' for v in (wkr['w'],wkr['d'],wkr['i'],wkr['t']))
+            + '<td></td>'
             '</tr>\n'
         )
 
     return (
-        '<table style="width:100%;border-collapse:collapse">\n'
-        '  <thead><tr>' + th('Week','left') + th('WHSL') + th('DTC') + th('INK') + th('Total') + th('Var.') + '</tr></thead>\n'
-        '  <tbody>\n'
+        '<div class="rc-hl">'
+        '<table class="rc-hltable">'
+        '<colgroup><col class="rc-hl-col-name"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat">'
+        '<col class="rc-hl-col-stat"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat"></colgroup>'
+        '<thead><tr><th>Week</th><th>WHSL</th><th>DTC</th><th>INK</th><th>Total</th><th>Var.</th></tr></thead>\n'
+        '<tbody>\n'
         + rows
-        + (('<tr><td colspan="6" style="padding:12px 0 4px;font-family:var(--mono);font-size:10px;font-weight:600;'
-            'letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted)">Remaining weeks (plan)</td></tr>\n' + fc_rows)
+        + (('<tr><td colspan="6" style="text-align:left;padding-top:12px;font-family:var(--mono);font-size:10px;font-weight:600;'
+            'letter-spacing:.08em;text-transform:uppercase;color:var(--ink);opacity:.55;border-bottom:none">Remaining weeks (plan)</td></tr>\n' + fc_rows)
            if forecast else '')
-        + '  </tbody>\n'
-        '</table>'
+        + '</tbody>\n'
+        '</table></div>'
     )
 
-def labor_kpi_card(title, cum, full):
-    """Labor is a cost line — unlike the Cash Flow KPIs, actual below plan is
-    favorable, so variance color is inverted vs. cf_kpi_card."""
-    cum_plan, cum_act, cum_var = cum
-    full_plan, full_proj, full_var = full
-    body = ('<div style="display:flex;gap:12px">'
-            + cf_box('Cumulative to Date', fk(cum_plan), 'Actual', fk(cum_act), vk(cum_var), 'pos' if cum_var<=0 else 'neg')
-            + cf_box('Full Year', fk(full_plan), 'Projection', fk(full_proj), vk(full_var), 'pos' if full_var<=0 else 'neg')
-            + '</div>')
-    return card(title, body)
+def build_cashflow_panel(d):
+    cf = d['cf']
+    def p(k): return cf[k][-1] if cf[k] else 0
 
-def two_seg_bar(title, a_label, a_val, a_color, b_label, b_val, b_color):
-    total = a_val + b_val
-    pa = (a_val/total*100) if total else 50
-    return (
-        '<div style="margin-bottom:14px">'
-        '<div style="font-family:var(--mono);font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">' + title + '</div>'
-        '<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--rule);margin-bottom:6px">'
-        '<div style="width:' + f'{pa:.1f}' + '%;background:' + a_color + '"></div>'
-        '<div style="width:' + f'{100-pa:.1f}' + '%;background:' + b_color + '"></div>'
-        '</div>'
-        '<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px">'
-        '<span style="color:' + a_color + ';font-weight:600">' + a_label + ': ' + str(a_val) + '</span>'
-        '<span style="color:' + b_color + ';font-weight:600">' + b_label + ': ' + str(b_val) + '</span>'
-        '</div></div>'
+    body = rc_card_kpi("Total Cash In",
+        (d['cash_in']['plan'], d['cash_in']['act'], d['cash_in']['var']),
+        (d['cash_in']['ann_plan'], d['cash_in']['ann_proj'], d['cash_in']['ann_var']))
+    body += rc_card_kpi("Total Cash Out",
+        (d['cash_out']['plan'], d['cash_out']['act'], d['cash_out']['var']),
+        (d['cash_out']['ann_plan'], d['cash_out']['ann_proj'], d['cash_out']['ann_var']))
+    body += rc_card_kpi("Net Cash Flow (Before Borrowing)",
+        (d['cf_var_pre']['plan'], d['cf_var_pre']['act'], d['cf_var_pre']['var']),
+        (d['cf_var_pre']['ann_plan'], d['cf_var_pre']['ann_proj'], d['cf_var_pre']['ann_var']))
+    body += rc_card_kpi("Net Cash Flow (After Borrowing)",
+        (d['cf_var_post']['plan'], d['cf_var_post']['act'], d['cf_var_post']['var']),
+        (d['cf_var_post']['ann_plan'], d['cf_var_post']['ann_proj'], d['cf_var_post']['ann_var']))
+
+    cf_surplus = d['cf_var_pre']['act']
+    cf_cls = 'pos' if cf_surplus >= 0 else 'neg'
+    subhead = ('Through Week ' + str(d['week']) + ', cumulative cash in is ' + fk(d['cash_in']['act']) +
+               ' vs. cumulative cash out of ' + fk(d['cash_out']['act']) + ' — a ' + fk(abs(cf_surplus)) +
+               (' surplus' if cf_surplus >= 0 else ' deficit') + ' before borrowing.')
+
+    body += rc_divider("Cumulative Trend — Weekly")
+    body += (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Cash In vs. Cash Out — Cumulative by Week</div></div>'
+        '<div class="rc-subhead ' + cf_cls + '">' + subhead + '</div>'
+        '<div class="rc-chart chart-wrap" style="height:220px;margin-top:10px"><canvas id="cfChart"></canvas></div>'
+        '</div>\n'
     )
 
-def dept_bar_row(name, count, max_count):
-    pct = (count/max_count*100) if max_count else 0
-    return (
-        '<div style="display:flex;align-items:center;gap:10px;padding:5px 0">'
-        '<span style="width:130px;font-size:12px;color:var(--ink)">' + name + '</span>'
-        '<div style="flex:1;height:8px;background:var(--rule);border-radius:4px;overflow:hidden">'
-        '<div style="height:8px;width:' + f'{pct:.0f}' + '%;background:#2e6da4"></div></div>'
-        '<span style="width:24px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600">' + str(count) + '</span>'
-        '</div>'
-    )
+    ann_plan = d['cf_ann_plan']
+    body += rc_divider("Cash In by Channel")
+    cin_rows = []
+    ann_plan_tot = ann_proj_tot = 0.0
+    for lbl, act_k, proj_k, ann_key in [("Wholesale",'cin_w','proj_w','w'),("DTC",'cin_d','proj_d','d'),("INK",'cin_i','proj_i','i')]:
+        act=p(act_k); prj=p(proj_k)
+        ap = ann_plan[ann_key]; aproj = act + (ap - prj)
+        ann_plan_tot += ap; ann_proj_tot += aproj
+        cin_rows.append((lbl, prj, act, ap, aproj, False))
+    cin_act=p('cin_t'); cin_prj=p('proj_w')+p('proj_d')+p('proj_i')
+    cin_rows.append(("Total Cash In", cin_prj, cin_act, ann_plan_tot, ann_proj_tot, False))
+    body += ('<div class="rc-card" style="grid-column:1 / -1">' + rc_hltable(cin_rows) + '</div>\n')
+
+    body += rc_divider("Weekly Cash Collection Schedule")
+    body += ('<div class="rc-card" style="grid-column:1 / -1">' + build_cf_weekly_table(d) + '</div>\n')
+
+    body += rc_divider("Cash Out by Category")
+    cout_rows = []
+    ann_plan_tot = ann_proj_tot = 0.0
+    for lbl, act_k, proj_k, ann_key in [("COGS — Brand",'cout_b','proj_b','b'),("COGS — INK",'cout_i','proj_i2','i2'),("Other COGS + Shipping",'cout_o','proj_o','o'),
+                               ("Labor",'cout_l','proj_l','l'),("OpEx + EBIT",'cout_e','proj_e','e')]:
+        act=p(act_k); prj=p(proj_k)
+        ap = ann_plan[ann_key]; aproj = act + (ap - prj)
+        ann_plan_tot += ap; ann_proj_tot += aproj
+        cout_rows.append((lbl, prj, act, ap, aproj, False))
+    cout_act=p('cout_b')+p('cout_i')+p('cout_o')+p('cout_l')+p('cout_e')
+    cout_prj=p('proj_b')+p('proj_i2')+p('proj_o')+p('proj_l')+p('proj_e')
+    cout_rows.append(("Total Cash Out", cout_prj, cout_act, ann_plan_tot, ann_proj_tot, False))
+    body += ('<div class="rc-card" style="grid-column:1 / -1">' + rc_hltable(cout_rows) + '</div>\n')
+    return body
+
+# ── Labor panel ──────────────────────────────────────────────────────────────
 
 DEPT_LABELS = {
     'ink_design':'INK — Design','ink_ops':'INK — Operations','ink_prod':'INK — Production','ink_sales':'INK — Sales',
@@ -1006,153 +931,103 @@ DEPT_LABELS = {
 
 def build_labor_panel(d):
     lt=d['labor_total']; li=d['labor_ink']; lb=d['labor_brand']
-    body = (
-        '  <div style="display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:20px">\n'
-        + labor_kpi_card("Total Labor", (lt['ytd_plan'],lt['ytd_act'],lt['ytd_var']), (lt['ann_plan'],lt['ann_proj'],lt['ann_var']))
-        + labor_kpi_card("Brand Labor", (lb['ytd_plan'],lb['ytd_act'],lb['ytd_var']), (lb['ann_plan'],lb['ann_proj'],lb['ann_var']))
-        + labor_kpi_card("INK Labor",   (li['ytd_plan'],li['ytd_act'],li['ytd_var']), (li['ann_plan'],li['ann_proj'],li['ann_var']))
-        + '  </div>\n'
-        + card("Monthly labor — plan vs. actual",
-               '      <div class="chart-wrap" style="height:220px"><canvas id="laborMonthly"></canvas></div>\n')
-    )
+
+    body = rc_card_kpi("Total Labor",
+        (lt['ytd_plan'],lt['ytd_act'],lt['ytd_var']), (lt['ann_plan'],lt['ann_proj'],lt['ann_var']),
+        favorable_if_below=True,
+        body_extra='<div class="rc-chart chart-wrap" style="height:200px;margin-top:14px"><canvas id="laborMonthly"></canvas></div>')
+    body += rc_card_kpi("Brand Labor", (lb['ytd_plan'],lb['ytd_act'],lb['ytd_var']), (lb['ann_plan'],lb['ann_proj'],lb['ann_var']), favorable_if_below=True)
+    body += rc_card_kpi("INK Labor",   (li['ytd_plan'],li['ytd_act'],li['ytd_var']), (li['ann_plan'],li['ann_proj'],li['ann_var']), favorable_if_below=True)
 
     pr = d['payroll_latest']
     if pr:
-        hc_body = (
-            two_seg_bar('Full-time / Part-time', 'FT', pr['ft'], '#0d6e4f', 'PT', pr['pt'], '#888780')
-            + two_seg_bar('Hourly / Salary', 'Hourly', pr['hourly'], '#378ADD', 'Salary', pr['salary'], '#BA7517')
-            + two_seg_bar('Female / Male', 'Female', pr['female'], '#6a4fA0', 'Male', pr['male'], '#888780')
-            + two_seg_bar('Brand / INK', 'Brand', pr['brand'], '#2e6da4', 'INK', pr['ink'], '#a82f2f')
-        )
+        body += rc_divider("Headcount — Pay Period Ending Week " + str(pr['wk']))
+        mix_tiles = ''.join(dept_tile(n, str(v)) for n, v in [
+            ('Full-Time', pr['ft']), ('Part-Time', pr['pt']),
+            ('Hourly', pr['hourly']), ('Salary', pr['salary']),
+            ('Female', pr['female']), ('Male', pr['male']),
+            ('Brand', pr['brand']), ('INK', pr['ink']),
+        ])
         dept_items = sorted(DEPT_LABELS.items(), key=lambda kv: -pr['depts'][kv[0]])
-        max_dept = max(pr['depts'].values()) if pr['depts'] else 1
-        dept_body = ''.join(dept_bar_row(lbl, pr['depts'][key], max_dept) for key, lbl in dept_items)
+        dept_tiles = ''.join(dept_tile(lbl, str(pr['depts'][key])) for key, lbl in dept_items)
         body += (
-            '  <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin-bottom:20px">\n'
-            '    <div>' + card("Headcount composition — pay period ending Week " + str(pr['wk']), hc_body) + '</div>\n'
-            '    <div>' + card("Headcount by department", dept_body) + '</div>\n'
-            '  </div>\n'
+            '<div class="rc-card" style="grid-column:1 / -1">'
+            '<div class="dept-group-label">Employment Mix</div>'
+            '<div class="dept-grid">' + mix_tiles + '</div>'
+            '<div class="dept-group-label">By Department</div>'
+            '<div class="dept-grid">' + dept_tiles + '</div>'
+            '</div>\n'
         )
-        body += card("Overtime — hours &amp; cost per pay period",
-                      '      <div class="chart-wrap" style="height:200px"><canvas id="laborOT"></canvas></div>\n')
+        body += rc_divider("Overtime — Hours & Cost per Pay Period")
+        body += (
+            '<div class="rc-card" style="grid-column:1 / -1">'
+            '<div class="rc-chart chart-wrap" style="height:200px"><canvas id="laborOT"></canvas></div>'
+            '</div>\n'
+        )
     return body
 
-def sec_label(txt):
-    return ('  <div style="font-family:var(--mono);font-size:12px;font-weight:700;'
-            'letter-spacing:.12em;text-transform:uppercase;color:var(--ink);'
-            'background:#dedad2;border-left:5px solid var(--ink);padding:11px 32px;'
-            'margin-bottom:24px;margin-left:-32px;margin-right:-32px;display:block">'
-            + txt + '</div>\n')
+# ── Revenue panel ────────────────────────────────────────────────────────────
 
-def build_html(d):
-    WK  = d['week']
-    rev = d['rev']; cogs = d['cogs']; opex = d['opex']
-    net_var = d['net_inc_var']
-    ahead   = net_var >= 0
-    pill_style = ('style="background:#fce8e8;color:#a82f2f;border-color:#f0c0c0"'
-                  if not ahead else '')
-    pill_txt   = 'YTD ahead of plan' if ahead else 'YTD behind plan'
+def build_revenue_panel(d):
+    rev = d['rev']
+    body = rc_card_kpi("Total Revenue",
+        (rev['plan'], rev['act'], rev['var']), (rev['ann_plan'], rev['ann_proj'], rev['ann_var']))
 
-    pl_c, rev_c, cogs_c, opex_c, cf_c, inv_c, labor_c = generate_callouts(d)
+    body += rc_divider("Revenue by Channel")
+    cards = ''.join(ch_card(lbl, act, plan, ap) for lbl, act, plan, ann, ap in d['rev_lines'])
+    body += '<div class="channel-grid" style="grid-column:1 / -1">' + cards + '</div>\n'
 
-    # Revenue table
-    rev_tbl = COL_HDR
-    for item in d['rev_lines']: rev_tbl += trow(*item)
-    rev_tbl += trow("Total Revenue", rev['act'], rev['plan'], rev['ann_plan'], rev['ann_proj'], is_total=True)
-
-    # COGS table
-    cogs_tbl = COL_HDR
-    for item in d['cogs_lines']: cogs_tbl += trow(*item, is_cost=True)
-    cogs_tbl += trow("Total COGS + Labor + Shipping",
-                     cogs['act'], cogs['plan'], cogs['ann_plan'], cogs['ann_proj'],
-                     is_cost=True, is_total=True)
-
-    # OpEx section (grouped by category if the sheet's Categories tab is present)
-    opex_body = build_opex_body(d)
-
-    # CF tables
-    cf = d['cf']
-    def p(k): return cf[k][-1] if cf[k] else 0
-    cin_tbl = COL_HDR
-    for lbl, act_k, proj_k in [("Wholesale",'cin_w','proj_w'),("DTC",'cin_d','proj_d'),("INK",'cin_i','proj_i')]:
-        act=p(act_k); prj=p(proj_k)
-        cin_tbl += trow(lbl, act, prj, 0, act+(act-prj))
-    cin_act=p('cin_t'); cin_prj=p('proj_w')+p('proj_d')+p('proj_i')
-    cin_tbl += trow("Total cash in", cin_act, cin_prj, 0, cin_act+(cin_act-cin_prj), is_total=True)
-
-    # Cash out variance is colored like cash in (below plan = red, above = green) —
-    # it's tracked against a cash target, not treated as discretionary spend like OpEx/COGS.
-    cout_tbl = COL_HDR
-    for lbl, act_k, proj_k in [("COGS — brand",'cout_b','proj_b'),("COGS — INK",'cout_i','proj_i2'),("Other COGS + shipping",'cout_o','proj_o'),
-                               ("Labor",'cout_l','proj_l'),("OpEx + EBIT",'cout_e','proj_e')]:
-        act=p(act_k); prj=p(proj_k)
-        cout_tbl += trow(lbl, act, prj, 0, act+(act-prj))
-    cout_act=p('cout_b')+p('cout_i')+p('cout_o')+p('cout_l')+p('cout_e')
-    cout_prj=p('proj_b')+p('proj_i2')+p('proj_o')+p('proj_l')+p('proj_e')
-    cout_tbl += trow("Total cash out", cout_act, cout_prj, 0, cout_act+(cout_act-cout_prj), is_total=True)
-
-    # On Order card
     oo=d['on_order']; h1_wks=d['whsl_h1_wks_left']
     h1_rem=d['whsl_h1_rem_plan']; h2_plan=d['whsl_h2_plan']
     h1_open_vs=oo['h1']-h1_rem; h2_pct=oo['h2']/h2_plan*100 if h2_plan else 0
     whsl_act=d['whsl_act']; h1_proj=whsl_act+oo['h1']; h1_gap=d['whsl_h1_gap']
-    gap_clr = '#0d6e4f' if h1_gap<=0 else '#a82f2f'
+    gap_cls = 'pos' if h1_gap<=0 else 'neg'
     gap_disp= vk(-h1_gap) if h1_gap>0 else '+'+fk(abs(h1_gap))
-    h1ov_clr= '#0d6e4f' if h1_open_vs>=0 else '#a82f2f'
+    h1ov_cls= 'pos' if h1_open_vs>=0 else 'neg'
 
-    oo_card = (
-        '  <div class="card" style="margin-bottom:28px">\n'
-        '    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--rule)">\n'
-        '      <div><div class="card-title" style="margin-bottom:2px">Open orders — on order, not yet shipped or invoiced</div>\n'
-        '      <div style="font-size:11px;color:var(--ink-muted);font-family:var(--mono)">As of Week ' + str(WK) + ' · Retail orders including discounts applied</div></div>\n'
-        '      <div style="font-family:var(--mono);font-size:11px;color:var(--ink-muted)">Total on order: <span style="color:var(--ink);font-weight:600">' + fk(oo['total']) + '</span></div>\n'
-        '    </div>\n'
-        '    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px">\n'
-        '      <div>\n'
-        '        <div style="display:flex;gap:6px;padding-bottom:6px;font-size:10px;color:var(--ink-muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--rule)">\n'
-        '          <span style="flex:1">Period</span><span style="width:72px;text-align:right">Wks Left</span>'
-        '<span style="width:105px;text-align:right">On Order</span><span style="width:120px;text-align:right">vs Remaining Plan</span>\n'
-        '        </div>\n'
-        '        <div style="display:flex;gap:6px;padding:7px 0;border-bottom:1px solid var(--rule)">\n'
-        '          <span style="flex:1;font-size:12px;color:var(--ink)">H1 (ends Jul 4)</span>\n'
-        '          <span style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted)">' + str(h1_wks) + ' wks</span>\n'
-        '          <span style="width:105px;text-align:right;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink)">' + fk(oo['h1']) + '</span>\n'
-        '          <span style="width:120px;text-align:right;font-family:var(--mono);font-size:11px;color:' + h1ov_clr + ';font-weight:600">' + vk(h1_open_vs) + ' vs plan</span>\n'
-        '        </div>\n'
-        '        <div style="display:flex;gap:6px;padding:7px 0;border-bottom:1px solid var(--rule)">\n'
-        '          <span style="flex:1;font-size:12px;color:var(--ink)">H2 (Jul 5 – Dec 31)</span>\n'
-        '          <span style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted)">26 wks</span>\n'
-        '          <span style="width:105px;text-align:right;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink)">' + fk(oo['h2']) + '</span>\n'
-        '          <span style="width:120px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted)">' + f'{h2_pct:.1f}' + '% of H2 plan</span>\n'
-        '        </div>\n'
-        '        <div style="display:flex;gap:6px;padding:8px 0 2px;border-top:1.5px solid var(--ink);margin-top:2px">\n'
-        '          <span style="flex:1;font-size:12px;font-weight:600;color:var(--ink)">Total on order</span>\n'
-        '          <span style="width:72px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted)">35 wks</span>\n'
-        '          <span style="width:105px;text-align:right;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink)">' + fk(oo['total']) + '</span>\n'
-        '          <span style="width:120px"></span>\n'
-        '        </div>\n'
-        '      </div>\n'
-        '      <div>\n'
-        '        <div style="font-size:10px;font-family:var(--mono);font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-muted);margin-bottom:10px">H1 wholesale gap analysis</div>\n'
-        '        <table style="width:100%;font-family:var(--mono);font-size:11px;border-collapse:collapse;margin-bottom:14px">\n'
-        '          <tr style="border-bottom:1px solid var(--rule)"><td style="padding:5px 0;color:var(--ink-muted)">H1 total plan (wks 1–26)</td><td style="text-align:right">' + fk(d['whsl_h1_plan']) + '</td></tr>\n'
-        '          <tr style="border-bottom:1px solid var(--rule)"><td style="padding:5px 0;color:var(--ink-muted)">YTD actual (wks 1–' + str(WK) + ')</td><td style="text-align:right;color:#a82f2f;font-weight:600">' + fk(whsl_act) + '</td></tr>\n'
-        '          <tr style="border-bottom:1px solid var(--rule)"><td style="padding:5px 0;color:var(--ink-muted)">H1 open orders (wks ' + str(WK+1) + '–26)</td><td style="text-align:right">' + fk(oo['h1']) + '</td></tr>\n'
-        '          <tr style="border-bottom:1px solid var(--rule)"><td style="padding:5px 0;color:var(--ink-muted)">H1 projected total</td><td style="text-align:right;font-weight:600">' + fk(h1_proj) + '</td></tr>\n'
-        '          <tr style="border-top:1.5px solid #BA7517"><td style="padding:7px 0 2px;font-weight:600">H1 gap to plan</td>'
-        '<td style="text-align:right;font-weight:700;color:' + gap_clr + ';font-size:12px">' + gap_disp + '</td></tr>\n'
-        '        </table>\n'
-        '        <div style="padding:10px 12px;background:#fef9ec;border-left:3px solid #BA7517;border-radius:0 4px 4px 0;font-size:11px;line-height:1.6">\n'
-        '          <span style="font-family:var(--mono);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#BA7517;display:block;margin-bottom:4px">Action required</span>\n'
-        '          Wholesale reps must actively sell AO during S27 road shows starting June 1. '
-        'KONA, Sun Cruiser, Stone Pony, and Ron Jon\'s collab invoices are in the WIP pipeline and represent meaningful upside.\n'
-        '        </div>\n'
-        '      </div>\n'
-        '    </div>\n'
-        '  </div>\n'
+    body += rc_divider("Open Orders — On Order, Not Yet Shipped or Invoiced")
+    body += (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">As of Week ' + str(d['week']) + '</div>'
+        '<div class="rc-desc">Retail orders including discounts applied · Total on order: ' + fk(oo['total']) + '</div></div>'
+        '<div class="rc-boxrow">'
+        '<div class="rc-box"><div class="rc-group-label">H1 (ends Jul 4) — ' + str(h1_wks) + ' wks left</div>'
+        '<div class="rc-row">'
+        + rc_stat('On Order', fk(oo['h1']))
+        + rc_stat('vs Remaining Plan', vk(h1_open_vs), h1ov_cls)
+        + rc_stat('H1 Projected', fk(h1_proj))
+        + '</div></div>'
+        '<div class="rc-box"><div class="rc-group-label">H2 (Jul 5 – Dec 31) — 26 wks left</div>'
+        '<div class="rc-row">'
+        + rc_stat('On Order', fk(oo['h2']))
+        + rc_stat('% of H2 Plan', f'{h2_pct:.1f}%')
+        + '</div></div>'
+        '</div>'
+        '<div class="rc-hl">'
+        '<table class="rc-hltable"><thead><tr><th style="text-align:left">H1 Wholesale Gap Analysis</th><th></th></tr></thead><tbody>'
+        '<tr><td style="text-align:left;font-family:var(--body)">H1 total plan (wks 1–26)</td><td>' + fk(d['whsl_h1_plan']) + '</td></tr>'
+        '<tr><td style="text-align:left;font-family:var(--body)">YTD actual (wks 1–' + str(d['week']) + ')</td><td class="neg">' + fk(whsl_act) + '</td></tr>'
+        '<tr><td style="text-align:left;font-family:var(--body)">H1 open orders (wks ' + str(d['week']+1) + '–26)</td><td>' + fk(oo['h1']) + '</td></tr>'
+        '<tr><td style="text-align:left;font-family:var(--body);font-weight:700;border-bottom:none">H1 gap to plan</td><td class="' + gap_cls + '" style="font-weight:700;border-bottom:none">' + gap_disp + '</td></tr>'
+        '</tbody></table></div>'
+        '<div class="rc-subhead neg" style="margin-top:12px">Action required: Wholesale reps must actively sell AO during S27 road shows starting June 1. '
+        'KONA, Sun Cruiser, Stone Pony, and Ron Jon\'s collab invoices are in the WIP pipeline and represent meaningful upside.</div>'
+        '</div>\n'
     )
+    return body
 
-    # Inventory
+# ── HTML assembly ─────────────────────────────────────────────────────────────
+
+def sec_label(txt):
+    return rc_divider(txt)
+
+def build_html(d):
+    WK  = d['week']
+    rev = d['rev']; cogs = d['cogs']; opex = d['opex']; ni = d['net_income']
+
+    # Revenue table (used by nothing now except cogs table below reuses the pattern)
+    cogs_rows = [(lbl, plan, act, ann, ap, False) for lbl, act, plan, ann, ap in d['cogs_lines']]
+
     lw=d['inv_latest_wk']; pending=lw and lw<WK
     pend_note=" (wk " + str(lw) + " shown — wk " + str(WK) + " pending)" if pending else ""
     inv=d['inv']
@@ -1170,55 +1045,121 @@ def build_html(d):
         pw_idx = d['inv_wks'].index(d['inv_prev_wk']) if d['inv_prev_wk'] in d['inv_wks'] else None
         prev_c = inv['Total']['cog'][pw_idx]   if pw_idx is not None else 0
         prev_u = inv['Total']['units'][pw_idx] if pw_idx is not None else 0
-        delta_c = tc - prev_c; delta_u = tu - prev_u
+        delta_c = tc - prev_c
         delta_c_str = ('+' if delta_c>=0 else '') + fk(delta_c) + ' vs prev wk'
     else:
-        tc=tu=delta_c=delta_u=0; yoy_cog_str=yoy_u_str=st_diff_str=delta_c_str=''
+        tc=tu=delta_c=0; yoy_cog_str=yoy_u_str=st_diff_str=delta_c_str=''
 
     legend_3yr = (
-        '      <div style="display:flex;gap:16px;font-size:11px;color:var(--ink-muted)">\n'
-        '        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#B4B2A9;display:inline-block"></span>2024</span>\n'
-        '        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#378ADD;display:inline-block"></span>2025</span>\n'
-        '        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#0d6e4f;display:inline-block"></span>2026</span>\n'
-        '      </div>'
+        '<div class="rc-legend">'
+        '<span><i class="swatch y24" style="background:#B0B4B8"></i>2024</span>'
+        '<span><i class="swatch y25" style="background:#586D72"></i>2025</span>'
+        '<span><i class="swatch y26" style="background:#43575E"></i>2026</span>'
+        '</div>'
     )
-    cf_surplus = d['cf_var_pre']['act']
-    cf_sub_color = '#0d6e4f' if cf_surplus >= 0 else '#a82f2f'
-    cf_subheader = ('Through Week ' + str(WK) + ', cumulative cash in is ' + fk(d['cash_in']['act']) +
-                     ' vs. cumulative cash out of ' + fk(d['cash_out']['act']) + ' — a ' + fk(abs(cf_surplus)) +
-                     (' surplus' if cf_surplus >= 0 else ' deficit') + ' before borrowing.')
 
-    CSS = '''
-:root{--surface:#f7f5f0;--ink:#1a1a18;--ink-mid:#3a3a36;--ink-muted:#888780;--rule:#dedad2;--mono:'DM Mono',monospace;--sans:'DM Sans',sans-serif}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-size:13px;line-height:1.5}
-.page{max-width:1200px;margin:0 auto;padding:40px 32px 80px}
-.masthead{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:20px;border-bottom:1.5px solid var(--ink);margin-bottom:36px}
-.masthead-left{display:flex;align-items:baseline;gap:12px}
-.brand{font-size:28px;font-weight:700;letter-spacing:-.02em}
-.dash-title{font-size:28px;font-weight:300;color:var(--ink-muted)}
-.week-badge{background:var(--ink);color:#fff;font-family:var(--mono);font-size:13px;padding:4px 10px;border-radius:3px;font-weight:500}
-.meta{font-family:var(--mono);font-size:12px;color:var(--ink-muted);letter-spacing:.04em}
-.status-pill{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;padding:5px 12px;border:1.5px solid #b8ddd0;border-radius:3px;color:#0d6e4f;background:#eaf4ef}
-.card{background:#fff;border:1px solid var(--rule);border-radius:4px;padding:16px 18px}
-.card-title{font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--rule)}
-.kpi-row{display:grid;gap:12px}.kpi-row.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi-row.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
-.kpi{background:#fff;border:1px solid var(--rule);border-radius:4px;padding:14px 16px}
-.kpi-label{font-family:var(--mono);font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
-.kpi-value{font-size:28px;font-weight:700;letter-spacing:-.02em;margin-bottom:4px}
-.kpi-sub{font-family:var(--mono);font-size:11px;color:var(--ink-muted)}
-.pos{color:#0d6e4f}.neg{color:#a82f2f}.neu{color:var(--ink-muted)}
-.ch-row{display:flex;gap:6px;padding:6px 0;border-bottom:1px solid var(--rule);font-size:12px}
-.ch-name{flex:1;color:var(--ink)}
-.chart-wrap{position:relative;width:100%}
-.tabs{display:flex;gap:4px;margin-bottom:28px;border-bottom:1.5px solid var(--ink);overflow-x:auto}
-.tab{font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-muted);padding:10px 16px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;user-select:none}
-.tab:hover{color:var(--ink)}
-.tab.active{color:var(--ink);border-bottom-color:var(--ink)}
-.tab-panel{display:none}
-.tab-panel.active{display:block}
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;700&display=swap');
-'''
+    qtr_wk_pct = WK / 52 * 100
+    milestones = [13, 26, 39, 52]
+    qtr_names = ['Q1','Q2','Q3','Q4']
+    cur_q = min(3, (WK - 1) // 13)
+    qtr_labels_html = ''.join(
+        '<span class="' + ('done' if i < cur_q else ('current' if i == cur_q else 'upcoming')) + '">' + qtr_names[i] + '</span>'
+        for i in range(4)
+    )
+    milestones_html = ''.join(
+        '<div class="qtr-milestone' + (' passed' if WK > mw else '') + '" style="left:' + str(pct) + '%"></div>'
+        for mw, pct in zip(milestones, [25, 50, 75, 100])
+    )
+
+    CSS = FONTS_CSS + RC_CSS + EXTRA_CSS
+
+    topbar = (
+        '<header class="topbar">\n'
+        '  <div class="left-group">\n'
+        '    <div class="brand">\n'
+        '      <img src="data:image/png;base64,' + LOGO_B64 + '">\n'
+        '      <div class="divider"></div>\n'
+        '      <div><div class="title-main">Strategic Dashboard</div>'
+        '<div class="title-sub">2026 · YTD Cumulative</div></div>\n'
+        '    </div>\n'
+        '    <div class="divider"></div>\n'
+        '    <div class="week-pill"><span class="lbl">Thru</span><span class="val">Week ' + str(WK) + '</span><span class="of">of 52</span></div>\n'
+        '  </div>\n'
+        '  <div class="qtr-timeline">\n'
+        '    <div class="qtr-track">\n'
+        '      <div class="qtr-fill" style="width:' + f'{qtr_wk_pct:.1f}' + '%"></div>\n'
+        + milestones_html +
+        '      <div class="qtr-now" style="left:' + f'{qtr_wk_pct:.1f}' + '%" title="Week ' + str(WK) + '"></div>\n'
+        '    </div>\n'
+        '    <div class="qtr-labels">' + qtr_labels_html + '</div>\n'
+        '  </div>\n'
+        '</header>\n'
+    )
+
+    tabs = (
+        '<nav class="tabs">\n'
+        '  <div class="tab active" data-panel="summary">Summary</div>\n'
+        '  <div class="tab" data-panel="revenue">Revenue</div>\n'
+        '  <div class="tab" data-panel="cogs">COGS &amp; Shipping</div>\n'
+        '  <div class="tab" data-panel="inventory">Inventory</div>\n'
+        '  <div class="tab" data-panel="labor">Labor</div>\n'
+        '  <div class="tab" data-panel="opex">OpEx</div>\n'
+        '  <div class="tab" data-panel="cashflow">Cash Flow</div>\n'
+        '</nav>\n'
+    )
+
+    summary_panel = (
+        rc_card_kpi("Total Revenue", (rev['plan'],rev['act'],rev['var']), (rev['ann_plan'],rev['ann_proj'],rev['ann_var']))
+        + rc_card_kpi("COGS + Labor + Shipping", (cogs['plan'],cogs['act'],cogs['var']), (cogs['ann_plan'],cogs['ann_proj'],cogs['ann_var']), favorable_if_below=True)
+        + rc_card_kpi("Total OpEx", (opex['plan'],opex['act'],opex['var']), (opex['ann_plan'],opex['ann_proj'],opex['ann_var']), favorable_if_below=True)
+        + rc_card_kpi("Net Income", (ni['plan'],ni['act'],ni['var']), (ni['ann_plan'],ni['ann_proj'],ni['ann_var']))
+    )
+
+    cogs_panel = (
+        rc_card_kpi("Total COGS + Labor + Shipping",
+            (cogs['plan'],cogs['act'],cogs['var']), (cogs['ann_plan'],cogs['ann_proj'],cogs['ann_var']),
+            favorable_if_below=True, body_extra=rc_hltable(cogs_rows, is_cost=True))
+    )
+
+    inventory_panel = (
+        '<div class="rc-card"><div class="rc-group-label">Total Inventory COG — Week ' + str(lw or WK) + pend_note + '</div>'
+        '<div class="rc-stat-val" style="font-size:26px;margin:6px 0 4px">' + (fk(tc) if tc else '—') + '</div>'
+        '<div class="rc-desc">' + (delta_c_str or '—') + '</div>'
+        + (('<div class="rc-desc neg" style="font-family:var(--mono);margin-top:2px">' + yoy_cog_str + '</div>') if yoy_cog_str else '') +
+        '</div>\n'
+        '<div class="rc-card"><div class="rc-group-label">Total Units on Hand — Week ' + str(lw or WK) + pend_note + '</div>'
+        '<div class="rc-stat-val" style="font-size:26px;margin:6px 0 4px">' + (format(tu, ',') if tu else '—') + '</div>'
+        '<div class="rc-desc">' + (yoy_u_str or '—') + '</div>'
+        '</div>\n'
+        + rc_divider("Total Inventory COG — Week by Week")
+        + '<div class="rc-card" style="grid-column:1 / -1">'
+        + '<div class="rc-headrow"><div class="rc-name">' + (yoy_cog_str or ' ') + '</div></div>'
+        + legend_3yr
+        + '<div class="rc-chart chart-wrap" style="height:260px;margin-top:8px"><canvas id="invHistCOG"></canvas></div>'
+        + '</div>\n'
+        + rc_divider("Total Units on Hand — Week by Week")
+        + '<div class="rc-card" style="grid-column:1 / -1">'
+        + '<div class="rc-headrow"><div class="rc-name">' + (yoy_u_str or ' ') + '</div></div>'
+        + legend_3yr
+        + '<div class="rc-chart chart-wrap" style="height:260px;margin-top:8px"><canvas id="invTotUnits"></canvas></div>'
+        + '</div>\n'
+        + rc_divider("Spring / Summer Sell-Through % — by Week")
+        + '<div class="rc-card" style="grid-column:1 / -1">'
+        + '<div class="rc-headrow"><div class="rc-name">' + (st_diff_str or ' ') + '</div></div>'
+        + '<div class="rc-legend"><span><i class="swatch" style="background:#B0B4B8"></i>S24</span><span><i class="swatch" style="background:#586D72"></i>S25</span><span><i class="swatch" style="background:#43575E"></i>S26</span></div>'
+        + '<div class="rc-chart chart-wrap" style="height:240px;margin-top:8px"><canvas id="invSSSellThru"></canvas></div>'
+        + '</div>\n'
+        + rc_divider("Fall / Winter Sell-Through % — by Week")
+        + '<div class="rc-card" style="grid-column:1 / -1">'
+        + '<div class="rc-legend"><span><i class="swatch" style="background:#B0B4B8"></i>F24</span><span><i class="swatch" style="background:#586D72"></i>F25</span><span><i class="swatch" style="background:#43575E"></i>F26</span></div>'
+        + '<div class="rc-chart chart-wrap" style="height:240px;margin-top:8px"><canvas id="invFWSellThru"></canvas></div>'
+        + '</div>\n'
+        + rc_divider("Inventory Breakdown — Week " + str(lw or WK) + pend_note)
+        + '<div class="rc-card" style="grid-column:1 / -1">' + build_inv_table(d) + '</div>\n'
+    )
+
+    def panel(pid, content):
+        return '<div class="tab-panel' + (' active' if pid=='summary' else '') + '" id="panel-' + pid + '">\n<div class="rc-grid">\n' + content + '</div>\n</div>\n\n'
 
     return (
         '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
@@ -1226,168 +1167,24 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
         '<title>Jetty Strategic Dashboard 2026 — Week ' + str(WK) + '</title>\n'
         '<style>' + CSS + '</style>\n</head>\n<body>\n'
         '<div class="page">\n\n'
-        '  <div class="masthead">\n'
-        '    <div class="masthead-left">\n'
-        '      <span class="brand">Jetty</span>\n'
-        '      <span class="dash-title">/ Strategic Dashboard</span>\n'
-        '      <span class="week-badge">Week ' + str(WK) + ' <span style="color:rgba(255,255,255,.5);font-weight:400">of 52</span></span>\n'
-        '      <span class="meta">2026 · YTD Cumulative</span>\n'
-        '    </div>\n'
-        '    <span class="status-pill" ' + pill_style + '>' + pill_txt + '</span>\n'
-        '  </div>\n\n'
-
-        '  <nav class="tabs">\n'
-        '    <div class="tab active" data-panel="summary">Summary</div>\n'
-        '    <div class="tab" data-panel="revenue">Revenue</div>\n'
-        '    <div class="tab" data-panel="cogs">COGS &amp; Shipping</div>\n'
-        '    <div class="tab" data-panel="inventory">Inventory</div>\n'
-        '    <div class="tab" data-panel="labor">Labor</div>\n'
-        '    <div class="tab" data-panel="opex">OpEx</div>\n'
-        '    <div class="tab" data-panel="cashflow">Cash Flow</div>\n'
-        '  </nav>\n\n'
-
-        '  <div class="tab-panel active" id="panel-summary">\n'
-        + sec_label("P&amp;L Summary") +
-        two_col(
-            '  <div class="kpi-row cols-3" style="margin-bottom:12px">\n'
-            '    ' + kpi("Total revenue", fk(rev['act']),
-                          ('+' if rev['var']>=0 else '') + fk(rev['var']) + ' vs plan') + '\n'
-            '    ' + kpi("COGS + labor + shipping", fk(cogs['act']),
-                          fk(cogs['var']) + (' favorable' if cogs['var']<0 else ' over') + ' vs plan') + '\n'
-            '    ' + kpi("Total OpEx", fk(opex['act']),
-                          ('+' if opex['var']>=0 else '') + fk(opex['var']) + ' vs plan') + '\n'
-            '  </div>\n'
-            '  <div class="kpi-row cols-2">\n'
-            '    ' + kpi("Full-year revenue plan", fk(rev['ann_plan']), "52-week annual budget") + '\n'
-            '    ' + kpi("Full-year revenue projection", fk(rev['ann_proj']),
-                          ('above' if rev['ann_proj']>=rev['ann_plan'] else 'below') + ' annual plan',
-                          vk(rev['ann_var']) + ' vs annual plan',
-                          'pos' if rev['ann_proj']>=rev['ann_plan'] else 'neg') + '\n'
-            '  </div>\n',
-            pl_c
-        )
-        + '  </div>\n\n'
-
-        + '  <div class="tab-panel" id="panel-revenue">\n'
-        + sec_label("Revenue Channels — YTD &amp; Full Year")
-        + two_col(card("Revenue by channel", rev_tbl), rev_c)
-        + oo_card
-        + '  </div>\n\n'
-
-        + '  <div class="tab-panel" id="panel-cogs">\n'
-        + sec_label("COGS + Labor + Shipping — YTD &amp; Full Year")
-        + two_col(card("Cost detail", cogs_tbl), cogs_c)
-        + '  </div>\n\n'
-
-        + '  <div class="tab-panel" id="panel-inventory">\n'
-        + sec_label("Inventory Analysis")
-        + '  <div class="kpi-row cols-2" style="margin-bottom:16px">\n'
-          '    ' + kpi("Total inventory COG — Week " + str(lw or WK) + pend_note,
-                        fk(tc) if tc else '—', delta_c_str or '—',
-                        yoy_cog_str or None, 'neg') + '\n'
-          '    ' + kpi("Total units on hand — Week " + str(lw or WK) + pend_note,
-                        (format(tu, ',') if tu else '—'), yoy_u_str or '—') + '\n'
-          '  </div>\n'
-
-        + '  <div class="card" style="margin-bottom:16px">\n'
-          '    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)">\n'
-          '      <div><div class="card-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">Total Inventory COG — Week by Week</div>\n'
-          '      <div style="font-family:var(--mono);font-size:11px;margin-top:4px"><span style="color:#a82f2f;font-weight:600">' + yoy_cog_str + '</span></div></div>\n'
-          + legend_3yr + '\n'
-          '    </div>\n'
-          '    <div class="chart-wrap" style="height:280px"><canvas id="invHistCOG"></canvas></div>\n'
-          '  </div>\n'
-
-        + '  <div class="card" style="margin-bottom:16px">\n'
-          '    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)">\n'
-          '      <div><div class="card-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">Total Units on Hand — Week by Week</div>\n'
-          '      <div style="font-family:var(--mono);font-size:11px;margin-top:4px"><span style="color:#a82f2f;font-weight:600">' + yoy_u_str + '</span></div></div>\n'
-          + legend_3yr + '\n'
-          '    </div>\n'
-          '    <div class="chart-wrap" style="height:280px"><canvas id="invTotUnits"></canvas></div>\n'
-          '  </div>\n'
-
-        + '  <div class="card" style="margin-bottom:16px">\n'
-          '    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)">\n'
-          '      <div><div class="card-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">Spring / Summer Sell-Through % — by Week</div>\n'
-          '      <div style="font-family:var(--mono);font-size:11px;margin-top:4px"><span style="color:#a82f2f;font-weight:600">' + st_diff_str + '</span></div></div>\n'
-          '      <div style="display:flex;gap:16px">\n'
-          '        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#B4B2A9;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">S24</span></span>\n'
-          '        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#378ADD;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">S25</span></span>\n'
-          '        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#0d6e4f;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">S26</span></span>\n'
-          '      </div>\n'
-          '    </div>\n'
-          '    <div class="chart-wrap" style="height:260px"><canvas id="invSSSellThru"></canvas></div>\n'
-          '  </div>\n'
-
-        + '  <div class="card" style="margin-bottom:24px">\n'
-          '    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)">\n'
-          '      <div class="card-title" style="margin-bottom:0;padding-bottom:0;border-bottom:none">Fall / Winter Sell-Through % — by Week</div>\n'
-          '      <div style="display:flex;gap:16px">\n'
-          '        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#B4B2A9;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">F24</span></span>\n'
-          '        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#BA7517;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">F25</span></span>\n'
-          '        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#a82f2f;display:inline-block"></span><span style="font-size:11px;color:var(--ink-muted)">F26</span></span>\n'
-          '      </div>\n'
-          '    </div>\n'
-          '    <div class="chart-wrap" style="height:260px"><canvas id="invFWSellThru"></canvas></div>\n'
-          '  </div>\n'
-
-        + '  <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;margin-bottom:28px">\n'
-          '    <div>\n'
-          '      <div class="card">\n'
-          '        <div class="card-title">Inventory breakdown — week ' + str(lw or WK) + pend_note + '</div>\n'
-          + build_inv_table(d) + '\n'
-          '      </div>\n'
-          '    </div>\n'
-          + inv_c + '\n'
-          '  </div>\n\n'
-        + '  </div>\n\n'
-
-        + '  <div class="tab-panel" id="panel-labor">\n'
-        + sec_label("Labor — YTD &amp; Full Year")
-        + two_col(build_labor_panel(d), labor_c)
-        + '  </div>\n\n'
-
-        + '  <div class="tab-panel" id="panel-opex">\n'
-        + sec_label("Operating Expenses — YTD &amp; Full Year")
-        + two_col(opex_body, opex_c)
-        + '  </div>\n\n'
-
-        + '  <div class="tab-panel" id="panel-cashflow">\n'
-        + sec_label("Cash Flow — YTD &amp; Full Year")
-        + two_col(
-            '  <div style="display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:20px">\n'
-            + cf_kpi_card("Total Cash In",
-                          (d['cash_in']['plan'],  d['cash_in']['act'],  d['cash_in']['var']),
-                          (d['cash_in']['ann_plan'], d['cash_in']['ann_proj'], d['cash_in']['ann_var']))
-            + cf_kpi_card("Total Cash Out",
-                          (d['cash_out']['plan'], d['cash_out']['act'], d['cash_out']['var']),
-                          (d['cash_out']['ann_plan'], d['cash_out']['ann_proj'], d['cash_out']['ann_var']))
-            + cf_kpi_card("Net Cash Flow (Before Borrowing)",
-                          (d['cf_var_pre']['plan'], d['cf_var_pre']['act'], d['cf_var_pre']['var']),
-                          (d['cf_var_pre']['ann_plan'], d['cf_var_pre']['ann_proj'], d['cf_var_pre']['ann_var']))
-            + cf_kpi_card("Net Cash Flow (After Borrowing)",
-                          (d['cf_var_post']['plan'], d['cf_var_post']['act'], d['cf_var_post']['var']),
-                          (d['cf_var_post']['ann_plan'], d['cf_var_post']['ann_proj'], d['cf_var_post']['ann_var']))
-            + '  </div>\n'
-            + card("Cumulative cash in vs. cash out",
-                   '      <div style="font-size:12px;color:' + cf_sub_color + ';margin-bottom:10px">' + cf_subheader + '</div>\n'
-                   '      <div class="chart-wrap" style="height:220px"><canvas id="cfChart"></canvas></div>\n')
-            + card("Cash in by channel",   cin_tbl)
-            + card("Weekly cash collection schedule", build_cf_weekly_table(d))
-            + card("Cash out by category", cout_tbl),
-            cf_c
-        )
-        + '  </div>\n\n'
-
-        + '</div>\n'
-          '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>\n'
-          '<script>\n'
-          + build_chart_js(d)
-          + '</script>\n'
-          '<script>\n'
-          + TAB_JS +
-          '</script>\n</body>\n</html>'
+        + topbar + tabs +
+        '\n<main class="content">\n'
+        + panel('summary', summary_panel)
+        + panel('revenue', build_revenue_panel(d))
+        + panel('cogs', cogs_panel)
+        + panel('inventory', inventory_panel)
+        + panel('labor', build_labor_panel(d))
+        + panel('opex', build_opex_panel(d))
+        + panel('cashflow', build_cashflow_panel(d))
+        + '</main>\n'
+        '</div>\n'
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>\n'
+        '<script>\n'
+        + build_chart_js(d)
+        + '</script>\n'
+        '<script>\n'
+        + TAB_JS +
+        '</script>\n</body>\n</html>'
     )
 
 # ── Main ──────────────────────────────────────────────────────────────────────
