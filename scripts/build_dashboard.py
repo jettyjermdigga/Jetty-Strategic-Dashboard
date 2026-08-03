@@ -38,11 +38,15 @@ document.querySelectorAll(".tab").forEach(function(t){
 def js_arr(lst):
     return '[' + ','.join(str(v) for v in lst) + ']'
 
-def to_xy(d):
-    return '[' + ','.join('{x:"Wk ' + str(k) + '",y:' + str(v) + '}' for k,v in sorted(d.items())) + ']'
+def to_xy(d, est=None):
+    est = est or set()
+    return '[' + ','.join('{x:"Wk ' + str(k) + '",y:' + str(v) + ',e:' + ('true' if k in est else 'false') + '}'
+                           for k,v in sorted(d.items())) + ']'
 
-def st_xy(d):
-    return '[' + ','.join('{x:"Wk ' + str(k) + '",y:' + str(v) + '}' for k,v in sorted(d.items()) if v) + ']'
+def st_xy(d, est=None):
+    est = est or set()
+    return '[' + ','.join('{x:"Wk ' + str(k) + '",y:' + str(v) + ',e:' + ('true' if k in est else 'false') + '}'
+                           for k,v in sorted(d.items()) if v) + ']'
 
 # ── Data extraction ──────────────────────────────────────────────────────────
 
@@ -269,15 +273,23 @@ def read_all():
     d['cf_weekly']   = cf_weekly
     d['cf_forecast'] = cf_forecast
 
-    # Inventory
-    cat_cols = {
-        'Total':(5,6,None),      'F25':(21,22,23),       'S26':(25,26,27),
-        'F26':(29,30,31),        'Starboard':(33,34,35),  'PastSeason':(37,38,39),
-        'Misc':(41,42,43),       'JRF':(45,46,47),        'TP2025':(49,50,51),
-        'TP2026':(53,54,55),     'Surf3P':(57,58,59),     'Skateboards':(61,62,63),
-        'SurfCon':(65,66,67),    'Collab':(69,70,71),     'WhiteWhale':(73,74,75),
-    }
-    inv = {k: {'cog':[], 'units':[], 'st':[]} for k in cat_cols}
+    # Inventory. A missing weekly reading is not the same as zero on hand — it
+    # just means nobody recorded a count that week. carry_forward fills those
+    # gaps with the last known value (instead of a fake drop to $0/0 units)
+    # and flags which weeks were filled in, so charts can mark them distinctly.
+    def carry_forward(pairs):
+        values = {}; estimated = set(); prev = None
+        for wk, v in sorted(pairs):
+            if v is not None:
+                values[wk] = v; prev = v
+            elif prev is not None:
+                values[wk] = prev; estimated.add(wk)
+        return values, estimated
+
+    d['inv_est'] = {}  # series name -> set of weeks whose value was carried forward
+
+    cat_cols = {'Total':(5,6,None), 'F25':(21,22,23), 'S26':(25,26,27), 'F26':(29,30,31)}
+    inv_raw = {k: [] for k in cat_cols}
     inv_wks = []
     for _,row in df_inv[df_inv[0]==2026].iterrows():
         if not pd.notna(row[2]): continue
@@ -285,30 +297,47 @@ def read_all():
         if wk > WK: continue
         inv_wks.append(wk)
         for cat,(cc,uc,sc_col) in cat_cols.items():
-            c = round(float(row[cc])) if pd.notna(row[cc]) and isinstance(row[cc],(int,float)) else 0
-            u = round(float(row[uc])) if pd.notna(row[uc]) and isinstance(row[uc],(int,float)) else 0
+            c = float(row[cc]) if pd.notna(row[cc]) and isinstance(row[cc],(int,float)) else None
+            u = float(row[uc]) if pd.notna(row[uc]) and isinstance(row[uc],(int,float)) else None
             s = (round(float(row[sc_col])*100,1)
                  if sc_col and pd.notna(row[sc_col]) and isinstance(row[sc_col],(int,float))
                  and 0 < float(row[sc_col]) <= 1 else None)
-            inv[cat]['cog'].append(c)
-            inv[cat]['units'].append(u)
-            inv[cat]['st'].append(s)
+            inv_raw[cat].append((wk, c, u, s))
+
+    inv = {}
+    for cat in cat_cols:
+        cog_v, cog_e = carry_forward([(wk,c) for wk,c,u,s in inv_raw[cat]])
+        u_v,   u_e   = carry_forward([(wk,u) for wk,c,u,s in inv_raw[cat]])
+        st_v,  st_e  = carry_forward([(wk,s) for wk,c,u,s in inv_raw[cat]])
+        inv[cat] = dict(
+            cog=[round(cog_v[wk]) if wk in cog_v else 0 for wk in inv_wks],
+            units=[round(u_v[wk]) if wk in u_v else 0 for wk in inv_wks],
+            st=[st_v.get(wk) for wk in inv_wks],
+        )
+        d['inv_est']['cog_' + cat.lower()] = cog_e
+        d['inv_est']['units_' + cat.lower()] = u_e
+        d['inv_est']['st_' + cat.lower()] = st_e
     d['inv']          = inv
     d['inv_wks']      = inv_wks
     d['inv_latest_wk']= inv_wks[-1] if inv_wks else None
     d['inv_prev_wk']  = inv_wks[-2] if len(inv_wks) > 1 else None
 
     for yr,ck,uk in [(2024,'cog_2024','units_2024'),(2025,'cog_2025','units_2025')]:
-        cog_d={}; u_d={}
+        pairs_c=[]; pairs_u=[]
         for _,row in df_inv[df_inv[0]==yr].iterrows():
             if pd.notna(row[2]):
                 try:
-                    wk=int(row[2]); cv=float(row[5]) if pd.notna(row[5]) else 0
-                    uv=float(row[6]) if pd.notna(row[6]) else 0
-                    if cv>0: cog_d[wk]=round(cv)
-                    if uv>0: u_d[wk]=round(uv)
+                    wk=int(row[2])
+                    cv = float(row[5]) if pd.notna(row[5]) and isinstance(row[5],(int,float)) else None
+                    uv = float(row[6]) if pd.notna(row[6]) and isinstance(row[6],(int,float)) else None
+                    pairs_c.append((wk,cv)); pairs_u.append((wk,uv))
                 except: pass
-        d[ck]=cog_d; d[uk]=u_d
+        cog_v, cog_e = carry_forward(pairs_c)
+        u_v,   u_e   = carry_forward(pairs_u)
+        d[ck] = {wk: round(v) for wk,v in cog_v.items()}
+        d[uk] = {wk: round(v) for wk,v in u_v.items()}
+        d['inv_est'][ck] = cog_e
+        d['inv_est'][uk] = u_e
     d['cog_2026']  = dict(zip(inv_wks, inv['Total']['cog']))
     d['units_2026']= dict(zip(inv_wks, inv['Total']['units']))
 
@@ -321,21 +350,26 @@ def read_all():
                 d['yoy_units_2025']= round(float(row[6])) if pd.notna(row[6]) else 0
                 break
 
-    d['st_s24']={}; d['st_s25']={}; d['st_f24']={}
+    pairs_s25=[]; pairs_f24=[]; pairs_s24=[]
     for _,row in df_inv[df_inv[0]==2025].iterrows():
         if pd.notna(row[2]):
             wk=int(row[2])
-            if pd.notna(row[19]) and 0<float(row[19])<=1: d['st_s25'][wk]=round(row[19]*100,1)
+            v = float(row[19]) if pd.notna(row[19]) and isinstance(row[19],(int,float)) and 0<float(row[19])<=1 else None
+            pairs_s25.append((wk, round(v*100,1) if v is not None else None))
     for _,row in df_inv[df_inv[0]==2024].iterrows():
         if pd.notna(row[2]):
             wk=int(row[2])
-            if pd.notna(row[15]) and 0<float(row[15])<=1: d['st_f24'][wk]=round(row[15]*100,1)
-            if pd.notna(row[11]) and 0<float(row[11])<=1: d['st_s24'][wk]=round(row[11]*100,1)
-    d['st_s26']={};d['st_f25']={};d['st_f26']={}
-    for wk,ss,sf5,sf6 in zip(inv_wks,inv['S26']['st'],inv['F25']['st'],inv['F26']['st']):
-        if ss:  d['st_s26'][wk]=ss
-        if sf5: d['st_f25'][wk]=sf5
-        if sf6: d['st_f26'][wk]=sf6
+            v15 = float(row[15]) if pd.notna(row[15]) and isinstance(row[15],(int,float)) and 0<float(row[15])<=1 else None
+            v11 = float(row[11]) if pd.notna(row[11]) and isinstance(row[11],(int,float)) and 0<float(row[11])<=1 else None
+            pairs_f24.append((wk, round(v15*100,1) if v15 is not None else None))
+            pairs_s24.append((wk, round(v11*100,1) if v11 is not None else None))
+    d['st_s25'], d['inv_est']['st_s25'] = carry_forward(pairs_s25)
+    d['st_f24'], d['inv_est']['st_f24'] = carry_forward(pairs_f24)
+    d['st_s24'], d['inv_est']['st_s24'] = carry_forward(pairs_s24)
+
+    d['st_s26'] = dict(zip(inv_wks, inv['S26']['st']))
+    d['st_f25'] = dict(zip(inv_wks, inv['F25']['st']))
+    d['st_f26'] = dict(zip(inv_wks, inv['F26']['st']))
 
     # On Order
     d['on_order']={'total':0,'h1':0,'h2':0}
@@ -550,111 +584,6 @@ def rc_bignum_card(title, value, sub, sub2=None, sub2_cls='pos'):
         + '</div>'
     )
 
-# ── Inventory table ──────────────────────────────────────────────────────────
-
-def fmt_cog(v):
-    if not v: return '—'
-    if v>=1_000_000: return '$' + format(v/1_000_000,'.2f') + 'M'
-    if v>=1_000:     return '$' + format(v/1_000,    '.1f') + 'K'
-    return '$' + f'{v:,}'
-
-def fmt_units(v):
-    return f'{int(v):,}' if v else '—'
-
-def delta_str(curr, prev, is_cog=True):
-    if not curr or not prev: return ''
-    diff = curr - prev
-    if abs(diff) < 50: return ''
-    sign = '+' if diff > 0 else ''
-    if abs(diff) >= 1000:
-        return sign + '$' + format(diff/1000,'.1f') + 'K' if is_cog else sign + f'{int(diff):,}'
-    return sign + '$' + f'{int(diff):,}' if is_cog else sign + f'{int(diff):,}'
-
-def st_color(p):
-    if p is None: return 'var(--ink)'
-    return 'var(--good)' if p>=80 else ('#BA7517' if p>=60 else 'var(--ink)')
-
-def inv_trow(name, cc, cu, pc, pu, st, group):
-    dc = delta_str(cc, pc, True)
-    du = delta_str(cu, pu, False)
-    if group=='season' and 'F26' not in name:
-        dcc = 'var(--good)' if dc.startswith('-') else ('var(--watch)' if dc.startswith('+') else 'var(--ink)')
-        duc = 'var(--good)' if du.startswith('-') else ('var(--watch)' if du.startswith('+') else 'var(--ink)')
-    else:
-        dcc = 'var(--watch)' if dc.startswith('+') else ('var(--good)' if dc.startswith('-') else 'var(--ink)')
-        duc = 'var(--watch)' if du.startswith('+') else ('var(--good)' if du.startswith('-') else 'var(--ink)')
-    sv  = (f'{st:.1f}%' if st else '—')
-    sc2 = st_color(st)
-    bw  = (f'{min(st,100):.0f}%' if st else '0%')
-    return (
-        '<tr>'
-        '<td style="text-align:left;font-family:var(--body)">' + name + '</td>'
-        '<td>' + fmt_cog(cc) + '</td>'
-        '<td style="color:' + dcc + '">' + dc + '</td>'
-        '<td>' + fmt_units(cu) + '</td>'
-        '<td style="color:' + duc + '">' + du + '</td>'
-        '<td style="min-width:130px">'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<div style="flex:1;height:5px;background:var(--surface-alt);border-radius:3px"><div style="height:5px;width:' + bw + ';background:' + sc2 + ';border-radius:3px"></div></div>'
-        '<span style="font-weight:600;color:' + sc2 + ';min-width:38px;text-align:right">' + sv + '</span>'
-        '</div></td>'
-        '</tr>\n'
-    )
-
-def build_inv_table(d):
-    inv=d['inv']; lw=d['inv_latest_wk']; pw=d['inv_prev_wk']
-    def get(cat, wk):
-        if wk is None or wk not in d['inv_wks']: return 0,0,None
-        i = d['inv_wks'].index(wk)
-        return inv[cat]['cog'][i], inv[cat]['units'][i], inv[cat]['st'][i]
-
-    season_cats=[('F25 — Last Season','F25','season'),
-                 ('S26 — Current Season','S26','season'),
-                 ('F26 — Next Season','F26','season')]
-    other_cats=[('Starboard','Starboard','other'),('Past Season','PastSeason','other'),
-                ('Miscellaneous','Misc','other'),('Jetty Rock Foundation','JRF','other'),
-                ('3rd Party 2025','TP2025','other'),('3rd Party 2026','TP2026','other'),
-                ('Surfboard — 3rd Party','Surf3P','other'),
-                ('Skateboards — 3rd Party','Skateboards','other'),
-                ('Surfboard — Consignment','SurfCon','other'),
-                ('Collab','Collab','other'),('White Whale','WhiteWhale','other')]
-
-    rows_s = ''.join(inv_trow(lbl,*get(k,lw)[:2],*get(k,pw)[:2],get(k,lw)[2],g) for lbl,k,g in season_cats)
-    rows_o = ''.join(inv_trow(lbl,*get(k,lw)[:2],*get(k,pw)[:2],get(k,lw)[2],g) for lbl,k,g in other_cats)
-
-    tc,tu,_ = get('Total',lw); pc2,pu,_ = get('Total',pw)
-    dc = delta_str(tc,pc2,True); du = delta_str(tu,pu,False)
-    avg = round(tc/tu,2) if tu else 0
-    dcc = 'var(--watch)' if dc.startswith('+') else 'var(--good)'
-    duc = 'var(--watch)' if du.startswith('+') else 'var(--good)'
-
-    thstyle = 'text-align:right;font-family:var(--mono);font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--ink);opacity:.55;padding:0 0 6px;border-bottom:1px solid var(--surface-alt)'
-    tdstyle = 'font-family:var(--mono);font-size:11.5px;color:var(--ink);text-align:right;padding:6px 0;border-bottom:1px solid var(--surface-alt);font-variant-numeric:tabular-nums'
-    return (
-        '<table style="width:100%;border-collapse:collapse;table-layout:fixed" class="rc-hltable-like">\n'
-        '<style>.rc-hltable-like td,.rc-hltable-like th{' + tdstyle + '}.rc-hltable-like th{' + thstyle + '}</style>\n'
-        '      <thead><tr>\n'
-        '        <th style="text-align:left">Category</th>\n'
-        '        <th>COG</th><th>vs prev wk</th><th>Units</th><th>vs prev wk</th>\n'
-        '        <th style="text-align:left;min-width:130px">Sell-through</th>\n'
-        '      </tr></thead>\n'
-        '      <tbody>\n'
-        '        <tr><td colspan="6" style="padding:8px 0 4px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);opacity:.6;border-bottom:none">Seasons</td></tr>\n'
-        + rows_s +
-        '        <tr><td colspan="6" style="padding:12px 0 4px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);opacity:.6;border-bottom:none">Other categories</td></tr>\n'
-        + rows_o +
-        '        <tr style="border-top:1.5px solid var(--ink)">\n'
-        '          <td style="text-align:left;font-family:var(--body);font-weight:700;border-bottom:none">Total inventory</td>\n'
-        '          <td style="font-weight:700;border-bottom:none">' + fmt_cog(tc) + '</td>\n'
-        '          <td style="color:' + dcc + ';border-bottom:none">' + dc + '</td>\n'
-        '          <td style="font-weight:700;border-bottom:none">' + fmt_units(tu) + '</td>\n'
-        '          <td style="color:' + duc + ';border-bottom:none">' + du + '</td>\n'
-        '          <td style="text-align:left;font-size:10.5px;opacity:.6;border-bottom:none">Avg cost/unit: $' + f'{avg:,.2f}' + '</td>\n'
-        '        </tr>\n'
-        '      </tbody>\n'
-        '    </table>'
-    )
-
 # ── Chart JS ─────────────────────────────────────────────────────────────────
 
 def build_chart_js(d):
@@ -668,6 +597,16 @@ def build_chart_js(d):
         'if(a>=1000000)return"$"+(v<0?"−":"")+(a/1000000).toFixed(2)+"M";'
         'if(a>=1000)return"$"+(v<0?"−":"")+(a/1000).toFixed(1)+"K";'
         'return"$"+v.toLocaleString();};\n'
+        # Estimated points (a week with no recorded reading, carried forward
+        # from the prior week rather than dropped to zero) render as hollow
+        # markers instead of solid, and say so in their tooltip.
+        'const estNote=c=>(c.raw&&c.raw.e)?" (not recorded — carried fwd)":"";\n'
+        'const estStyle=color=>({'
+        'pointBackgroundColor:ctx=>(ctx.raw&&ctx.raw.e)?"#fff":color,'
+        'pointBorderColor:color,'
+        'pointBorderWidth:ctx=>(ctx.raw&&ctx.raw.e)?2:1,'
+        'pointRadius:ctx=>(ctx.raw&&ctx.raw.e)?4:3,'
+        '});\n'
         'const WKS=' + labels + ';\n'
         '(function(){const el=document.getElementById("cfChart");if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:WKS,datasets:['
@@ -679,36 +618,36 @@ def build_chart_js(d):
         '}});})();\n'
         'const HL=Array.from({length:52},(_,i)=>"Wk "+(i+1));\n'
         'const histOpts={responsive:true,maintainAspectRatio:false,'
-        'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
+        'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)+estNote(c)}}},'
         'scales:{x:{type:"category",grid:{color:"#EDECED"},ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};\n'
         '(function(){const el=document.getElementById("invHistCOG");if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:HL,datasets:['
-        '{label:"2024",data:' + to_xy(d['cog_2024'])   + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
-        '{label:"2025",data:' + to_xy(d['cog_2025'])   + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
-        '{label:"2026",data:' + to_xy(d['cog_2026'])   + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,parsing:false},'
+        '{label:"2024",data:' + to_xy(d['cog_2024'], d['inv_est']['cog_2024'])   + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,tension:0.3,parsing:false,...estStyle("#B0B4B8")},'
+        '{label:"2025",data:' + to_xy(d['cog_2025'], d['inv_est']['cog_2025'])   + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:2,tension:0.3,parsing:false,...estStyle("#586D72")},'
+        '{label:"2026",data:' + to_xy(d['cog_2026'], d['inv_est']['cog_total'])  + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,tension:0.3,parsing:false,...estStyle("#43575E")},'
         ']},options:histOpts});})();\n'
         '(function(){const el=document.getElementById("invTotUnits");if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:HL,datasets:['
-        '{label:"2024",data:' + to_xy(d['units_2024']) + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
-        '{label:"2025",data:' + to_xy(d['units_2025']) + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false},'
-        '{label:"2026",data:' + to_xy(d['units_2026']) + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,parsing:false},'
+        '{label:"2024",data:' + to_xy(d['units_2024'], d['inv_est']['units_2024']) + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,tension:0.3,parsing:false,...estStyle("#B0B4B8")},'
+        '{label:"2025",data:' + to_xy(d['units_2025'], d['inv_est']['units_2025']) + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:2,tension:0.3,parsing:false,...estStyle("#586D72")},'
+        '{label:"2026",data:' + to_xy(d['units_2026'], d['inv_est']['units_total'])+ ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,tension:0.3,parsing:false,...estStyle("#43575E")},'
         ']},options:histOpts});})();\n'
         'const stOpts={responsive:true,maintainAspectRatio:false,'
-        'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+c.parsed.y.toFixed(1)+"%"}}},'
+        'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+c.parsed.y.toFixed(1)+"%"+estNote(c)}}},'
         'scales:{x:{type:"category",grid:{color:"#EDECED"},ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},y:{min:0,max:100,grid:{color:"#EDECED"},ticks:{callback:v=>v+"%"}}}};\n'
         'const SL=Array.from({length:52},(_,i)=>"Wk "+(i+1));\n'
         'function mkST(id,ds){const el=document.getElementById(id);if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:SL,datasets:ds.map(d=>{return{label:d.l,data:d.d,'
-        'borderColor:d.c,backgroundColor:"transparent",borderWidth:2,pointRadius:3,tension:0.3,parsing:false};})},'
+        'borderColor:d.c,backgroundColor:"transparent",borderWidth:2,tension:0.3,parsing:false,...estStyle(d.c)};})},'
         'options:stOpts});}\n'
         'mkST("invSSSellThru",['
-        '{l:"S24",d:' + st_xy(d['st_s24']) + ',c:"#B0B4B8"},'
-        '{l:"S25",d:' + st_xy(d['st_s25']) + ',c:"#586D72"},'
-        '{l:"S26",d:' + st_xy(d['st_s26']) + ',c:"#43575E"}]);\n'
+        '{l:"S24",d:' + st_xy(d['st_s24'], d['inv_est']['st_s24']) + ',c:"#B0B4B8"},'
+        '{l:"S25",d:' + st_xy(d['st_s25'], d['inv_est']['st_s25']) + ',c:"#586D72"},'
+        '{l:"S26",d:' + st_xy(d['st_s26'], d['inv_est']['st_s26']) + ',c:"#43575E"}]);\n'
         'mkST("invFWSellThru",['
-        '{l:"F24",d:' + st_xy(d['st_f24']) + ',c:"#B0B4B8"},'
-        '{l:"F25",d:' + st_xy(d['st_f25']) + ',c:"#586D72"},'
-        '{l:"F26",d:' + st_xy(d['st_f26']) + ',c:"#43575E"}]);\n'
+        '{l:"F24",d:' + st_xy(d['st_f24'], d['inv_est']['st_f24']) + ',c:"#B0B4B8"},'
+        '{l:"F25",d:' + st_xy(d['st_f25'], d['inv_est']['st_f25']) + ',c:"#586D72"},'
+        '{l:"F26",d:' + st_xy(d['st_f26'], d['inv_est']['st_f26']) + ',c:"#43575E"}]);\n'
         + build_labor_chart_js(d)
     )
 
@@ -1121,15 +1060,22 @@ def build_html(d):
             favorable_if_below=True, body_extra=rc_hltable(cogs_rows, is_cost=True))
     )
 
+    avg_unit_cost = (tc / tu) if tu else 0
+    note_parts = []
+    if delta_c_str: note_parts.append('COG ' + delta_c_str)
+    if yoy_cog_str: note_parts.append('COG ' + yoy_cog_str)
+    if yoy_u_str:   note_parts.append(yoy_u_str)
+    inv_note = ('. '.join(note_parts) + '.') if note_parts else 'No comparison data available.'
+
     inventory_panel = (
-        '<div class="rc-card"><div class="rc-group-label">Total Inventory COG — Week ' + str(lw or WK) + pend_note + '</div>'
-        '<div class="rc-stat-val" style="font-size:26px;margin:6px 0 4px">' + (fk(tc) if tc else '—') + '</div>'
-        '<div class="rc-desc">' + (delta_c_str or '—') + '</div>'
-        + (('<div class="rc-desc neg" style="font-family:var(--mono);margin-top:2px">' + yoy_cog_str + '</div>') if yoy_cog_str else '') +
-        '</div>\n'
-        '<div class="rc-card"><div class="rc-group-label">Total Units on Hand — Week ' + str(lw or WK) + pend_note + '</div>'
-        '<div class="rc-stat-val" style="font-size:26px;margin:6px 0 4px">' + (format(tu, ',') if tu else '—') + '</div>'
-        '<div class="rc-desc">' + (yoy_u_str or '—') + '</div>'
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Inventory Snapshot — Week ' + str(lw or WK) + pend_note + '</div>'
+        '<div class="rc-desc">' + inv_note + '</div></div>'
+        '<div class="rc-boxrow"><div class="rc-box"><div class="rc-group-label">On Hand</div><div class="rc-row">'
+        + rc_stat('Total COG', fk(tc) if tc else '—')
+        + rc_stat('Units', format(tu, ',') if tu else '—')
+        + rc_stat('Avg Unit Cost', '$' + f'{avg_unit_cost:,.2f}' if tu else '—')
+        + '</div></div></div>'
         '</div>\n'
         + rc_divider("Total Inventory COG — Week by Week")
         + '<div class="rc-card" style="grid-column:1 / -1">'
@@ -1154,8 +1100,6 @@ def build_html(d):
         + '<div class="rc-legend"><span><i class="swatch" style="background:#B0B4B8"></i>F24</span><span><i class="swatch" style="background:#586D72"></i>F25</span><span><i class="swatch" style="background:#43575E"></i>F26</span></div>'
         + '<div class="rc-chart chart-wrap" style="height:240px;margin-top:8px"><canvas id="invFWSellThru"></canvas></div>'
         + '</div>\n'
-        + rc_divider("Inventory Breakdown — Week " + str(lw or WK) + pend_note)
-        + '<div class="rc-card" style="grid-column:1 / -1">' + build_inv_table(d) + '</div>\n'
     )
 
     def panel(pid, content):
