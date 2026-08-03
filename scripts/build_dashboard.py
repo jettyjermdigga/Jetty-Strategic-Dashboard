@@ -1240,6 +1240,7 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
         '    <div class="tab active" data-panel="summary">Summary</div>\n'
         '    <div class="tab" data-panel="revenue">Revenue</div>\n'
         '    <div class="tab" data-panel="cogs">COGS &amp; Shipping</div>\n'
+        '    <div class="tab" data-panel="inventory">Inventory</div>\n'
         '    <div class="tab" data-panel="labor">Labor</div>\n'
         '    <div class="tab" data-panel="opex">OpEx</div>\n'
         '    <div class="tab" data-panel="cashflow">Cash Flow</div>\n'
@@ -1276,7 +1277,9 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
         + '  <div class="tab-panel" id="panel-cogs">\n'
         + sec_label("COGS + Labor + Shipping — YTD &amp; Full Year")
         + two_col(card("Cost detail", cogs_tbl), cogs_c)
+        + '  </div>\n\n'
 
+        + '  <div class="tab-panel" id="panel-inventory">\n'
         + sec_label("Inventory Analysis")
         + '  <div class="kpi-row cols-2" style="margin-bottom:16px">\n'
           '    ' + kpi("Total inventory COG — Week " + str(lw or WK) + pend_note,
