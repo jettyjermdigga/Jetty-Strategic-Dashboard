@@ -371,8 +371,11 @@ def read_all():
     d['st_f25'] = dict(zip(inv_wks, inv['F25']['st']))
     d['st_f26'] = dict(zip(inv_wks, inv['F26']['st']))
 
-    # On Order
+    # On Order: total, by product category, and by half — for both this year
+    # and next, since orders for 2027 H1 start landing well before 2026 closes.
     d['on_order']={'total':0,'h1':0,'h2':0}
+    d['on_order_cats'] = []
+    d['on_order_periods'] = {'h1_2026':0,'h2_2026':0,'h1_2027':0,'h2_2027':0}
     for _,row in df_oo.iterrows():
         if pd.notna(row[0]) and row[0]==2026 and pd.notna(row[2]) and int(row[2])==WK:
             d['on_order']={
@@ -380,21 +383,41 @@ def read_all():
                 'h1':    float(row[13]) if pd.notna(row[13]) else 0,
                 'h2':    float(row[14]) if pd.notna(row[14]) else 0,
             }
+            cat_cols_oo = [('Clearance',6),('Collab',7),('F26',8),('S25',9),('S26',10),('SP27',11),('SU27',12)]
+            d['on_order_cats'] = [(name, float(row[c]) if pd.notna(row[c]) else 0.0) for name,c in cat_cols_oo]
+            d['on_order_periods'] = {
+                'h1_2026': float(row[13]) if pd.notna(row[13]) else 0.0,
+                'h2_2026': float(row[14]) if pd.notna(row[14]) else 0.0,
+                'h1_2027': float(row[15]) if pd.notna(row[15]) else 0.0,
+                'h2_2027': float(row[16]) if pd.notna(row[16]) else 0.0,
+            }
             break
+
+    def get_a_at(name, wk):
+        for _,row in df_a.iterrows():
+            if str(row[0]).strip() == name:
+                return float(row[wk]) if pd.notna(row[wk]) else 0.0
+        return 0.0
 
     for _,row in df_b.iterrows():
         if str(row[0])=='Wholesale Revenue':
-            d['whsl_h1_plan']    = sum(float(row[j]) for j in range(1,27)    if pd.notna(row[j]))
-            d['whsl_h2_plan']    = sum(float(row[j]) for j in range(27,53)   if pd.notna(row[j]))
-            d['whsl_h1_rem_plan']= sum(float(row[j]) for j in range(WK+1,27) if pd.notna(row[j]))
-            d['whsl_h1_wks_left']= 26 - WK
+            d['whsl_h1_plan'] = sum(float(row[j]) for j in range(1,27)  if pd.notna(row[j]))
+            d['whsl_h2_plan'] = sum(float(row[j]) for j in range(27,53) if pd.notna(row[j]))
             break
 
-    whsl_act = 0
-    for lbl,act,*_ in d['rev_lines']:
-        if 'Wholesale' in lbl: whsl_act=act; break
-    d['whsl_act']   = whsl_act
-    d['whsl_h1_gap']= d['whsl_h1_plan'] - (whsl_act + d['on_order']['h1'])
+    # Actual sheet columns are cumulative-to-date, so week 26 (the last week
+    # of H1) gives a real H1-only actual regardless of which half we're in
+    # now — no more "weeks left in H1" math that goes negative once H2 starts.
+    whsl_h1_actual = get_a_at('Wholesale Revenue', min(WK, 26))
+    whsl_ytd_actual = get_a_at('Wholesale Revenue', WK)
+    whsl_h2_actual = max(0.0, whsl_ytd_actual - whsl_h1_actual) if WK > 26 else 0.0
+    d['whsl_act']      = whsl_ytd_actual
+    d['whsl_h1_actual']= whsl_h1_actual
+    d['whsl_h2_actual']= whsl_h2_actual
+    d['whsl_h1_proj']  = whsl_h1_actual + d['on_order']['h1']
+    d['whsl_h2_proj']  = whsl_h2_actual + d['on_order']['h2']
+    d['whsl_h1_gap']   = d['whsl_h1_plan'] - d['whsl_h1_proj']
+    d['whsl_h2_gap']   = d['whsl_h2_plan'] - d['whsl_h2_proj']
 
     # Labor: monthly Plan/Actual/Variance for JETTY INK (cols 0-6) and JETTY BRAND
     # (cols 8-14). A month with no Actual yet hasn't closed — its Plan counts toward
@@ -440,8 +463,10 @@ def read_all():
     payroll = []
     for _,row in df_pr.iterrows():
         if isinstance(row[0], (int, float)) and pd.notna(row[0]) and isinstance(row[4], (int, float)) and pd.notna(row[4]):
+            pay_date = (pd.to_datetime(row[3], unit='D', origin='1899-12-30').strftime('%b %d, %Y')
+                        if pd.notna(row[3]) and isinstance(row[3], (int, float)) else '')
             payroll.append(dict(
-                wk=int(row[0]), total_payroll=float(row[4]),
+                wk=int(row[0]), pay_date=pay_date, total_payroll=float(row[4]),
                 taxes=float(row[5]) if pd.notna(row[5]) else 0.0,
                 net=float(row[6]) if pd.notna(row[6]) else 0.0,
                 total=int(row[7]), pt=int(row[8]), ft=int(row[9]),
@@ -472,6 +497,21 @@ def _asset(name):
 FONTS_CSS = _asset('fonts.css')
 RC_CSS    = _asset('rc_system.css')
 LOGO_B64  = _asset('logo_base64.txt').strip().split(',', 1)[-1]
+LABOR_ICONS_TEMPLATE = _asset('labor_icons_template.html')
+
+def build_labor_fun_stats(pr):
+    """The Employment Mix icon row (person/clock/$/gender/brand-ink icons)
+    extracted verbatim from the approved mockup, with live values swapped in."""
+    html = LABOR_ICONS_TEMPLATE
+    for token, val in [
+        ('__TOTAL_ACTIVE__', pr['total']),
+        ('__FT__', pr['ft']), ('__PT__', pr['pt']),
+        ('__SALARY__', pr['salary']), ('__HOURLY__', pr['hourly']),
+        ('__MALE__', pr['male']), ('__FEMALE__', pr['female']),
+        ('__BRAND__', pr['brand']), ('__INK__', pr['ink']),
+    ]:
+        html = html.replace(token, str(val))
+    return html
 
 EXTRA_CSS = '''
 *{box-sizing:border-box}
@@ -881,26 +921,39 @@ def build_labor_panel(d):
     pr = d['payroll_latest']
     if pr:
         body += rc_divider("Headcount — Pay Period Ending Week " + str(pr['wk']))
-        mix_tiles = ''.join(dept_tile(n, str(v)) for n, v in [
-            ('Full-Time', pr['ft']), ('Part-Time', pr['pt']),
-            ('Hourly', pr['hourly']), ('Salary', pr['salary']),
-            ('Female', pr['female']), ('Male', pr['male']),
-            ('Brand', pr['brand']), ('INK', pr['ink']),
-        ])
+        pay_period_label = "Week " + str(pr['wk']) + (" — Pay Date " + pr['pay_date'] if pr['pay_date'] else "")
+        body += (
+            '<div class="rc-card" style="grid-column:1 / -1">'
+            '<div class="rc-headrow"><div class="rc-name">Employment Mix</div></div>'
+            '<div class="rc-group-label-fun">' + pay_period_label + '</div>'
+            '<div class="rc-row-fun">' + build_labor_fun_stats(pr) + '</div>'
+            '</div>\n'
+        )
         dept_items = sorted(DEPT_LABELS.items(), key=lambda kv: -pr['depts'][kv[0]])
         dept_tiles = ''.join(dept_tile(lbl, str(pr['depts'][key])) for key, lbl in dept_items)
         body += (
             '<div class="rc-card" style="grid-column:1 / -1">'
-            '<div class="dept-group-label">Employment Mix</div>'
-            '<div class="dept-grid">' + mix_tiles + '</div>'
             '<div class="dept-group-label">By Department</div>'
             '<div class="dept-grid">' + dept_tiles + '</div>'
             '</div>\n'
         )
         body += rc_divider("Overtime — Hours & Cost per Pay Period")
+        ot_rows = ''.join(
+            '<tr>'
+            '<td style="text-align:left;font-family:var(--body)">' + (p['pay_date'] or ('Wk ' + str(p['wk']))) + '</td>'
+            '<td>' + f"{p['ot_hours']:.1f}" + '</td>'
+            '<td>' + fk(p['ot_amount']) + '</td>'
+            '</tr>\n'
+            for p in reversed(d['payroll'])
+        )
         body += (
             '<div class="rc-card" style="grid-column:1 / -1">'
             '<div class="rc-chart chart-wrap" style="height:200px"><canvas id="laborOT"></canvas></div>'
+            '<div class="rc-hl"><table class="rc-hltable">'
+            '<colgroup><col class="rc-hl-col-name"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat"></colgroup>'
+            '<thead><tr><th style="text-align:left">Pay Date</th><th>OT Hours</th><th>OT $</th></tr></thead>'
+            '<tbody>' + ot_rows + '</tbody>'
+            '</table></div>'
             '</div>\n'
         )
     return body
@@ -916,41 +969,58 @@ def build_revenue_panel(d):
     cards = ''.join(ch_card(lbl, act, plan, ap) for lbl, act, plan, ann, ap in d['rev_lines'])
     body += '<div class="channel-grid" style="grid-column:1 / -1">' + cards + '</div>\n'
 
-    oo=d['on_order']; h1_wks=d['whsl_h1_wks_left']
-    h1_rem=d['whsl_h1_rem_plan']; h2_plan=d['whsl_h2_plan']
-    h1_open_vs=oo['h1']-h1_rem; h2_pct=oo['h2']/h2_plan*100 if h2_plan else 0
-    whsl_act=d['whsl_act']; h1_proj=whsl_act+oo['h1']; h1_gap=d['whsl_h1_gap']
-    gap_cls = 'pos' if h1_gap<=0 else 'neg'
-    gap_disp= vk(-h1_gap) if h1_gap>0 else '+'+fk(abs(h1_gap))
-    h1ov_cls= 'pos' if h1_open_vs>=0 else 'neg'
+    oo = d['on_order']; per = d['on_order_periods']
 
     body += rc_divider("Open Orders — On Order, Not Yet Shipped or Invoiced")
     body += (
         '<div class="rc-card" style="grid-column:1 / -1">'
-        '<div class="rc-headrow"><div class="rc-name">As of Week ' + str(d['week']) + '</div>'
-        '<div class="rc-desc">Retail orders including discounts applied · Total on order: ' + fk(oo['total']) + '</div></div>'
-        '<div class="rc-boxrow">'
-        '<div class="rc-box"><div class="rc-group-label">H1 (ends Jul 4) — ' + str(h1_wks) + ' wks left</div>'
-        '<div class="rc-row">'
-        + rc_stat('On Order', fk(oo['h1']))
-        + rc_stat('vs Remaining Plan', vk(h1_open_vs), h1ov_cls)
-        + rc_stat('H1 Projected', fk(h1_proj))
-        + '</div></div>'
-        '<div class="rc-box"><div class="rc-group-label">H2 (Jul 5 – Dec 31) — 26 wks left</div>'
-        '<div class="rc-row">'
-        + rc_stat('On Order', fk(oo['h2']))
-        + rc_stat('% of H2 Plan', f'{h2_pct:.1f}%')
-        + '</div></div>'
-        '</div>'
-        '<div class="rc-hl">'
-        '<table class="rc-hltable"><thead><tr><th style="text-align:left">H1 Wholesale Gap Analysis</th><th></th></tr></thead><tbody>'
-        '<tr><td style="text-align:left;font-family:var(--body)">H1 total plan (wks 1–26)</td><td>' + fk(d['whsl_h1_plan']) + '</td></tr>'
-        '<tr><td style="text-align:left;font-family:var(--body)">YTD actual (wks 1–' + str(d['week']) + ')</td><td class="neg">' + fk(whsl_act) + '</td></tr>'
-        '<tr><td style="text-align:left;font-family:var(--body)">H1 open orders (wks ' + str(d['week']+1) + '–26)</td><td>' + fk(oo['h1']) + '</td></tr>'
-        '<tr><td style="text-align:left;font-family:var(--body);font-weight:700;border-bottom:none">H1 gap to plan</td><td class="' + gap_cls + '" style="font-weight:700;border-bottom:none">' + gap_disp + '</td></tr>'
-        '</tbody></table></div>'
-        '<div class="rc-subhead neg" style="margin-top:12px">Action required: Wholesale reps must actively sell AO during S27 road shows starting June 1. '
-        'KONA, Sun Cruiser, Stone Pony, and Ron Jon\'s collab invoices are in the WIP pipeline and represent meaningful upside.</div>'
+        '<div class="rc-headrow"><div class="rc-name">On Order — As of Week ' + str(d['week']) + '</div>'
+        '<div class="rc-desc">Retail orders including discounts applied, not yet shipped or invoiced.</div></div>'
+        '<div class="rc-boxrow"><div class="rc-box" style="flex:none;min-width:160px">'
+        '<div class="rc-group-label">Total On Order</div>'
+        '<div class="rc-stat-val" style="font-size:22px;margin-top:2px">' + fk(oo['total']) + '</div>'
+        '</div></div>'
+        '<div class="dept-group-label">By Category</div>'
+        '<div class="dept-grid">' + ''.join(dept_tile(name, fk(amt)) for name, amt in d['on_order_cats']) + '</div>'
+        '<div class="dept-group-label">By Half</div>'
+        '<div class="dept-grid">'
+        + dept_tile('H1 2026', fk(per['h1_2026']))
+        + dept_tile('H2 2026', fk(per['h2_2026']))
+        + dept_tile('H1 2027', fk(per['h1_2027']))
+        + dept_tile('H2 2027', fk(per['h2_2027']))
+        + '</div>'
+        '</div>\n'
+    )
+
+    body += rc_divider("Wholesale — Plan vs. Booked, by Half (2026)")
+    gap_rows = []
+    for lbl, plan, act, order, proj in [
+        ("H1 (Jan – Jun)", d['whsl_h1_plan'], d['whsl_h1_actual'], oo['h1'], d['whsl_h1_proj']),
+        ("H2 (Jul – Dec)", d['whsl_h2_plan'], d['whsl_h2_actual'], oo['h2'], d['whsl_h2_proj']),
+    ]:
+        gap = plan - proj
+        gap_cls = 'pos' if gap <= 0 else 'neg'
+        gap_rows.append(
+            '<tr>'
+            '<td style="text-align:left;font-family:var(--body)">' + lbl + '</td>'
+            '<td>' + fk(plan) + '</td>'
+            '<td>' + fk(act) + '</td>'
+            '<td>' + fk(order) + '</td>'
+            '<td style="font-weight:600">' + fk(proj) + '</td>'
+            '<td class="' + gap_cls + '" style="font-weight:700">' + (vk(-gap) if gap != 0 else '—') + '</td>'
+            '</tr>\n'
+        )
+    body += (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Wholesale Gap Analysis</div>'
+        '<div class="rc-desc">Projected = shipped/invoiced to date for that half, plus what\'s on order for it. '
+        'Gap = plan minus projected — positive means still short of plan, negative means already ahead.</div></div>'
+        '<div class="rc-hl"><table class="rc-hltable">'
+        '<colgroup><col class="rc-hl-col-name"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat">'
+        '<col class="rc-hl-col-stat"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat"></colgroup>'
+        '<thead><tr><th style="text-align:left">Half</th><th>Plan</th><th>Actual</th><th>On Order</th><th>Projected</th><th>Gap to Plan</th></tr></thead>'
+        '<tbody>' + ''.join(gap_rows) + '</tbody>'
+        '</table></div>'
         '</div>\n'
     )
     return body
