@@ -63,6 +63,21 @@ COL_HDR = '''    <div style="display:flex;gap:6px;padding-bottom:6px;font-size:1
       <span style="width:62px;text-align:right">Ann. Var</span>
     </div>\n'''
 
+TAB_JS = '''
+document.querySelectorAll(".tab").forEach(function(t){
+  t.addEventListener("click", function(){
+    document.querySelectorAll(".tab").forEach(function(x){x.classList.remove("active");});
+    document.querySelectorAll(".tab-panel").forEach(function(x){x.classList.remove("active");});
+    t.classList.add("active");
+    var panel = document.getElementById("panel-" + t.dataset.panel);
+    if (panel) panel.classList.add("active");
+    if (window.Chart && Chart.instances) {
+      Object.values(Chart.instances).forEach(function(c){ c.resize(); });
+    }
+  });
+});
+'''
+
 def js_arr(lst):
     return '[' + ','.join(str(v) for v in lst) + ']'
 
@@ -115,6 +130,8 @@ def read_all():
     df_cf = pd.read_excel(FP, sheet_name='Cash Flow - Tracker', engine='pyxlsb', header=None)
     df_inv= pd.read_excel(FP, sheet_name='Inventory',           engine='pyxlsb', header=None)
     df_oo = pd.read_excel(FP, sheet_name='On Order',            engine='pyxlsb', header=None)
+    df_lb = pd.read_excel(FP, sheet_name='Labor',                engine='pyxlsb', header=None)
+    df_pr = pd.read_excel(FP, sheet_name='Payroll',              engine='pyxlsb', header=None)
 
     def sc(row, col):
         r = row - 1
@@ -374,6 +391,69 @@ def read_all():
     d['whsl_act']   = whsl_act
     d['whsl_h1_gap']= d['whsl_h1_plan'] - (whsl_act + d['on_order']['h1'])
 
+    # Labor: monthly Plan/Actual/Variance for JETTY INK (cols 0-6) and JETTY BRAND
+    # (cols 8-14). A month with no Actual yet hasn't closed — its Plan counts toward
+    # the remaining-plan total (and so the full-year projection) but not YTD actual,
+    # matching the actual+remaining-plan projection convention used elsewhere.
+    def labor_year(col0, year):
+        months=[]; ytd_act=ytd_plan=rem_plan=ann_plan=0.0
+        for _,row in df_lb.iterrows():
+            y = row[col0]
+            if not isinstance(y, (int, float)) or pd.isna(y) or int(y) != year: continue
+            plan = float(row[col0+4]) if pd.notna(row[col0+4]) else 0.0
+            act  = row[col0+5]
+            mon  = str(row[col0+1]).strip() if pd.notna(row[col0+1]) else ''
+            ann_plan += plan
+            if pd.notna(act):
+                ytd_act += float(act); ytd_plan += plan
+                months.append((mon, plan, float(act)))
+            else:
+                rem_plan += plan
+                months.append((mon, plan, None))
+        return dict(ytd_act=ytd_act, ytd_plan=ytd_plan, ytd_var=ytd_act-ytd_plan,
+                    ann_plan=ann_plan, ann_proj=ytd_act+rem_plan,
+                    ann_var=(ytd_act+rem_plan)-ann_plan, months=months)
+
+    labor_ink   = labor_year(0, 2026)
+    labor_brand = labor_year(8, 2026)
+    labor_total = dict(
+        ytd_act = labor_ink['ytd_act']+labor_brand['ytd_act'],
+        ytd_plan= labor_ink['ytd_plan']+labor_brand['ytd_plan'],
+        ann_plan= labor_ink['ann_plan']+labor_brand['ann_plan'],
+        ann_proj= labor_ink['ann_proj']+labor_brand['ann_proj'],
+    )
+    labor_total['ytd_var'] = labor_total['ytd_act']-labor_total['ytd_plan']
+    labor_total['ann_var'] = labor_total['ann_proj']-labor_total['ann_plan']
+    labor_total['months']  = [(m, pi+pb, (ai+ab) if ai is not None and ab is not None else None)
+                               for (m,pi,ai),(_,pb,ab) in zip(labor_ink['months'], labor_brand['months'])]
+    d['labor_ink']   = labor_ink
+    d['labor_brand'] = labor_brand
+    d['labor_total'] = labor_total
+
+    # Payroll: biweekly headcount + overtime. Weeks with no Total Payroll are the
+    # off week in each pay period and carry no snapshot.
+    payroll = []
+    for _,row in df_pr.iterrows():
+        if isinstance(row[0], (int, float)) and pd.notna(row[0]) and isinstance(row[4], (int, float)) and pd.notna(row[4]):
+            payroll.append(dict(
+                wk=int(row[0]), total_payroll=float(row[4]),
+                taxes=float(row[5]) if pd.notna(row[5]) else 0.0,
+                net=float(row[6]) if pd.notna(row[6]) else 0.0,
+                total=int(row[7]), pt=int(row[8]), ft=int(row[9]),
+                hourly=int(row[10]), salary=int(row[11]),
+                female=int(row[12]), male=int(row[13]),
+                ink=int(row[14]), brand=int(row[15]),
+                depts=dict(
+                    ink_design=int(row[16]), ink_ops=int(row[17]), ink_prod=int(row[18]), ink_sales=int(row[19]),
+                    logistics=int(row[20]), mkg=int(row[21]), prodev=int(row[22]), flagship=int(row[23]),
+                    long_branch=int(row[24]), box_truck=int(row[25]), whsl_sales=int(row[26]), finance=int(row[27]),
+                ),
+                ot_hours=float(row[28]) if pd.notna(row[28]) else 0.0,
+                ot_amount=float(row[29]) if pd.notna(row[29]) else 0.0,
+            ))
+    d['payroll']        = payroll
+    d['payroll_latest'] = payroll[-1] if payroll else None
+
     return d
 
 # ── Inventory table ──────────────────────────────────────────────────────────
@@ -607,7 +687,19 @@ def generate_callouts(d):
                     "Shipping F26 against these open orders is the key H2 operational priority.")
         ])
 
-    return pl_c, rev_c, cogs_c, opex_c, cf_c, inv_c
+    lt = d['labor_total']; li = d['labor_ink']; lb = d['labor_brand']
+    latest_pr = d['payroll_latest']
+    labor_c = callout_col([
+        win("Total labor is " + fk(abs(lt['ytd_var'])) + (" favorable" if lt['ytd_var']<0 else " over") + " vs plan through Week " + str(WK) + ". "
+            "Brand is " + fk(abs(lb['ytd_var'])) + (" favorable" if lb['ytd_var']<0 else " over") + "; INK is " + fk(abs(li['ytd_var'])) + (" favorable" if li['ytd_var']<0 else " over") + "."),
+        watch("Headcount as of Week " + (str(latest_pr['wk']) if latest_pr else str(WK)) + " is " + (str(latest_pr['total']) if latest_pr else '—') +
+              " (" + (str(latest_pr['ft']) if latest_pr else '—') + " FT / " + (str(latest_pr['pt']) if latest_pr else '—') + " PT). " +
+              ("Overtime ran " + f"{latest_pr['ot_hours']:.1f}" + " hrs (" + fk(latest_pr['ot_amount']) + ") this pay period." if latest_pr else "")),
+        outlook("Full-year labor projects at " + fk(lt['ann_proj']) + " vs " + fk(lt['ann_plan']) + " plan — "
+                + fk(abs(lt['ann_var'])) + (" favorable" if lt['ann_var']<0 else " over") + ".")
+    ])
+
+    return pl_c, rev_c, cogs_c, opex_c, cf_c, inv_c, labor_c
 
 # ── Chart JS ─────────────────────────────────────────────────────────────────
 
@@ -629,7 +721,7 @@ def build_chart_js(d):
         ']},options:{responsive:true,maintainAspectRatio:false,'
         'plugins:{legend:{display:true,position:"top",labels:{font:{size:10}}}},'
         'scales:{x:{ticks:{font:{size:9}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}'
-        '}}});})();\n'
+        '}});})();\n'
         'const HL=Array.from({length:52},(_,i)=>"Wk "+(i+1));\n'
         'const histOpts={responsive:true,maintainAspectRatio:false,'
         'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
@@ -662,6 +754,37 @@ def build_chart_js(d):
         '{l:"F24",d:' + st_xy(d['st_f24']) + ',c:"#B4B2A9"},'
         '{l:"F25",d:' + st_xy(d['st_f25']) + ',c:"#BA7517"},'
         '{l:"F26",d:' + st_xy(d['st_f26']) + ',c:"#a82f2f"}]);\n'
+        + build_labor_chart_js(d)
+    )
+
+def build_labor_chart_js(d):
+    months = d['labor_total']['months']
+    mon_labels = '[' + ','.join('"' + m + '"' for m,_,_ in months) + ']'
+    plan_arr   = js_arr([round(p) for _,p,_ in months])
+    act_arr    = '[' + ','.join(('null' if a is None else str(round(a))) for _,_,a in months) + ']'
+    payroll    = d['payroll']
+    ot_labels  = '[' + ','.join('"Wk ' + str(p['wk']) + '"' for p in payroll) + ']'
+    ot_amt     = js_arr([round(p['ot_amount']) for p in payroll])
+    ot_hrs     = js_arr([round(p['ot_hours'],1) for p in payroll])
+    return (
+        '(function(){const el=document.getElementById("laborMonthly");if(!el)return;'
+        'new Chart(el,{type:"bar",data:{labels:' + mon_labels + ',datasets:['
+        '{label:"Plan",data:' + plan_arr + ',backgroundColor:"rgba(136,135,128,.35)",borderRadius:3},'
+        '{label:"Actual",data:' + act_arr + ',backgroundColor:"#6a4fA0",borderRadius:3},'
+        ']},options:{responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:true,position:"top",labels:{font:{size:10}}},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.raw)}}},'
+        'scales:{x:{ticks:{font:{size:9}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}'
+        '}});})();\n'
+        '(function(){const el=document.getElementById("laborOT");if(!el)return;'
+        'new Chart(el,{type:"line",data:{labels:' + ot_labels + ',datasets:['
+        '{label:"OT $",data:' + ot_amt + ',borderColor:"#BA7517",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,tension:0.3,yAxisID:"y"},'
+        '{label:"OT hrs",data:' + ot_hrs + ',borderColor:"#888780",backgroundColor:"transparent",borderWidth:1.5,borderDash:[4,3],pointRadius:2,tension:0.3,yAxisID:"y1"},'
+        ']},options:{responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:true,position:"top",labels:{font:{size:10}}},tooltip:{callbacks:{label:c=>c.dataset.label+": "+(c.dataset.yAxisID==="y"?fmtK(c.raw):c.raw+"h")}}},'
+        'scales:{x:{ticks:{font:{size:9}}},'
+        'y:{position:"left",ticks:{callback:v=>fmtK(v),font:{size:9}}},'
+        'y1:{position:"right",grid:{drawOnChartArea:false},ticks:{callback:v=>v+"h",font:{size:9}}}}'
+        '}});})();\n'
     )
 
 # ── HTML assembly ─────────────────────────────────────────────────────────────
@@ -837,6 +960,83 @@ def build_cf_weekly_table(d):
         '</table>'
     )
 
+def labor_kpi_card(title, cum, full):
+    """Labor is a cost line — unlike the Cash Flow KPIs, actual below plan is
+    favorable, so variance color is inverted vs. cf_kpi_card."""
+    cum_plan, cum_act, cum_var = cum
+    full_plan, full_proj, full_var = full
+    body = ('<div style="display:flex;gap:12px">'
+            + cf_box('Cumulative to Date', fk(cum_plan), 'Actual', fk(cum_act), vk(cum_var), 'pos' if cum_var<=0 else 'neg')
+            + cf_box('Full Year', fk(full_plan), 'Projection', fk(full_proj), vk(full_var), 'pos' if full_var<=0 else 'neg')
+            + '</div>')
+    return card(title, body)
+
+def two_seg_bar(title, a_label, a_val, a_color, b_label, b_val, b_color):
+    total = a_val + b_val
+    pa = (a_val/total*100) if total else 50
+    return (
+        '<div style="margin-bottom:14px">'
+        '<div style="font-family:var(--mono);font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">' + title + '</div>'
+        '<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--rule);margin-bottom:6px">'
+        '<div style="width:' + f'{pa:.1f}' + '%;background:' + a_color + '"></div>'
+        '<div style="width:' + f'{100-pa:.1f}' + '%;background:' + b_color + '"></div>'
+        '</div>'
+        '<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px">'
+        '<span style="color:' + a_color + ';font-weight:600">' + a_label + ': ' + str(a_val) + '</span>'
+        '<span style="color:' + b_color + ';font-weight:600">' + b_label + ': ' + str(b_val) + '</span>'
+        '</div></div>'
+    )
+
+def dept_bar_row(name, count, max_count):
+    pct = (count/max_count*100) if max_count else 0
+    return (
+        '<div style="display:flex;align-items:center;gap:10px;padding:5px 0">'
+        '<span style="width:130px;font-size:12px;color:var(--ink)">' + name + '</span>'
+        '<div style="flex:1;height:8px;background:var(--rule);border-radius:4px;overflow:hidden">'
+        '<div style="height:8px;width:' + f'{pct:.0f}' + '%;background:#2e6da4"></div></div>'
+        '<span style="width:24px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600">' + str(count) + '</span>'
+        '</div>'
+    )
+
+DEPT_LABELS = {
+    'ink_design':'INK — Design','ink_ops':'INK — Operations','ink_prod':'INK — Production','ink_sales':'INK — Sales',
+    'logistics':'Logistics','mkg':'Marketing','prodev':'Product Dev','flagship':'Flagship Store',
+    'long_branch':'Long Branch','box_truck':'Box Truck Sales','whsl_sales':'Wholesale Sales','finance':'Finance',
+}
+
+def build_labor_panel(d):
+    lt=d['labor_total']; li=d['labor_ink']; lb=d['labor_brand']
+    body = (
+        '  <div style="display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:20px">\n'
+        + labor_kpi_card("Total Labor", (lt['ytd_plan'],lt['ytd_act'],lt['ytd_var']), (lt['ann_plan'],lt['ann_proj'],lt['ann_var']))
+        + labor_kpi_card("Brand Labor", (lb['ytd_plan'],lb['ytd_act'],lb['ytd_var']), (lb['ann_plan'],lb['ann_proj'],lb['ann_var']))
+        + labor_kpi_card("INK Labor",   (li['ytd_plan'],li['ytd_act'],li['ytd_var']), (li['ann_plan'],li['ann_proj'],li['ann_var']))
+        + '  </div>\n'
+        + card("Monthly labor — plan vs. actual",
+               '      <div class="chart-wrap" style="height:220px"><canvas id="laborMonthly"></canvas></div>\n')
+    )
+
+    pr = d['payroll_latest']
+    if pr:
+        hc_body = (
+            two_seg_bar('Full-time / Part-time', 'FT', pr['ft'], '#0d6e4f', 'PT', pr['pt'], '#888780')
+            + two_seg_bar('Hourly / Salary', 'Hourly', pr['hourly'], '#378ADD', 'Salary', pr['salary'], '#BA7517')
+            + two_seg_bar('Female / Male', 'Female', pr['female'], '#6a4fA0', 'Male', pr['male'], '#888780')
+            + two_seg_bar('Brand / INK', 'Brand', pr['brand'], '#2e6da4', 'INK', pr['ink'], '#a82f2f')
+        )
+        dept_items = sorted(DEPT_LABELS.items(), key=lambda kv: -pr['depts'][kv[0]])
+        max_dept = max(pr['depts'].values()) if pr['depts'] else 1
+        dept_body = ''.join(dept_bar_row(lbl, pr['depts'][key], max_dept) for key, lbl in dept_items)
+        body += (
+            '  <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin-bottom:20px">\n'
+            '    <div>' + card("Headcount composition — pay period ending Week " + str(pr['wk']), hc_body) + '</div>\n'
+            '    <div>' + card("Headcount by department", dept_body) + '</div>\n'
+            '  </div>\n'
+        )
+        body += card("Overtime — hours &amp; cost per pay period",
+                      '      <div class="chart-wrap" style="height:200px"><canvas id="laborOT"></canvas></div>\n')
+    return body
+
 def sec_label(txt):
     return ('  <div style="font-family:var(--mono);font-size:12px;font-weight:700;'
             'letter-spacing:.12em;text-transform:uppercase;color:var(--ink);'
@@ -853,7 +1053,7 @@ def build_html(d):
                   if not ahead else '')
     pill_txt   = 'YTD ahead of plan' if ahead else 'YTD behind plan'
 
-    pl_c, rev_c, cogs_c, opex_c, cf_c, inv_c = generate_callouts(d)
+    pl_c, rev_c, cogs_c, opex_c, cf_c, inv_c, labor_c = generate_callouts(d)
 
     # Revenue table
     rev_tbl = COL_HDR
@@ -1011,6 +1211,12 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
 .ch-row{display:flex;gap:6px;padding:6px 0;border-bottom:1px solid var(--rule);font-size:12px}
 .ch-name{flex:1;color:var(--ink)}
 .chart-wrap{position:relative;width:100%}
+.tabs{display:flex;gap:4px;margin-bottom:28px;border-bottom:1.5px solid var(--ink);overflow-x:auto}
+.tab{font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-muted);padding:10px 16px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;user-select:none}
+.tab:hover{color:var(--ink)}
+.tab.active{color:var(--ink);border-bottom-color:var(--ink)}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;700&display=swap');
 '''
 
@@ -1030,6 +1236,16 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
         '    <span class="status-pill" ' + pill_style + '>' + pill_txt + '</span>\n'
         '  </div>\n\n'
 
+        '  <nav class="tabs">\n'
+        '    <div class="tab active" data-panel="summary">Summary</div>\n'
+        '    <div class="tab" data-panel="revenue">Revenue</div>\n'
+        '    <div class="tab" data-panel="cogs">COGS &amp; Shipping</div>\n'
+        '    <div class="tab" data-panel="labor">Labor</div>\n'
+        '    <div class="tab" data-panel="opex">OpEx</div>\n'
+        '    <div class="tab" data-panel="cashflow">Cash Flow</div>\n'
+        '  </nav>\n\n'
+
+        '  <div class="tab-panel active" id="panel-summary">\n'
         + sec_label("P&amp;L Summary") +
         two_col(
             '  <div class="kpi-row cols-3" style="margin-bottom:12px">\n'
@@ -1049,42 +1265,17 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
             '  </div>\n',
             pl_c
         )
+        + '  </div>\n\n'
 
+        + '  <div class="tab-panel" id="panel-revenue">\n'
         + sec_label("Revenue Channels — YTD &amp; Full Year")
         + two_col(card("Revenue by channel", rev_tbl), rev_c)
-
         + oo_card
+        + '  </div>\n\n'
 
+        + '  <div class="tab-panel" id="panel-cogs">\n'
         + sec_label("COGS + Labor + Shipping — YTD &amp; Full Year")
         + two_col(card("Cost detail", cogs_tbl), cogs_c)
-
-        + sec_label("Operating Expenses — YTD &amp; Full Year")
-        + two_col(opex_body, opex_c)
-
-        + sec_label("Cash Flow — YTD &amp; Full Year")
-        + two_col(
-            '  <div style="display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:20px">\n'
-            + cf_kpi_card("Total Cash In",
-                          (d['cash_in']['plan'],  d['cash_in']['act'],  d['cash_in']['var']),
-                          (d['cash_in']['ann_plan'], d['cash_in']['ann_proj'], d['cash_in']['ann_var']))
-            + cf_kpi_card("Total Cash Out",
-                          (d['cash_out']['plan'], d['cash_out']['act'], d['cash_out']['var']),
-                          (d['cash_out']['ann_plan'], d['cash_out']['ann_proj'], d['cash_out']['ann_var']))
-            + cf_kpi_card("Net Cash Flow (Before Borrowing)",
-                          (d['cf_var_pre']['plan'], d['cf_var_pre']['act'], d['cf_var_pre']['var']),
-                          (d['cf_var_pre']['ann_plan'], d['cf_var_pre']['ann_proj'], d['cf_var_pre']['ann_var']))
-            + cf_kpi_card("Net Cash Flow (After Borrowing)",
-                          (d['cf_var_post']['plan'], d['cf_var_post']['act'], d['cf_var_post']['var']),
-                          (d['cf_var_post']['ann_plan'], d['cf_var_post']['ann_proj'], d['cf_var_post']['ann_var']))
-            + '  </div>\n'
-            + card("Cumulative cash in vs. cash out",
-                   '      <div style="font-size:12px;color:' + cf_sub_color + ';margin-bottom:10px">' + cf_subheader + '</div>\n'
-                   '      <div class="chart-wrap" style="height:220px"><canvas id="cfChart"></canvas></div>\n')
-            + card("Cash in by channel",   cin_tbl)
-            + card("Weekly cash collection schedule", build_cf_weekly_table(d))
-            + card("Cash out by category", cout_tbl),
-            cf_c
-        )
 
         + sec_label("Inventory Analysis")
         + '  <div class="kpi-row cols-2" style="margin-bottom:16px">\n'
@@ -1147,12 +1338,53 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
           '    </div>\n'
           + inv_c + '\n'
           '  </div>\n\n'
+        + '  </div>\n\n'
+
+        + '  <div class="tab-panel" id="panel-labor">\n'
+        + sec_label("Labor — YTD &amp; Full Year")
+        + two_col(build_labor_panel(d), labor_c)
+        + '  </div>\n\n'
+
+        + '  <div class="tab-panel" id="panel-opex">\n'
+        + sec_label("Operating Expenses — YTD &amp; Full Year")
+        + two_col(opex_body, opex_c)
+        + '  </div>\n\n'
+
+        + '  <div class="tab-panel" id="panel-cashflow">\n'
+        + sec_label("Cash Flow — YTD &amp; Full Year")
+        + two_col(
+            '  <div style="display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:20px">\n'
+            + cf_kpi_card("Total Cash In",
+                          (d['cash_in']['plan'],  d['cash_in']['act'],  d['cash_in']['var']),
+                          (d['cash_in']['ann_plan'], d['cash_in']['ann_proj'], d['cash_in']['ann_var']))
+            + cf_kpi_card("Total Cash Out",
+                          (d['cash_out']['plan'], d['cash_out']['act'], d['cash_out']['var']),
+                          (d['cash_out']['ann_plan'], d['cash_out']['ann_proj'], d['cash_out']['ann_var']))
+            + cf_kpi_card("Net Cash Flow (Before Borrowing)",
+                          (d['cf_var_pre']['plan'], d['cf_var_pre']['act'], d['cf_var_pre']['var']),
+                          (d['cf_var_pre']['ann_plan'], d['cf_var_pre']['ann_proj'], d['cf_var_pre']['ann_var']))
+            + cf_kpi_card("Net Cash Flow (After Borrowing)",
+                          (d['cf_var_post']['plan'], d['cf_var_post']['act'], d['cf_var_post']['var']),
+                          (d['cf_var_post']['ann_plan'], d['cf_var_post']['ann_proj'], d['cf_var_post']['ann_var']))
+            + '  </div>\n'
+            + card("Cumulative cash in vs. cash out",
+                   '      <div style="font-size:12px;color:' + cf_sub_color + ';margin-bottom:10px">' + cf_subheader + '</div>\n'
+                   '      <div class="chart-wrap" style="height:220px"><canvas id="cfChart"></canvas></div>\n')
+            + card("Cash in by channel",   cin_tbl)
+            + card("Weekly cash collection schedule", build_cf_weekly_table(d))
+            + card("Cash out by category", cout_tbl),
+            cf_c
+        )
+        + '  </div>\n\n'
 
         + '</div>\n'
           '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>\n'
           '<script>\n'
           + build_chart_js(d)
-          + '</script>\n</body>\n</html>'
+          + '</script>\n'
+          '<script>\n'
+          + TAB_JS +
+          '</script>\n</body>\n</html>'
     )
 
 # ── Main ──────────────────────────────────────────────────────────────────────
