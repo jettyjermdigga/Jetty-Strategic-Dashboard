@@ -126,7 +126,8 @@ def read_all():
     d['week']       = WK
     d['net_inc_var']= sc(21, 'D')
     d['ytd_status'] = 'ahead' if d['net_inc_var'] >= 0 else 'behind'
-    for key, row in [('rev',11),('cogs',13),('opex',15),('cf_var_post',81)]:
+    for key, row in [('rev',11),('cogs',13),('opex',15),
+                      ('cash_in',68),('cash_out',75),('cf_var_pre',77),('cf_var_post',81)]:
         d[key] = {k: sc(row, c) for k,c in [('plan','B'),('act','C'),('var','D'),
                                               ('ann_plan','G'),('ann_proj','H'),('ann_var','I')]}
 
@@ -224,14 +225,27 @@ def read_all():
     proj_w,proj_d,proj_i,proj_b,proj_i2,proj_o,proj_l,proj_e  = [],[],[],[],[],[],[],[]
     rw=rd=ri=rb=ri2=ro=rl=re=0
     labels=[]
+    # Weekly cash-in schedule: the sheet's "Actual" columns (10-13) are cumulative,
+    # so per-week cash in is the delta vs the prior week's cumulative total. Plan
+    # columns (5-8) are already per-week, so weeks beyond WK can be shown as-is
+    # for a forecast of the remaining schedule.
+    cf_weekly, cf_forecast = [], []
+    prev_w = prev_d = prev_i = prev_t = 0.0
     for _,row in df_cf.iterrows():
         if pd.notna(row[2]) and str(row[2]) != 'Week':
             try: wk = int(row[2])
             except: continue
-            if wk > WK: break
-            rw  += float(row[5])  if pd.notna(row[5])  else 0
-            rd  += float(row[6])  if pd.notna(row[6])  else 0
-            ri  += float(row[7])  if pd.notna(row[7])  else 0
+            if wk > 52: break
+            plan_w = float(row[5]) if pd.notna(row[5]) else 0.0
+            plan_d = float(row[6]) if pd.notna(row[6]) else 0.0
+            plan_i = float(row[7]) if pd.notna(row[7]) else 0.0
+            plan_t = float(row[8]) if pd.notna(row[8]) else (plan_w+plan_d+plan_i)
+            if wk > WK:
+                cf_forecast.append(dict(wk=wk, w=plan_w, d=plan_d, i=plan_i, t=plan_t))
+                continue
+            rw  += plan_w
+            rd  += plan_d
+            ri  += plan_i
             rb  += float(row[15]) if pd.notna(row[15]) else 0
             ri2 += float(row[16]) if pd.notna(row[16]) else 0
             ro  += float(row[17]) if pd.notna(row[17]) else 0
@@ -239,11 +253,17 @@ def read_all():
             re  += float(row[19]) if pd.notna(row[19]) else 0
             act  = float(row[13]) if pd.notna(row[13]) else 0
             if act > 0:
+                cum_w = float(row[10]) if pd.notna(row[10]) else prev_w
+                cum_d = float(row[11]) if pd.notna(row[11]) else prev_d
+                cum_i = float(row[12]) if pd.notna(row[12]) else prev_i
+                cum_t = act
+                cf_weekly.append(dict(wk=wk, w=cum_w-prev_w, d=cum_d-prev_d, i=cum_i-prev_i, t=cum_t-prev_t,
+                                       pw=plan_w, pd_=plan_d, pi=plan_i, pt=plan_t))
+                prev_w, prev_d, prev_i, prev_t = cum_w, cum_d, cum_i, cum_t
+
                 labels.append("Wk " + str(wk))
-                cin_w.append(round(float(row[10]) if pd.notna(row[10]) else 0))
-                cin_d.append(round(float(row[11]) if pd.notna(row[11]) else 0))
-                cin_i.append(round(float(row[12]) if pd.notna(row[12]) else 0))
-                cin_t.append(round(act))
+                cin_w.append(round(cum_w)); cin_d.append(round(cum_d)); cin_i.append(round(cum_i))
+                cin_t.append(round(cum_t))
                 cout_b.append(round(float(row[21]) if pd.notna(row[21]) else 0))
                 cout_i.append(round(float(row[22]) if pd.notna(row[22]) else 0))
                 cout_o.append(round(float(row[23]) if pd.notna(row[23]) else 0))
@@ -258,6 +278,8 @@ def read_all():
         cout_b=cout_b, cout_i=cout_i, cout_o=cout_o, cout_l=cout_l, cout_e=cout_e,
         proj_w=proj_w, proj_d=proj_d, proj_i=proj_i,
         proj_b=proj_b, proj_i2=proj_i2, proj_o=proj_o, proj_l=proj_l, proj_e=proj_e)
+    d['cf_weekly']   = cf_weekly
+    d['cf_forecast'] = cf_forecast
 
     # Inventory
     cat_cols = {
@@ -600,30 +622,13 @@ def build_chart_js(d):
         'if(a>=1000)return"$"+(v<0?"−":"")+(a/1000).toFixed(1)+"K";'
         'return"$"+v.toLocaleString();};\n'
         'const WKS=' + labels + ';\n'
-        'const mkChart=(id,act,proj,color)=>{'
-        'const el=document.getElementById(id);if(!el)return;'
-        'new Chart(el,{type:"line",data:{labels:WKS,datasets:['
-        '{label:"Actual",data:act,borderColor:color,backgroundColor:"transparent",borderWidth:2,pointRadius:2,tension:0.3},'
-        '{label:"Projected",data:proj,borderColor:color,backgroundColor:"transparent",borderWidth:2,borderDash:[4,3],pointRadius:2,tension:0.3},'
-        ']},options:{responsive:true,maintainAspectRatio:false,'
-        'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtK(c.raw)}}},'
-        'scales:{x:{ticks:{font:{size:9}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}'
-        '}});};\n'
-        'mkChart("ciWholesale",' + js_arr(cf['cin_w'])  + ',' + js_arr(cf['proj_w'])  + ',"#0d6e4f");\n'
-        'mkChart("ciDTC",      ' + js_arr(cf['cin_d'])  + ',' + js_arr(cf['proj_d'])  + ',"#378ADD");\n'
-        'mkChart("ciINK",      ' + js_arr(cf['cin_i'])  + ',' + js_arr(cf['proj_i'])  + ',"#BA7517");\n'
-        'mkChart("coCOGSBrand",' + js_arr(cf['cout_b']) + ',' + js_arr(cf['proj_b'])  + ',"#a82f2f");\n'
-        'mkChart("coCOGSINK",  ' + js_arr(cf['cout_i']) + ',' + js_arr(cf['proj_i2']) + ',"#D85A30");\n'
-        'mkChart("coOther",    ' + js_arr(cf['cout_o']) + ',' + js_arr(cf['proj_o'])  + ',"#888780");\n'
-        'mkChart("coLabor",    ' + js_arr(cf['cout_l']) + ',' + js_arr(cf['proj_l'])  + ',"#6a4fA0");\n'
-        'mkChart("coOpEx",     ' + js_arr(cf['cout_e']) + ',' + js_arr(cf['proj_e'])  + ',"#2e6da4");\n'
         '(function(){const el=document.getElementById("cfChart");if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:WKS,datasets:['
-        '{label:"Cash in", data:' + js_arr(cf['cin_t'])  + ',borderColor:"#0d6e4f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3},'
-        '{label:"Cash out",data:' + js_arr(cout_tot)     + ',borderColor:"#a82f2f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3},'
+        '{label:"Cash in", data:' + js_arr(cf['cin_t'])  + ',borderColor:"#0d6e4f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,pointHoverRadius:5,tension:0.3},'
+        '{label:"Cash out",data:' + js_arr(cout_tot)     + ',borderColor:"#a82f2f",backgroundColor:"transparent",borderWidth:2.5,pointRadius:3,pointHoverRadius:5,tension:0.3},'
         ']},options:{responsive:true,maintainAspectRatio:false,'
         'plugins:{legend:{display:true,position:"top",labels:{font:{size:10}}}},'
-        'scores:{x:{ticks:{font:{size:9}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}'
+        'scales:{x:{ticks:{font:{size:9}}},y:{ticks:{callback:v=>fmtK(v),font:{size:9}}}}'
         '}}});})();\n'
         'const HL=Array.from({length:52},(_,i)=>"Wk "+(i+1));\n'
         'const histOpts={responsive:true,maintainAspectRatio:false,'
@@ -737,6 +742,100 @@ def build_opex_body(d):
         body += blue_card("Unallocated", tbl)
 
     return body
+
+def cf_stat(label, value, cls=''):
+    color = (';color:#0d6e4f' if cls=='pos' else ';color:#a82f2f' if cls=='neg' else '')
+    return ('<div style="flex:1;min-width:64px">'
+            '<div style="font-family:var(--mono);font-size:9px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">' + label + '</div>'
+            '<div style="font-family:var(--mono);font-size:13px;font-weight:600' + color + '">' + value + '</div>'
+            '</div>')
+
+def cf_box(group_label, plan_val, act_lbl, act_val, var_val, var_cls):
+    return ('<div style="flex:1;background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:10px 12px">'
+            '<div style="font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-muted);margin-bottom:8px">' + group_label + '</div>'
+            '<div style="display:flex;gap:10px">'
+            + cf_stat('Plan', plan_val)
+            + cf_stat(act_lbl, act_val)
+            + cf_stat('Variance', var_val, var_cls)
+            + '</div></div>')
+
+def cf_kpi_card(title, cum, full):
+    """cum/full = (plan, actual_or_proj, var). Higher-than-plan is favorable for all
+    four Cash Flow KPIs (cash in, cash out tracked to a target, and both net cash
+    flow lines), so variance color follows sign directly — no is_cost flag needed."""
+    cum_plan, cum_act, cum_var = cum
+    full_plan, full_proj, full_var = full
+    body = ('<div style="display:flex;gap:12px">'
+            + cf_box('Cumulative to Date', fk(cum_plan), 'Actual', fk(cum_act), vk(cum_var), 'pos' if cum_var>=0 else 'neg')
+            + cf_box('Full Year', fk(full_plan), 'Projection', fk(full_proj), vk(full_var), 'pos' if full_var>=0 else 'neg')
+            + '</div>')
+    return card(title, body)
+
+def cf_week_cell(v, plan):
+    color = '#0d6e4f' if v-plan >= 0 else '#a82f2f'
+    return ('<td style="padding:5px 6px;text-align:right;font-family:var(--mono);font-size:11px;'
+            'color:' + color + ';border-bottom:1px solid var(--rule)">' + fk(v) + '</td>')
+
+def build_cf_weekly_table(d):
+    """Full 52-week cash-collection schedule: actual weeks (through the current week)
+    with each channel colored vs. its own weekly plan, followed by the remaining
+    weeks shown as a muted plan-only forecast."""
+    weekly = d['cf_weekly']; forecast = d['cf_forecast']
+
+    def th(txt, align='right'):
+        return ('<th style="padding:0 6px 8px;text-align:' + align + ';font-family:var(--mono);font-size:10px;'
+                'font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted);'
+                'border-bottom:1.5px solid var(--ink)">' + txt + '</th>')
+
+    rows = ''
+    tot_w=tot_d=tot_i=tot_t=tot_pt=0.0
+    for wkr in weekly:
+        var_t = wkr['t'] - wkr['pt']
+        vcolor = '#0d6e4f' if var_t >= 0 else '#a82f2f'
+        tot_w+=wkr['w']; tot_d+=wkr['d']; tot_i+=wkr['i']; tot_t+=wkr['t']; tot_pt+=wkr['pt']
+        rows += (
+            '<tr>'
+            '<td style="padding:5px 8px 5px 0;font-size:12px;color:var(--ink);border-bottom:1px solid var(--rule)">Wk ' + str(wkr['wk']) + '</td>'
+            + cf_week_cell(wkr['w'], wkr['pw'])
+            + cf_week_cell(wkr['d'], wkr['pd_'])
+            + cf_week_cell(wkr['i'], wkr['pi'])
+            + '<td style="padding:5px 6px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600;border-bottom:1px solid var(--rule)">' + fk(wkr['t']) + '</td>'
+            + '<td style="padding:5px 0 5px 6px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600;color:' + vcolor + ';border-bottom:1px solid var(--rule)">' + vk(var_t) + '</td>'
+            '</tr>\n'
+        )
+    total_var = tot_t - tot_pt
+    tcolor = '#0d6e4f' if total_var >= 0 else '#a82f2f'
+    rows += (
+        '<tr style="border-top:1.5px solid var(--ink)">'
+        '<td style="padding:7px 8px 3px 0;font-family:var(--mono);font-size:11px;font-weight:600">Total</td>'
+        + ''.join('<td style="padding:7px 6px 3px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600">' + fk(v) + '</td>'
+                  for v in (tot_w,tot_d,tot_i,tot_t))
+        + '<td style="padding:7px 0 3px 6px;text-align:right;font-family:var(--mono);font-size:11px;font-weight:600;color:' + tcolor + '">' + vk(total_var) + '</td>'
+        '</tr>\n'
+    )
+
+    fc_rows = ''
+    for wkr in forecast:
+        fc_rows += (
+            '<tr>'
+            '<td style="padding:5px 8px 5px 0;font-size:12px;color:var(--ink-muted);border-bottom:1px solid var(--rule)">Wk ' + str(wkr['wk']) + '</td>'
+            + ''.join('<td style="padding:5px 6px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-muted);border-bottom:1px solid var(--rule)">' + fk(v) + '</td>'
+                      for v in (wkr['w'],wkr['d'],wkr['i'],wkr['t']))
+            + '<td style="border-bottom:1px solid var(--rule)"></td>'
+            '</tr>\n'
+        )
+
+    return (
+        '<table style="width:100%;border-collapse:collapse">\n'
+        '  <thead><tr>' + th('Week','left') + th('WHSL') + th('DTC') + th('INK') + th('Total') + th('Var.') + '</tr></thead>\n'
+        '  <tbody>\n'
+        + rows
+        + (('<tr><td colspan="6" style="padding:12px 0 4px;font-family:var(--mono);font-size:10px;font-weight:600;'
+            'letter-spacing:.08em;text-transform:uppercase;color:var(--ink-muted)">Remaining weeks (plan)</td></tr>\n' + fc_rows)
+           if forecast else '')
+        + '  </tbody>\n'
+        '</table>'
+    )
 
 def sec_label(txt):
     return ('  <div style="font-family:var(--mono);font-size:12px;font-weight:700;'
@@ -883,7 +982,11 @@ def build_html(d):
         '        <span style="display:flex;align-items:center;gap:4px"><span style="width:24px;height:2px;background:#0d6e4f;display:inline-block"></span>2026</span>\n'
         '      </div>'
     )
-    cf_vs  = cin_act - (p('proj_w')+p('proj_d')+p('proj_i'))
+    cf_surplus = d['cf_var_pre']['act']
+    cf_sub_color = '#0d6e4f' if cf_surplus >= 0 else '#a82f2f'
+    cf_subheader = ('Through Week ' + str(WK) + ', cumulative cash in is ' + fk(d['cash_in']['act']) +
+                     ' vs. cumulative cash out of ' + fk(d['cash_out']['act']) + ' — a ' + fk(abs(cf_surplus)) +
+                     (' surplus' if cf_surplus >= 0 else ' deficit') + ' before borrowing.')
 
     CSS = '''
 :root{--surface:#f7f5f0;--ink:#1a1a18;--ink-mid:#3a3a36;--ink-muted:#888780;--rule:#dedad2;--mono:'DM Mono',monospace;--sans:'DM Sans',sans-serif}
@@ -960,30 +1063,25 @@ body{font-family:var(--sans);background:var(--surface);color:var(--ink);font-siz
 
         + sec_label("Cash Flow — YTD &amp; Full Year")
         + two_col(
-            '  <div class="kpi-row cols-2" style="margin-bottom:12px">\n'
-            '    ' + kpi("Total cash in — YTD actual", fk(cin_act),
-                        ('ahead of' if cf_vs>=0 else 'behind') + ' projection by ' + fk(abs(cf_vs))) + '\n'
-            '    ' + kpi("Net cash flow — after borrowing", fk(d['cf_var_post']['act']),
-                        ('ahead of' if d['cf_var_post']['var']>=0 else 'behind') + ' plan by ' + fk(abs(d['cf_var_post']['var'])),
-                        None, 'pos' if d['cf_var_post']['act']>=0 else 'neg') + '\n'
-            '  </div>\n'
-            '  <div style="margin-bottom:8px;margin-top:16px;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted)">Cash in — actual vs projected</div>\n'
-            '  <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px">\n'
-            '    <div class="card"><div class="card-title">Wholesale</div><div class="chart-wrap" style="height:140px"><canvas id="ciWholesale"></canvas></div></div>\n'
-            '    <div class="card"><div class="card-title">DTC</div><div class="chart-wrap" style="height:140px"><canvas id="ciDTC"></canvas></div></div>\n'
-            '    <div class="card"><div class="card-title">INK</div><div class="chart-wrap" style="height:140px"><canvas id="ciINK"></canvas></div></div>\n'
-            '  </div>\n'
-            '  <div style="margin-bottom:8px;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted)">Cash out — actual vs projected</div>\n'
-            '  <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px">\n'
-            '    <div class="card"><div class="card-title">COGS — brand</div><div class="chart-wrap" style="height:140px"><canvas id="coCOGSBrand"></canvas></div></div>\n'
-            '    <div class="card"><div class="card-title">COGS — INK</div><div class="chart-wrap" style="height:140px"><canvas id="coCOGSINK"></canvas></div></div>\n'
-            '    <div class="card"><div class="card-title">Other COGS + shipping</div><div class="chart-wrap" style="height:140px"><canvas id="coOther"></canvas></div></div>\n'
-            '    <div class="card"><div class="card-title">Labor</div><div class="chart-wrap" style="height:140px"><canvas id="coLabor"></canvas></div></div>\n'
-            '    <div class="card"><div class="card-title">OpEx + EBIT</div><div class="chart-wrap" style="height:140px"><canvas id="coOpEx"></canvas></div></div>\n'
-            '  </div>\n'
+            '  <div style="display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:20px">\n'
+            + cf_kpi_card("Total Cash In",
+                          (d['cash_in']['plan'],  d['cash_in']['act'],  d['cash_in']['var']),
+                          (d['cash_in']['ann_plan'], d['cash_in']['ann_proj'], d['cash_in']['ann_var']))
+            + cf_kpi_card("Total Cash Out",
+                          (d['cash_out']['plan'], d['cash_out']['act'], d['cash_out']['var']),
+                          (d['cash_out']['ann_plan'], d['cash_out']['ann_proj'], d['cash_out']['ann_var']))
+            + cf_kpi_card("Net Cash Flow (Before Borrowing)",
+                          (d['cf_var_pre']['plan'], d['cf_var_pre']['act'], d['cf_var_pre']['var']),
+                          (d['cf_var_pre']['ann_plan'], d['cf_var_pre']['ann_proj'], d['cf_var_pre']['ann_var']))
+            + cf_kpi_card("Net Cash Flow (After Borrowing)",
+                          (d['cf_var_post']['plan'], d['cf_var_post']['act'], d['cf_var_post']['var']),
+                          (d['cf_var_post']['ann_plan'], d['cf_var_post']['ann_proj'], d['cf_var_post']['ann_var']))
+            + '  </div>\n'
             + card("Cumulative cash in vs. cash out",
-                   '      <div class="chart-wrap" style="height:190px"><canvas id="cfChart"></canvas></div>\n')
+                   '      <div style="font-size:12px;color:' + cf_sub_color + ';margin-bottom:10px">' + cf_subheader + '</div>\n'
+                   '      <div class="chart-wrap" style="height:220px"><canvas id="cfChart"></canvas></div>\n')
             + card("Cash in by channel",   cin_tbl)
+            + card("Weekly cash collection schedule", build_cf_weekly_table(d))
             + card("Cash out by category", cout_tbl),
             cf_c
         )
