@@ -288,36 +288,29 @@ def read_all():
 
     d['inv_est'] = {}  # series name -> set of weeks whose value was carried forward
 
-    cat_cols = {'Total':(5,6,None), 'F25':(21,22,23), 'S26':(25,26,27), 'F26':(29,30,31)}
-    inv_raw = {k: [] for k in cat_cols}
+    # The sheet's Inventory tab was restructured to a simpler layout: one
+    # Total INV COG (col 5) / Total Units (col 6) pair per week, plus six
+    # named sell-through columns (S24/F24/S25/F25/S26/F26, cols 8-13) — no
+    # more per-category COG/units breakdown. Col 7 (Avg Cost/Unit) is a
+    # formula-error placeholder in the export and is ignored; we compute the
+    # average ourselves from COG/units instead.
     inv_wks = []
+    pairs_c = []; pairs_u = []
     for _,row in df_inv[df_inv[0]==2026].iterrows():
         if not pd.notna(row[2]): continue
         wk = int(row[2])
         if wk > WK: continue
         inv_wks.append(wk)
-        for cat,(cc,uc,sc_col) in cat_cols.items():
-            c = float(row[cc]) if pd.notna(row[cc]) and isinstance(row[cc],(int,float)) else None
-            u = float(row[uc]) if pd.notna(row[uc]) and isinstance(row[uc],(int,float)) else None
-            s = (round(float(row[sc_col])*100,1)
-                 if sc_col and pd.notna(row[sc_col]) and isinstance(row[sc_col],(int,float))
-                 and 0 < float(row[sc_col]) <= 1 else None)
-            inv_raw[cat].append((wk, c, u, s))
+        c = float(row[5]) if pd.notna(row[5]) and isinstance(row[5],(int,float)) else None
+        u = float(row[6]) if pd.notna(row[6]) and isinstance(row[6],(int,float)) else None
+        pairs_c.append((wk,c)); pairs_u.append((wk,u))
 
-    inv = {}
-    for cat in cat_cols:
-        cog_v, cog_e = carry_forward([(wk,c) for wk,c,u,s in inv_raw[cat]])
-        u_v,   u_e   = carry_forward([(wk,u) for wk,c,u,s in inv_raw[cat]])
-        st_v,  st_e  = carry_forward([(wk,s) for wk,c,u,s in inv_raw[cat]])
-        inv[cat] = dict(
-            cog=[round(cog_v[wk]) if wk in cog_v else 0 for wk in inv_wks],
-            units=[round(u_v[wk]) if wk in u_v else 0 for wk in inv_wks],
-            st=[st_v.get(wk) for wk in inv_wks],
-        )
-        d['inv_est']['cog_' + cat.lower()] = cog_e
-        d['inv_est']['units_' + cat.lower()] = u_e
-        d['inv_est']['st_' + cat.lower()] = st_e
-    d['inv']          = inv
+    cog_v, cog_e = carry_forward(pairs_c)
+    u_v,   u_e   = carry_forward(pairs_u)
+    d['inv_est']['cog_2026']   = cog_e
+    d['inv_est']['units_2026'] = u_e
+    d['cog_2026']   = {wk: round(cog_v[wk]) for wk in inv_wks if wk in cog_v}
+    d['units_2026'] = {wk: round(u_v[wk])   for wk in inv_wks if wk in u_v}
     d['inv_wks']      = inv_wks
     d['inv_latest_wk']= inv_wks[-1] if inv_wks else None
     d['inv_prev_wk']  = inv_wks[-2] if len(inv_wks) > 1 else None
@@ -338,8 +331,6 @@ def read_all():
         d[uk] = {wk: round(v) for wk,v in u_v.items()}
         d['inv_est'][ck] = cog_e
         d['inv_est'][uk] = u_e
-    d['cog_2026']  = dict(zip(inv_wks, inv['Total']['cog']))
-    d['units_2026']= dict(zip(inv_wks, inv['Total']['units']))
 
     lw = d['inv_latest_wk']
     d['yoy_cog_2025']=0; d['yoy_units_2025']=0
@@ -350,26 +341,26 @@ def read_all():
                 d['yoy_units_2025']= round(float(row[6])) if pd.notna(row[6]) else 0
                 break
 
-    pairs_s25=[]; pairs_f24=[]; pairs_s24=[]
-    for _,row in df_inv[df_inv[0]==2025].iterrows():
-        if pd.notna(row[2]):
-            wk=int(row[2])
-            v = float(row[19]) if pd.notna(row[19]) and isinstance(row[19],(int,float)) and 0<float(row[19])<=1 else None
-            pairs_s25.append((wk, round(v*100,1) if v is not None else None))
-    for _,row in df_inv[df_inv[0]==2024].iterrows():
-        if pd.notna(row[2]):
-            wk=int(row[2])
-            v15 = float(row[15]) if pd.notna(row[15]) and isinstance(row[15],(int,float)) and 0<float(row[15])<=1 else None
-            v11 = float(row[11]) if pd.notna(row[11]) and isinstance(row[11],(int,float)) and 0<float(row[11])<=1 else None
-            pairs_f24.append((wk, round(v15*100,1) if v15 is not None else None))
-            pairs_s24.append((wk, round(v11*100,1) if v11 is not None else None))
-    d['st_s25'], d['inv_est']['st_s25'] = carry_forward(pairs_s25)
-    d['st_f24'], d['inv_est']['st_f24'] = carry_forward(pairs_f24)
-    d['st_s24'], d['inv_est']['st_s24'] = carry_forward(pairs_s24)
+    # Sell-through: each season has its own dedicated column now (8-13), but
+    # every column is still only populated in the one year that season was
+    # actively selling (e.g. F25 sell-through is tracked in 2026 rows, since
+    # that's when F25 units were on the floor) — pull each from its actual
+    # active year, not from the year its name suggests.
+    def extract_st(year, col):
+        pairs = []
+        for _,row in df_inv[df_inv[0]==year].iterrows():
+            if pd.notna(row[2]):
+                wk = int(row[2])
+                v = float(row[col]) if pd.notna(row[col]) and isinstance(row[col],(int,float)) and 0<float(row[col])<=1 else None
+                pairs.append((wk, round(v*100,1) if v is not None else None))
+        return carry_forward(pairs)
 
-    d['st_s26'] = dict(zip(inv_wks, inv['S26']['st']))
-    d['st_f25'] = dict(zip(inv_wks, inv['F25']['st']))
-    d['st_f26'] = dict(zip(inv_wks, inv['F26']['st']))
+    d['st_s24'], d['inv_est']['st_s24'] = extract_st(2024, 8)
+    d['st_f24'], d['inv_est']['st_f24'] = extract_st(2024, 9)
+    d['st_s25'], d['inv_est']['st_s25'] = extract_st(2025, 10)
+    d['st_f25'], d['inv_est']['st_f25'] = extract_st(2026, 11)
+    d['st_s26'], d['inv_est']['st_s26'] = extract_st(2026, 12)
+    d['st_f26'], d['inv_est']['st_f26'] = extract_st(2026, 13)
 
     # On Order: total, by product category, and by half — for both this year
     # and next, since orders for 2027 H1 start landing well before 2026 closes.
@@ -664,13 +655,13 @@ def build_chart_js(d):
         'new Chart(el,{type:"line",data:{labels:HL,datasets:['
         '{label:"2024",data:' + to_xy(d['cog_2024'], d['inv_est']['cog_2024'])   + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,tension:0.3,parsing:false,...estStyle("#B0B4B8")},'
         '{label:"2025",data:' + to_xy(d['cog_2025'], d['inv_est']['cog_2025'])   + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:2,tension:0.3,parsing:false,...estStyle("#586D72")},'
-        '{label:"2026",data:' + to_xy(d['cog_2026'], d['inv_est']['cog_total'])  + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,tension:0.3,parsing:false,...estStyle("#43575E")},'
+        '{label:"2026",data:' + to_xy(d['cog_2026'], d['inv_est']['cog_2026'])  + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,tension:0.3,parsing:false,...estStyle("#43575E")},'
         ']},options:histOpts});})();\n'
         '(function(){const el=document.getElementById("invTotUnits");if(!el)return;'
         'new Chart(el,{type:"line",data:{labels:HL,datasets:['
         '{label:"2024",data:' + to_xy(d['units_2024'], d['inv_est']['units_2024']) + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,tension:0.3,parsing:false,...estStyle("#B0B4B8")},'
         '{label:"2025",data:' + to_xy(d['units_2025'], d['inv_est']['units_2025']) + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:2,tension:0.3,parsing:false,...estStyle("#586D72")},'
-        '{label:"2026",data:' + to_xy(d['units_2026'], d['inv_est']['units_total'])+ ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,tension:0.3,parsing:false,...estStyle("#43575E")},'
+        '{label:"2026",data:' + to_xy(d['units_2026'], d['inv_est']['units_2026'])+ ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,tension:0.3,parsing:false,...estStyle("#43575E")},'
         ']},options:histOpts});})();\n'
         'const stOpts={responsive:true,maintainAspectRatio:false,'
         'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+c.parsed.y.toFixed(1)+"%"+estNote(c)}}},'
@@ -1039,11 +1030,9 @@ def build_html(d):
 
     lw=d['inv_latest_wk']; pending=lw and lw<WK
     pend_note=" (wk " + str(lw) + " shown — wk " + str(WK) + " pending)" if pending else ""
-    inv=d['inv']
     if lw:
-        i_lw=d['inv_wks'].index(lw)
-        tc=inv['Total']['cog'][i_lw]; tu=inv['Total']['units'][i_lw]
-        s26_st=inv['S26']['st'][i_lw] or 0
+        tc=d['cog_2026'].get(lw,0); tu=d['units_2026'].get(lw,0)
+        s26_st=d['st_s26'].get(lw,0) or 0
         s26_py=d['st_s25'].get(lw,None)
         st_diff=round(s26_st-s26_py,1) if s26_py else None
         yoy_c=d['yoy_cog_2025']; yoy_u=d['yoy_units_2025']
@@ -1051,9 +1040,8 @@ def build_html(d):
         yoy_u_str   = ('+' + f'{tu-yoy_u:,}' + ' units vs prior year (+' + f'{(tu-yoy_u)/yoy_u*100:.1f}' + '%)') if yoy_u else ''
         st_diff_str = ('S26 ' + f'{s26_st:.1f}' + '% — ' + f'{abs(st_diff):.1f}' + 'pts '
                        + ('behind' if st_diff<0 else 'ahead of') + ' S25 at wk ' + str(lw)) if st_diff is not None else ''
-        pw_idx = d['inv_wks'].index(d['inv_prev_wk']) if d['inv_prev_wk'] in d['inv_wks'] else None
-        prev_c = inv['Total']['cog'][pw_idx]   if pw_idx is not None else 0
-        prev_u = inv['Total']['units'][pw_idx] if pw_idx is not None else 0
+        prev_c = d['cog_2026'].get(d['inv_prev_wk'], 0)
+        prev_u = d['units_2026'].get(d['inv_prev_wk'], 0)
         delta_c = tc - prev_c
         delta_c_str = ('+' if delta_c>=0 else '') + fk(delta_c) + ' vs prev wk'
     else:
