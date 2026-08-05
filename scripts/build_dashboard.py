@@ -48,6 +48,62 @@ def st_xy(d, est=None):
     return '[' + ','.join('{x:"Wk ' + str(k) + '",y:' + str(v) + ',e:' + ('true' if k in est else 'false') + '}'
                            for k,v in sorted(d.items()) if v) + ']'
 
+# ── Seasonality / trend ───────────────────────────────────────────────────────
+# The dashboard's default "Ann. Proj." (used everywhere for variance reporting)
+# is deliberately naive: actual-to-date + whatever's still budgeted for the
+# rest of the year, so Ann. Var always equals YTD Var. That's fine for
+# tracking plan adherence but it's blind to how a channel is actually
+# pacing — a channel already 10% ahead of plan gets projected as if it will
+# suddenly land exactly on budget for every remaining week.
+#
+# Trend Proj. instead asks "given this channel's normal shape for the year,
+# and how much of that shape's ground we've covered so far, where does our
+# actual pace put us by December?" — ytd_actual / (expected % of the year
+# already behind us). That naturally builds in trend (over/under-pace shows
+# up directly) *and* seasonality (each channel's "expected % so far" is its
+# own curve), which is why one channel's early-year pace means something
+# very different from another's.
+#
+# CHANNEL_SEASONALITY below is a FIRST DRAFT, not measured history — the
+# workbook has no prior-year weekly-by-channel actuals to derive it from.
+# Assumptions encoded here, given Jetty is a Jersey Shore surf/lifestyle
+# brand: brick-and-mortar + the Mobile Store & Tent pop-up skew hard to
+# summer (Memorial Day–Labor Day); Jettylife.com eComm skews to the Nov/Dec
+# holiday push; Wholesale moves in lumps tied to when the Spring/Summer and
+# Fall/Winter lines actually ship, not a smooth curve. Flag any channel
+# whose curve looks wrong and we'll recalibrate against real numbers.
+#
+# Weeks are bucketed into a standard 4-4-5 retail calendar (13 weeks/quarter,
+# 52 total) so "month" weights can be set by eye instead of by week.
+MONTH_WEEKS = [4,4,5, 4,4,5, 4,4,5, 4,4,5]  # Jan..Dec
+
+CHANNEL_SEASONALITY = {
+    # Jan,  Feb,  Mar,  Apr,  May,  Jun,  Jul,  Aug,  Sep,  Oct,  Nov,  Dec
+    'DTC - Jettylife.com':       [.06,.05,.06,.06,.08,.09,.09,.08,.06,.07,.12,.18],
+    'Wholesale Revenue':         [.10,.12,.13,.10,.05,.04,.09,.13,.12,.06,.03,.03],
+    'Screen Printing Revenue':   [.06,.06,.07,.08,.10,.10,.08,.11,.10,.08,.08,.08],
+    'DTC - Flagship Store':      [.03,.03,.04,.05,.09,.14,.18,.16,.08,.05,.06,.09],
+    'DTC - Long Branch':         [.02,.02,.03,.05,.10,.16,.20,.17,.08,.04,.05,.08],
+    'DTC - Mobile Store & Tent': [.00,.00,.01,.02,.12,.22,.28,.25,.08,.02,.00,.00],
+    'JRF - Screen Printing':     [.06,.06,.07,.07,.09,.11,.11,.10,.07,.07,.08,.11],
+}
+
+def _weekly_weights(monthly):
+    out = []
+    for wk_count, m_wt in zip(MONTH_WEEKS, monthly):
+        out.extend([m_wt / wk_count] * wk_count)
+    return out  # 52 weights, summing to ~1.0
+
+def seasonal_ann_proj(key, ytd_act, ann_plan, wk):
+    """Trend + seasonality-adjusted full-year projection for one channel.
+    Falls back to the plan itself if there's no curve or no ground covered
+    yet, rather than divide-by-zero-ing into nonsense in week 1."""
+    monthly = CHANNEL_SEASONALITY.get(key)
+    if not monthly:
+        return ann_plan
+    cum = sum(_weekly_weights(monthly)[:wk])
+    return (ytd_act / cum) if cum > 0 else ann_plan
+
 # ── Data extraction ──────────────────────────────────────────────────────────
 
 def read_categories():
@@ -139,7 +195,11 @@ def read_all():
         ('Mobile Store & Tent',   'DTC - Mobile Store & Tent'),
         ('JRF Screen Printing',   'JRF - Screen Printing'),
     ]
-    d['rev_lines'] = [(lbl, get_a(k), get_b(k), get_ann(k), proj(k)) for lbl,k in rev_map]
+    d['rev_lines'] = []
+    for lbl, k in rev_map:
+        act, plan, ann_plan_v, ann_proj_v = get_a(k), get_b(k), get_ann(k), proj(k)
+        trend_v = seasonal_ann_proj(k, act, ann_plan_v, WK)
+        d['rev_lines'].append((lbl, act, plan, ann_plan_v, ann_proj_v, trend_v))
 
     cogs_map = [
         ('Contract design — brand', 'Contract Design - Brand'),
@@ -583,10 +643,12 @@ def rc_hltable(rows, is_cost=False):
         '</table></div>'
     )
 
-def ch_card(name, ytd_act, ytd_plan, ann_proj):
+def ch_card(name, ytd_act, ytd_plan, ann_plan, ann_proj, trend_proj):
     var = ytd_act - ytd_plan
     cls = var_cls(var)
     pct = max(0, min(100, (ytd_act / ann_proj * 100) if ann_proj else 0))
+    trend_var = trend_proj - ann_plan
+    trend_cls = var_cls(trend_var)
     return (
         '<div class="ch-card">'
         '<div class="ch-name">' + name + '</div>'
@@ -594,6 +656,8 @@ def ch_card(name, ytd_act, ytd_plan, ann_proj):
         '<div class="ch-delta ' + cls + '">' + vk(var) + ' vs plan</div>'
         '<div class="ch-bar"><div class="ch-bar-fill ' + cls + '" style="width:' + f'{pct:.0f}' + '%"></div></div>'
         '<div class="ch-foot">Ann. Proj. ' + fk(ann_proj) + '</div>'
+        '<div class="ch-foot ch-trend ' + trend_cls + '">Trend Proj. ' + fk(trend_proj)
+        + ' (' + vk(trend_var) + ' vs plan)</div>'
         '</div>'
     )
 
@@ -957,8 +1021,18 @@ def build_revenue_panel(d):
         (rev['plan'], rev['act'], rev['var']), (rev['ann_plan'], rev['ann_proj'], rev['ann_var']))
 
     body += rc_divider("Revenue by Channel")
-    cards = ''.join(ch_card(lbl, act, plan, ap) for lbl, act, plan, ann, ap in d['rev_lines'])
+    cards = ''.join(ch_card(lbl, act, plan, ann, ap, tp) for lbl, act, plan, ann, ap, tp in d['rev_lines'])
     body += '<div class="channel-grid" style="grid-column:1 / -1">' + cards + '</div>\n'
+    body += (
+        '<div class="rc-note" style="grid-column:1 / -1">'
+        'Trend Proj. adjusts each channel\'s full-year projection for its own seasonal shape — '
+        'e.g. brick-and-mortar and the Mobile Store &amp; Tent pop-up run hottest in summer, '
+        'Jettylife.com skews to the Nov/Dec holiday push, and Wholesale moves in lumps tied to '
+        'ship windows — instead of assuming a flat pace to plan for the rest of the year. '
+        'These curves are first-draft assumptions, not measured history — flag anything that '
+        'looks off and we\'ll recalibrate.'
+        '</div>\n'
+    )
 
     oo = d['on_order']; per = d['on_order_periods']
 
