@@ -208,6 +208,10 @@ def read_all():
         act, plan, ann_plan_v, ann_proj_v = get_a(k), get_b(k), get_ann(k), proj(k)
         trend_v = seasonal_ann_proj(k, act, ann_plan_v, WK)
         d['rev_lines'].append((lbl, act, plan, ann_plan_v, ann_proj_v, trend_v))
+    # Total Revenue's trend projection is just each channel's own trend summed
+    # — every channel has its own seasonality curve, so there's no single
+    # curve for "all revenue" to run the ytd/expected-pace math against directly.
+    d['rev_trend_total'] = sum(tp for *_, tp in d['rev_lines'])
 
     cogs_map = [
         ('Contract design — brand', 'Contract Design - Brand'),
@@ -597,11 +601,18 @@ def var_cls(v, favorable_if_below=False):
     good = (v <= 0) if favorable_if_below else (v >= 0)
     return 'pos' if good else 'neg'
 
-def rc_card_kpi(title, cum, full, favorable_if_below=False, desc=None, body_extra=''):
+def rc_card_kpi(title, cum, full, favorable_if_below=False, desc=None, body_extra='', trend=None):
     """cum/full = (plan, actual_or_proj, var). favorable_if_below flips the
-    variance color convention for cost lines (Labor, OpEx-style spend)."""
+    variance color convention for cost lines (Labor, OpEx-style spend).
+    trend, if given, is a seasonality-adjusted full-year projection (see
+    seasonal_ann_proj) shown as a third box alongside the plan-based one."""
     cum_plan, cum_act, cum_var = cum
     full_plan, full_proj, full_var = full
+    trend_box = ''
+    if trend is not None:
+        trend_var = trend - full_plan
+        trend_box = rc_box('Trend (Seasonality-Adj.)', fk(full_plan), 'Trend Proj.', fk(trend),
+                            vk(trend_var), var_cls(trend_var, favorable_if_below))
     return (
         '<div class="rc-card" style="grid-column:1 / -1">'
         '<div class="rc-headrow"><div class="rc-name">' + title + '</div>'
@@ -610,7 +621,8 @@ def rc_card_kpi(title, cum, full, favorable_if_below=False, desc=None, body_extr
         '<div class="rc-boxrow">'
         + rc_box('Cumulative to Date', fk(cum_plan), 'Actual', fk(cum_act), vk(cum_var), var_cls(cum_var, favorable_if_below))
         + rc_box('Full Year', fk(full_plan), 'Projection', fk(full_proj), vk(full_var), var_cls(full_var, favorable_if_below))
-        + '</div>'
+        + trend_box +
+        '</div>'
         + body_extra +
         '</div>\n'
     )
@@ -1026,7 +1038,8 @@ def build_labor_panel(d):
 def build_revenue_panel(d):
     rev = d['rev']
     body = rc_card_kpi("Total Revenue",
-        (rev['plan'], rev['act'], rev['var']), (rev['ann_plan'], rev['ann_proj'], rev['ann_var']))
+        (rev['plan'], rev['act'], rev['var']), (rev['ann_plan'], rev['ann_proj'], rev['ann_var']),
+        trend=d['rev_trend_total'])
 
     body += rc_divider("Revenue by Channel")
     cards = ''.join(ch_card(lbl, act, plan, ann, ap, tp) for lbl, act, plan, ann, ap, tp in d['rev_lines'])
@@ -1189,7 +1202,8 @@ def build_html(d):
     )
 
     summary_panel = (
-        rc_card_kpi("Total Revenue", (rev['plan'],rev['act'],rev['var']), (rev['ann_plan'],rev['ann_proj'],rev['ann_var']))
+        rc_card_kpi("Total Revenue", (rev['plan'],rev['act'],rev['var']), (rev['ann_plan'],rev['ann_proj'],rev['ann_var']),
+            trend=d['rev_trend_total'])
         + rc_card_kpi("COGS + Labor + Shipping", (cogs['plan'],cogs['act'],cogs['var']), (cogs['ann_plan'],cogs['ann_proj'],cogs['ann_var']), favorable_if_below=True)
         + rc_card_kpi("Total OpEx", (opex['plan'],opex['act'],opex['var']), (opex['ann_plan'],opex['ann_proj'],opex['ann_var']), favorable_if_below=True)
         + rc_card_kpi("Net Income", (ni['plan'],ni['act'],ni['var']), (ni['ann_plan'],ni['ann_proj'],ni['ann_var']))
