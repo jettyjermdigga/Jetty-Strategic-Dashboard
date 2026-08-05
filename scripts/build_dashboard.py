@@ -1,9 +1,11 @@
 import os, json
 import pandas as pd
 import pyxlsb
+import openpyxl
 
 FP = "data/budget.xlsb"
 CATEGORIES_SHEET = "Categories"
+FP_JRF = "data/jrf_budget.xlsx"
 
 # ── Formatters ──────────────────────────────────────────────────────────────
 
@@ -548,6 +550,99 @@ def read_all():
     d['payroll_latest'] = payroll[-1] if payroll else None
 
     return d
+
+def read_jrf():
+    """JRF (Jetty Rock Foundation) tracks its own budget in a separate,
+    simpler workbook (monthly cadence, no weekly detail) -- a distinct file
+    from the main budget.xlsb. Returns None if that file isn't present so the
+    main dashboard build never breaks on it; the JRF tab is simply omitted
+    when that happens (see build_html)."""
+    if not os.path.exists(FP_JRF):
+        return None
+    wb = openpyxl.load_workbook(FP_JRF, data_only=True)
+    ws = wb['Summary']
+
+    # The Summary sheet mixes section headers (Revenue/COGS/OpEx) with
+    # category rows underneath each, and some category labels repeat across
+    # sections (e.g. "Event" and "Other" appear under both Revenue and OpEx)
+    # -- so rows have to be scoped per-section, not collected into one flat
+    # label->values dict, or the OpEx row silently clobbers the Revenue one.
+    sections = {'rev': {}, 'don': {}, 'opex': {}, 'net': {}}
+    section = None
+    for r in range(1, ws.max_row + 1):
+        label = ws.cell(row=r, column=1).value
+        if label is None: continue
+        label = str(label).strip()
+        if label == 'Revenue': section = 'rev'; continue
+        if label == 'COGS' and section != 'opex': section = 'don'; continue
+        if label == 'OpEx': section = 'opex'; continue
+        if label == 'Net Income (Loss)': section = 'net'
+        if section is None: continue
+        # cols B..F = Budget(plan), Actual(act), Variance(sheet's, unused),
+        # Annual Budget(ann_plan), Projection(ann_proj)
+        vals = [ws.cell(row=r, column=c).value for c in range(2, 7)]
+        if all(v is None for v in vals): continue
+        sections[section][label] = [v or 0 for v in vals]
+
+    def line(section, label):
+        plan, act, _, ann_plan, ann_proj = sections[section].get(label, [0,0,0,0,0])
+        # Self-compute variance rather than trust the sheet's own Variance
+        # columns -- Net Income's cumulative variance cell is blank in the
+        # source, and re-deriving it here is more robust than depending on
+        # every row being filled in consistently.
+        return dict(plan=plan, act=act, var=act-plan, ann_plan=ann_plan,
+                    ann_proj=ann_proj, ann_var=ann_proj-ann_plan)
+
+    jrf = {}
+    jrf['as_of'] = ws.cell(row=4, column=2).value
+    jrf['rev'] = line('rev', 'Total Revenue')
+    jrf['rev_cats'] = [(c, line('rev', c)) for c in ['Corporate','DTC','Event','Other','Private','Raffle']]
+    jrf['don'] = line('don', 'Total Donations')
+    jrf['don_cats'] = [(c.replace('Donation - ',''), line('don', c)) for c in
+        ['Donation - Community & Education','Donation - Environmental','Donation - Storm & Disaster Relief']]
+    jrf['opex'] = line('opex', 'Total OpEx')
+    jrf['opex_cats'] = [(c, line('opex', c)) for c in ['COGS','Program Services','Event','Finance','Labor','MKG','Other']]
+    jrf['net_income'] = line('net', 'Net Income (Loss)')
+
+    # Outstanding donation commitments (Name/Amount/Bucket), rows 16-30
+    commitments = []
+    for r in range(16, 31):
+        name = ws.cell(row=r, column=10).value
+        if name is None or str(name).strip() == 'Total': continue
+        commitments.append((
+            str(name).strip(),
+            ws.cell(row=r, column=11).value or 0,
+            ws.cell(row=r, column=12).value or '',
+        ))
+    jrf['commitments'] = commitments
+    jrf['commitments_total'] = ws.cell(row=31, column=11).value or 0
+
+    jrf['don_analysis'] = dict(
+        donated_to_date=ws.cell(row=37, column=10).value or 0,
+        projected=ws.cell(row=37, column=12).value or 0,
+        committed=ws.cell(row=37, column=14).value or 0,
+        available=ws.cell(row=37, column=15).value or 0,
+    )
+
+    # YoY totals, top-level only (Total Income / Total COGS / Total OpEx /
+    # Net Income) -- the per-category labels in this sheet have the same
+    # cross-section collision problem as Summary above, so rather than
+    # re-derive category buckets here too, the category-level story is left
+    # to the Summary-sheet-driven cards above and this chart just shows the
+    # clean, unambiguous top-line trend across years.
+    ws2 = wb['Actual (Cumulative) - Sorted']
+    yoy = {}
+    for row in ws2.iter_rows(min_row=7, max_row=ws2.max_row, values_only=True):
+        acct = row[1]
+        if acct is None: continue
+        acct = str(acct).strip()
+        if acct in ('Total Income', 'Total Cost of Goods Sold', 'Total Operating Expenses', 'Net Income'):
+            yoy[acct] = [row[2] or 0, row[3] or 0, row[4] or 0, row[5] or 0]
+    jrf['yoy'] = yoy
+    jrf['yoy_years'] = ['2023', '2024', '2025', '2026 YTD']
+
+    return jrf
+
 # ── Design assets (fonts + component CSS extracted verbatim from the approved
 #    mockups, so the live dashboard matches what was actually designed) ──────
 
@@ -663,12 +758,20 @@ def rc_hltable(rows, is_cost=False):
         '</table></div>'
     )
 
-def ch_card(name, ytd_act, ytd_plan, ann_plan, ann_proj, trend_proj):
+def ch_card(name, ytd_act, ytd_plan, ann_plan, ann_proj, trend_proj=None):
+    """trend_proj is optional -- omit it for lines with no seasonality curve
+    yet (e.g. JRF's category breakdown) and the trend footer is skipped."""
     var = ytd_act - ytd_plan
     cls = var_cls(var)
     pct = max(0, min(100, (ytd_act / ann_proj * 100) if ann_proj else 0))
-    trend_var = trend_proj - ann_plan
-    trend_cls = var_cls(trend_var)
+    trend_row = ''
+    if trend_proj is not None:
+        trend_var = trend_proj - ann_plan
+        trend_cls = var_cls(trend_var)
+        trend_row = (
+            '<div class="ch-foot ch-trend ' + trend_cls + '">Trend Proj. ' + fk(trend_proj)
+            + ' (' + vk(trend_var) + ' vs plan)</div>'
+        )
     return (
         '<div class="ch-card">'
         '<div class="ch-name">' + name + '</div>'
@@ -676,8 +779,7 @@ def ch_card(name, ytd_act, ytd_plan, ann_plan, ann_proj, trend_proj):
         '<div class="ch-delta ' + cls + '">' + vk(var) + ' vs plan</div>'
         '<div class="ch-bar"><div class="ch-bar-fill ' + cls + '" style="width:' + f'{pct:.0f}' + '%"></div></div>'
         '<div class="ch-foot">Ann. Proj. ' + fk(ann_proj) + '</div>'
-        '<div class="ch-foot ch-trend ' + trend_cls + '">Trend Proj. ' + fk(trend_proj)
-        + ' (' + vk(trend_var) + ' vs plan)</div>'
+        + trend_row +
         '</div>'
     )
 
@@ -764,6 +866,7 @@ def build_chart_js(d):
         '{l:"F25",d:' + st_xy(d['st_f25'], d['inv_est']['st_f25']) + ',c:"#586D72"},'
         '{l:"F26",d:' + st_xy(d['st_f26'], d['inv_est']['st_f26']) + ',c:"#43575E"}]);\n'
         + build_labor_chart_js(d)
+        + (build_jrf_chart_js(d['jrf']) if d.get('jrf') else '')
     )
 
 def build_labor_chart_js(d):
@@ -1112,6 +1215,113 @@ def build_revenue_panel(d):
     )
     return body
 
+# ── JRF panel ─────────────────────────────────────────────────────────────────
+# Jetty Rock Foundation tracks its own budget in a separate, simpler workbook
+# (monthly cadence, no weekly detail, no seasonality curves yet) -- see
+# read_jrf(). This panel is only built (and only appears in the nav) when
+# that file is present; see build_html.
+
+def build_jrf_panel(jrf):
+    as_of = str(jrf['as_of']).replace('As of', '').strip() if jrf['as_of'] else None
+    body = (
+        '<div class="rc-note" style="grid-column:1 / -1;padding-top:0">'
+        'Jetty Rock Foundation tracks its own budget separately, on a monthly cadence'
+        + (' — as of ' + as_of + '.' if as_of else '.')
+        + '</div>\n'
+    )
+
+    body += rc_card_kpi("Total Revenue",
+        (jrf['rev']['plan'], jrf['rev']['act'], jrf['rev']['var']),
+        (jrf['rev']['ann_plan'], jrf['rev']['ann_proj'], jrf['rev']['ann_var']))
+    body += rc_divider("Revenue by Category")
+    cards = ''.join(ch_card(name, l['act'], l['plan'], l['ann_plan'], l['ann_proj']) for name, l in jrf['rev_cats'])
+    body += '<div class="channel-grid" style="grid-column:1 / -1">' + cards + '</div>\n'
+
+    body += rc_card_kpi("Donations (COGS)",
+        (jrf['don']['plan'], jrf['don']['act'], jrf['don']['var']),
+        (jrf['don']['ann_plan'], jrf['don']['ann_proj'], jrf['don']['ann_var']), favorable_if_below=True)
+    body += rc_divider("Donations by Category")
+    cards = ''.join(ch_card(name, l['act'], l['plan'], l['ann_plan'], l['ann_proj']) for name, l in jrf['don_cats'])
+    body += '<div class="channel-grid" style="grid-column:1 / -1">' + cards + '</div>\n'
+
+    body += rc_card_kpi("Total OpEx",
+        (jrf['opex']['plan'], jrf['opex']['act'], jrf['opex']['var']),
+        (jrf['opex']['ann_plan'], jrf['opex']['ann_proj'], jrf['opex']['ann_var']), favorable_if_below=True)
+    body += rc_divider("OpEx by Category")
+    cards = ''.join(ch_card(name, l['act'], l['plan'], l['ann_plan'], l['ann_proj']) for name, l in jrf['opex_cats'])
+    body += '<div class="channel-grid" style="grid-column:1 / -1">' + cards + '</div>\n'
+
+    body += rc_card_kpi("Net Income (Loss)",
+        (jrf['net_income']['plan'], jrf['net_income']['act'], jrf['net_income']['var']),
+        (jrf['net_income']['ann_plan'], jrf['net_income']['ann_proj'], jrf['net_income']['ann_var']))
+
+    body += rc_divider("Revenue, Donations &amp; OpEx — Year over Year")
+    body += (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Annual Totals, 2023–2025, vs. 2026 Year to Date</div>'
+        '<div class="rc-desc">2026 is a partial year to date, not a full-year figure — expect it to look low.</div></div>'
+        '<div class="rc-legend">'
+        '<span><i class="swatch" style="background:#B0B4B8"></i>2023</span>'
+        '<span><i class="swatch" style="background:#889096"></i>2024</span>'
+        '<span><i class="swatch" style="background:#586D72"></i>2025</span>'
+        '<span><i class="swatch" style="background:#43575E"></i>2026 YTD</span>'
+        '</div>'
+        '<div class="rc-chart chart-wrap" style="height:280px;margin-top:8px"><canvas id="jrfYoy"></canvas></div>'
+        '</div>\n'
+    )
+
+    commit_rows = ''.join(
+        '<tr><td style="text-align:left;font-family:var(--body)">' + name + '</td>'
+        '<td style="padding-right:16px">' + fk(amt) + '</td>'
+        '<td style="text-align:left;font-family:var(--body)">' + (bucket or '—') + '</td></tr>\n'
+        for name, amt, bucket in jrf['commitments']
+    )
+    da = jrf['don_analysis']
+    body += rc_divider("Outstanding Donation Commitments")
+    body += (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-boxrow"><div class="rc-box"><div class="rc-group-label">Donated to Date</div><div class="rc-row">'
+        + rc_stat('Donated', fk(da['donated_to_date']))
+        + rc_stat('Projected', fk(da['projected']))
+        + '</div></div>'
+        '<div class="rc-box"><div class="rc-group-label">Commitments</div><div class="rc-row">'
+        + rc_stat('Committed', fk(da['committed']))
+        + rc_stat('Available to Donate', fk(da['available']))
+        + '</div></div></div>'
+        '<div class="rc-hl"><table class="rc-hltable">'
+        '<colgroup><col class="rc-hl-col-name"><col class="rc-hl-col-stat"><col style="width:54.4%"></colgroup>'
+        '<thead><tr><th style="text-align:left">Name</th><th style="padding-right:16px">Amount</th><th style="text-align:left">Bucket</th></tr></thead>'
+        '<tbody>' + commit_rows
+        + '<tr><td style="text-align:left;font-weight:700;font-family:var(--body)">Total</td>'
+        + '<td style="font-weight:700">' + fk(jrf['commitments_total']) + '</td><td></td></tr></tbody>'
+        '</table></div>'
+        '</div>\n'
+    )
+    return body
+
+def build_jrf_chart_js(jrf):
+    years  = jrf['yoy_years']
+    colors = ['#B0B4B8', '#889096', '#586D72', '#43575E']
+    metrics = [
+        ('Revenue',    jrf['yoy'].get('Total Income', [0,0,0,0])),
+        ('Donations',  jrf['yoy'].get('Total Cost of Goods Sold', [0,0,0,0])),
+        ('OpEx',       jrf['yoy'].get('Total Operating Expenses', [0,0,0,0])),
+        ('Net Income', jrf['yoy'].get('Net Income', [0,0,0,0])),
+    ]
+    metric_labels = '[' + ','.join('"' + m + '"' for m, _ in metrics) + ']'
+    datasets = ''.join(
+        '{label:"' + yr + '",data:' + js_arr([round(vals[yi]) for _, vals in metrics]) + ',backgroundColor:"' + color + '",borderRadius:3},'
+        for yi, (yr, color) in enumerate(zip(years, colors))
+    )
+    return (
+        '(function(){const el=document.getElementById("jrfYoy");if(!el)return;'
+        'new Chart(el,{type:"bar",data:{labels:' + metric_labels + ',datasets:[' + datasets + ']},'
+        'options:{responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.raw)}}},'
+        'scales:{x:{grid:{color:"#EDECED"}},y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}'
+        '}});})();\n'
+    )
+
 # ── HTML assembly ─────────────────────────────────────────────────────────────
 
 def sec_label(txt):
@@ -1198,6 +1408,7 @@ def build_html(d):
         '  <div class="tab" data-panel="labor">Labor</div>\n'
         '  <div class="tab" data-panel="opex">OpEx</div>\n'
         '  <div class="tab" data-panel="cashflow">Cash Flow</div>\n'
+        + ('  <div class="tab" data-panel="jrf">JRF</div>\n' if d.get('jrf') else '') +
         '</nav>\n'
     )
 
@@ -1275,6 +1486,7 @@ def build_html(d):
         + panel('labor', build_labor_panel(d))
         + panel('opex', build_opex_panel(d))
         + panel('cashflow', build_cashflow_panel(d))
+        + (panel('jrf', build_jrf_panel(d['jrf'])) if d.get('jrf') else '')
         + '</main>\n'
         '</div>\n'
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>\n'
@@ -1292,6 +1504,8 @@ def main():
     print("Reading data...")
     d = read_all()
     print("Week " + str(d['week']) + " data loaded")
+    d['jrf'] = read_jrf()
+    print("JRF data loaded" if d['jrf'] else "JRF file not found — skipping JRF tab")
     print("Building dashboard...")
     html = build_html(d)
     os.makedirs("output", exist_ok=True)
@@ -1301,9 +1515,10 @@ def main():
     print("Done — output/index.html written (" + str(round(size,1)) + " KB)")
 
     source_modified = os.environ.get("SOURCE_MODIFIED_TIME", "")
+    jrf_modified = os.environ.get("JRF_MODIFIED_TIME", "")
     with open("output/meta.json", "w") as f:
-        json.dump({"source_modified": source_modified}, f)
-    print("Recorded source_modified=" + source_modified + " in output/meta.json")
+        json.dump({"source_modified": source_modified, "jrf_modified": jrf_modified}, f)
+    print("Recorded source_modified=" + source_modified + ", jrf_modified=" + jrf_modified + " in output/meta.json")
 
 if __name__ == "__main__":
     main()

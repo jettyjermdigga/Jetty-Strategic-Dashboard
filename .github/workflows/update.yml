@@ -29,6 +29,7 @@ jobs:
         env:
           GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
+          GDRIVE_JRF_FILE_ID: ${{ secrets.GDRIVE_JRF_FILE_ID }}
         run: python scripts/check_modified.py
       - name: Should rebuild?
         id: gate
@@ -43,11 +44,13 @@ jobs:
         env:
           GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
+          GDRIVE_JRF_FILE_ID: ${{ secrets.GDRIVE_JRF_FILE_ID }}
         run: python scripts/download_sheet.py
       - name: Build dashboard
         if: steps.gate.outputs.rebuild == 'true'
         env:
           SOURCE_MODIFIED_TIME: ${{ steps.check.outputs.modified_time }}
+          JRF_MODIFIED_TIME: ${{ steps.check.outputs.jrf_modified_time }}
         run: python scripts/build_dashboard.py
       # The dashboard itself now deploys only to Cloudflare Workers (behind
       # Access). gh-pages no longer serves the site, but check_modified.py
