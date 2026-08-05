@@ -64,28 +64,38 @@ def st_xy(d, est=None):
 # own curve), which is why one channel's early-year pace means something
 # very different from another's.
 #
-# CHANNEL_SEASONALITY below is a FIRST DRAFT, not measured history — the
-# workbook has no prior-year weekly-by-channel actuals to derive it from.
-# Assumptions encoded here, given Jetty is a Jersey Shore surf/lifestyle
-# brand: brick-and-mortar + the Mobile Store & Tent pop-up skew hard to
-# summer (Memorial Day–Labor Day); Jettylife.com eComm skews to the Nov/Dec
-# holiday push; Wholesale moves in lumps tied to when the Spring/Summer and
-# Fall/Winter lines actually ship, not a smooth curve. Flag any channel
-# whose curve looks wrong and we'll recalibrate against real numbers.
+# CHANNEL_SEASONALITY below is derived from real 2025 actuals (the "2025
+# Actual" tab), not guessed — each channel's monthly weight is its share of
+# that channel's full 2025 revenue, bucketed into the same 4-4-5 retail
+# calendar the sheet itself uses for weeks (verified against the Inventory
+# tab's Start/End columns).
+#
+# One wrinkle: Long Branch opened mid-2025 and its revenue was booked
+# lumped into Flagship Store all year (no separate line in the books), so
+# "DTC - Flagship Store" in 2025 Actual is really Flagship+Long Branch
+# combined. To split it, we pulled both stores' daily register cash-deposit
+# totals from Airtable (Flagship Store (176 E Bay) / Long Branch Store
+# bases, "Daily Closing Form" tables) and used each week's cash-deposit
+# ratio between the two stores to split that week's combined revenue —
+# weeks before Long Branch had any deposits at all are treated as 100%
+# Flagship. This assumes the two stores' card/cash payment mix is similar,
+# which is reasonable for two of the same brand's shops but is an estimate,
+# not a ledger figure — call it out if the actual split looked different
+# day to day.
 #
 # Weeks are bucketed into a standard 4-4-5 retail calendar (13 weeks/quarter,
-# 52 total) so "month" weights can be set by eye instead of by week.
+# 52 total), matching the sheet's own week numbering exactly.
 MONTH_WEEKS = [4,4,5, 4,4,5, 4,4,5, 4,4,5]  # Jan..Dec
 
 CHANNEL_SEASONALITY = {
-    # Jan,  Feb,  Mar,  Apr,  May,  Jun,  Jul,  Aug,  Sep,  Oct,  Nov,  Dec
-    'DTC - Jettylife.com':       [.06,.05,.06,.06,.08,.09,.09,.08,.06,.07,.12,.18],
-    'Wholesale Revenue':         [.10,.12,.13,.10,.05,.04,.09,.13,.12,.06,.03,.03],
-    'Screen Printing Revenue':   [.06,.06,.07,.08,.10,.10,.08,.11,.10,.08,.08,.08],
-    'DTC - Flagship Store':      [.03,.03,.04,.05,.09,.14,.18,.16,.08,.05,.06,.09],
-    'DTC - Long Branch':         [.02,.02,.03,.05,.10,.16,.20,.17,.08,.04,.05,.08],
-    'DTC - Mobile Store & Tent': [.00,.00,.01,.02,.12,.22,.28,.25,.08,.02,.00,.00],
-    'JRF - Screen Printing':     [.06,.06,.07,.07,.09,.11,.11,.10,.07,.07,.08,.11],
+    # Jan,   Feb,   Mar,   Apr,   May,   Jun,   Jul,   Aug,   Sep,   Oct,   Nov,   Dec
+    'DTC - Jettylife.com':       [.038,.033,.057,.049,.071,.078,.061,.061,.121,.081,.097,.251],
+    'Wholesale Revenue':         [.016,.031,.187,.090,.067,.077,.141,.128,.129,.072,.042,.019],
+    'Screen Printing Revenue':   [.029,.041,.139,.083,.078,.117,.103,.099,.156,.062,.081,.013],
+    'DTC - Flagship Store':      [.030,.027,.054,.065,.082,.100,.104,.090,.119,.033,.070,.229],
+    'DTC - Long Branch':         [.000,.000,.000,.000,.027,.188,.199,.251,.138,.055,.042,.100],
+    'DTC - Mobile Store & Tent': [.015,.012,.065,.026,.052,.081,.098,.151,.070,.337,.045,.047],
+    'JRF - Screen Printing':     [.144,.141,.035,.000,.000,.100,.058,.049,.221,.142,.092,.018],
 }
 
 def _weekly_weights(monthly):
@@ -1025,12 +1035,13 @@ def build_revenue_panel(d):
     body += '<div class="channel-grid" style="grid-column:1 / -1">' + cards + '</div>\n'
     body += (
         '<div class="rc-note" style="grid-column:1 / -1">'
-        'Trend Proj. adjusts each channel\'s full-year projection for its own seasonal shape — '
-        'e.g. brick-and-mortar and the Mobile Store &amp; Tent pop-up run hottest in summer, '
-        'Jettylife.com skews to the Nov/Dec holiday push, and Wholesale moves in lumps tied to '
-        'ship windows — instead of assuming a flat pace to plan for the rest of the year. '
-        'These curves are first-draft assumptions, not measured history — flag anything that '
-        'looks off and we\'ll recalibrate.'
+        'Trend Proj. adjusts each channel\'s full-year projection for its own seasonal shape, '
+        'instead of assuming a flat pace to plan for the rest of the year. Curves are built from '
+        'each channel\'s actual 2025 monthly split — e.g. Flagship Store\'s biggest month last year '
+        'was December, not summer, and the Mobile Store &amp; Tent pop-up did nearly a third of its '
+        'year in October. (Flagship\'s 2025 books lumped in Long Branch, which opened mid-year, so '
+        'that pair\'s split is estimated from daily register cash-deposit ratios between the two '
+        'stores — flag it if that split looks off.)'
         '</div>\n'
     )
 
