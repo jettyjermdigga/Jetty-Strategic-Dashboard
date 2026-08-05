@@ -71,17 +71,15 @@ def st_xy(d, est=None):
 # tab's Start/End columns).
 #
 # One wrinkle: Long Branch opened mid-2025 and its revenue was booked
-# lumped into Flagship Store all year (no separate line in the books), so
-# "DTC - Flagship Store" in 2025 Actual is really Flagship+Long Branch
-# combined. To split it, we pulled both stores' daily register cash-deposit
-# totals from Airtable (Flagship Store (176 E Bay) / Long Branch Store
-# bases, "Daily Closing Form" tables) and used each week's cash-deposit
-# ratio between the two stores to split that week's combined revenue —
-# weeks before Long Branch had any deposits at all are treated as 100%
-# Flagship. This assumes the two stores' card/cash payment mix is similar,
-# which is reasonable for two of the same brand's shops but is an estimate,
-# not a ledger figure — call it out if the actual split looked different
-# day to day.
+# lumped into Flagship Store all year in the books (no separate ledger
+# line), so "DTC - Flagship Store" in 2025 Actual is really Flagship+Long
+# Branch combined. Rather than estimate a split, we pulled each store's
+# real daily Net Sales straight from Airtable — the Jetty Hub base's
+# "DTC Daily" table tracks both stores separately by day, with a Sales
+# Channel of "Flagship Store" or "Long Branch" — and used those actual
+# per-store weekly totals for each store's own curve. (The two stores'
+# 2025 total, summed, comes in within 1% of the lumped ledger figure —
+# a good cross-check that the two sources agree.)
 #
 # Weeks are bucketed into a standard 4-4-5 retail calendar (13 weeks/quarter,
 # 52 total), matching the sheet's own week numbering exactly.
@@ -92,8 +90,8 @@ CHANNEL_SEASONALITY = {
     'DTC - Jettylife.com':       [.038,.033,.057,.049,.071,.078,.061,.061,.121,.081,.097,.251],
     'Wholesale Revenue':         [.016,.031,.187,.090,.067,.077,.141,.128,.129,.072,.042,.019],
     'Screen Printing Revenue':   [.029,.041,.139,.083,.078,.117,.103,.099,.156,.062,.081,.013],
-    'DTC - Flagship Store':      [.030,.027,.054,.065,.082,.100,.104,.090,.119,.033,.070,.229],
-    'DTC - Long Branch':         [.000,.000,.000,.000,.027,.188,.199,.251,.138,.055,.042,.100],
+    'DTC - Flagship Store':      [.021,.036,.054,.066,.072,.107,.092,.129,.088,.045,.088,.202],
+    'DTC - Long Branch':         [.000,.000,.000,.000,.069,.212,.203,.205,.121,.053,.057,.080],
     'DTC - Mobile Store & Tent': [.015,.012,.065,.026,.052,.081,.098,.151,.070,.337,.045,.047],
     'JRF - Screen Printing':     [.144,.141,.035,.000,.000,.100,.058,.049,.221,.142,.092,.018],
 }
@@ -1038,10 +1036,10 @@ def build_revenue_panel(d):
         'Trend Proj. adjusts each channel\'s full-year projection for its own seasonal shape, '
         'instead of assuming a flat pace to plan for the rest of the year. Curves are built from '
         'each channel\'s actual 2025 monthly split — e.g. Flagship Store\'s biggest month last year '
-        'was December, not summer, and the Mobile Store &amp; Tent pop-up did nearly a third of its '
-        'year in October. (Flagship\'s 2025 books lumped in Long Branch, which opened mid-year, so '
-        'that pair\'s split is estimated from daily register cash-deposit ratios between the two '
-        'stores — flag it if that split looks off.)'
+        'was December, not summer, the Mobile Store &amp; Tent pop-up did about a third of its year '
+        'in October (the Box Truck warehouse sale), and Long Branch — which opened mid-2025, using '
+        'real per-store daily sales from Jetty Hub since its books lumped it into Flagship — peaks '
+        'in summer as expected of a shore-town shop.'
         '</div>\n'
     )
 
