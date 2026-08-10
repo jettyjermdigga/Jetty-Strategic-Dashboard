@@ -1,4 +1,4 @@
-import os, json
+import os, json, datetime
 import pandas as pd
 import pyxlsb
 import openpyxl
@@ -551,58 +551,127 @@ def read_all():
 
     return d
 
+# Two known source-sheet labeling inconsistencies for the OpEx "Program
+# Services" line, found by cross-checking against Summary's own Program
+# Services figures: Monthly/Annual - Budget mistakenly tag that line's
+# category as "Donation"; Actual (Cumulative) - Sorted spells it "Program
+# Service" (singular) instead of "Program Services". Both get normalized
+# to the same key so the line groups correctly regardless of source sheet.
+JRF_OPEX_CATEGORY_FIX = {'Donation': 'Program Services', 'Program Service': 'Program Services'}
+
+def _jrf_as_of_month(raw):
+    """The 'As of' cell has been typed as plain text ('As of 7/31/26') and,
+    after the user re-entered it, as a real date -- handle both so a future
+    formatting change doesn't silently break the month lookup."""
+    if isinstance(raw, datetime.datetime):
+        return raw.month, raw.strftime('%m/%d/%y').lstrip('0').replace('/0', '/')
+    s = str(raw).replace('As of', '').strip()
+    month = int(s.split('/')[0])
+    return month, s
+
+def _jrf_section_rows(ws, cat_col, acct_col, val_fn):
+    """Yields (section, category, account, values) for every real line-item
+    row in a sheet shaped like Monthly - Budget / Actual (Cumulative) -
+    Sorted: an Income/Cost of Goods Sold/Operating Expenses section header,
+    then Category+Account rows underneath, with 'Total X' subtotal rows to
+    skip. Section-scoped because category labels like 'Event' and 'Other'
+    repeat across the Revenue and OpEx sections."""
+    section = None
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True):
+        cat, acct = row[cat_col], row[acct_col]
+        if cat is None and acct in ('Income', 'Cost of Goods Sold', 'Operating Expenses'):
+            section = {'Income': 'rev', 'Cost of Goods Sold': 'don', 'Operating Expenses': 'opex'}[acct]
+            continue
+        if cat is None or acct is None: continue
+        if str(acct).strip().startswith('Total') or str(acct).strip() == 'Gross Profit': continue
+        yield section, str(cat).strip(), str(acct).strip(), val_fn(row)
+
 def read_jrf():
     """JRF (Jetty Rock Foundation) tracks its own budget in a separate,
     simpler workbook (monthly cadence, no weekly detail) -- a distinct file
     from the main budget.xlsb. Returns None if that file isn't present so the
     main dashboard build never breaks on it; the JRF tab is simply omitted
-    when that happens (see build_html)."""
+    when that happens (see build_html).
+
+    Budget/Actual/Projection are all derived here rather than read from the
+    Summary sheet's own (manually-typed) columns -- so month to month, the
+    only upkeep needed on the sheet is the 'As of' date and the Annual -
+    Actual (Cumulative) tab (which JRF was already updating monthly per that
+    sheet's own instructions); everything else -- cumulative-to-date budget,
+    variance, full-year projection, per category -- gets computed the same
+    way the rest of this dashboard computes projections: actual-to-date plus
+    whatever's still budgeted for the remaining months."""
     if not os.path.exists(FP_JRF):
         return None
     wb = openpyxl.load_workbook(FP_JRF, data_only=True)
     ws = wb['Summary']
+    as_of_raw = ws.cell(row=4, column=2).value
+    as_of_month, as_of_str = _jrf_as_of_month(as_of_raw)
 
-    # The Summary sheet mixes section headers (Revenue/COGS/OpEx) with
-    # category rows underneath each, and some category labels repeat across
-    # sections (e.g. "Event" and "Other" appear under both Revenue and OpEx)
-    # -- so rows have to be scoped per-section, not collected into one flat
-    # label->values dict, or the OpEx row silently clobbers the Revenue one.
-    sections = {'rev': {}, 'don': {}, 'opex': {}, 'net': {}}
-    section = None
-    for r in range(1, ws.max_row + 1):
-        label = ws.cell(row=r, column=1).value
-        if label is None: continue
-        label = str(label).strip()
-        if label == 'Revenue': section = 'rev'; continue
-        if label == 'COGS' and section != 'opex': section = 'don'; continue
-        if label == 'OpEx': section = 'opex'; continue
-        if label == 'Net Income (Loss)': section = 'net'
-        if section is None: continue
-        # cols B..F = Budget(plan), Actual(act), Variance(sheet's, unused),
-        # Annual Budget(ann_plan), Projection(ann_proj)
-        vals = [ws.cell(row=r, column=c).value for c in range(2, 7)]
-        if all(v is None for v in vals): continue
-        sections[section][label] = [v or 0 for v in vals]
+    def norm_opex_cat(section, cat):
+        return JRF_OPEX_CATEGORY_FIX.get(cat, cat) if section == 'opex' else cat
 
-    def line(section, label):
-        plan, act, _, ann_plan, ann_proj = sections[section].get(label, [0,0,0,0,0])
-        # Self-compute variance rather than trust the sheet's own Variance
-        # columns -- Net Income's cumulative variance cell is blank in the
-        # source, and re-deriving it here is more robust than depending on
-        # every row being filled in consistently.
-        return dict(plan=plan, act=act, var=act-plan, ann_plan=ann_plan,
-                    ann_proj=ann_proj, ann_var=ann_proj-ann_plan)
+    # Budget: Monthly - Budget has Category/Account/Jan..Dec/Total columns.
+    # Aggregated two ways -- by category (for the rev/opex category cards,
+    # where category is the real distinguishing field) and by exact account
+    # name (for Donations, whose category column is uniformly "Donation"
+    # for all three lines -- the account name is what actually varies).
+    budget_cum, budget_full, budget_rem = {}, {}, {}
+    budget_cum_acct, budget_full_acct, budget_rem_acct = {}, {}, {}
+    for section, cat, acct, months in _jrf_section_rows(
+            wb['Monthly - Budget'], 0, 1, lambda r: [r[c] or 0 for c in range(2, 14)]):
+        cat = norm_opex_cat(section, cat)
+        cum, full, rem = sum(months[:as_of_month]), sum(months), sum(months[as_of_month:])
+        budget_cum.setdefault(section, {})[cat]  = budget_cum.setdefault(section, {}).get(cat, 0) + cum
+        budget_full.setdefault(section, {})[cat] = budget_full.setdefault(section, {}).get(cat, 0) + full
+        budget_rem.setdefault(section, {})[cat]  = budget_rem.setdefault(section, {}).get(cat, 0) + rem
+        budget_cum_acct.setdefault(section, {})[acct]  = cum
+        budget_full_acct.setdefault(section, {})[acct] = full
+        budget_rem_acct.setdefault(section, {})[acct]  = rem
+
+    # Actual: Actual (Cumulative) - Sorted has Category/Account/2023../2026.
+    actual_cum, actual_cum_acct = {}, {}
+    for section, cat, acct, val in _jrf_section_rows(
+            wb['Actual (Cumulative) - Sorted'], 0, 1, lambda r: r[5] or 0):
+        cat = norm_opex_cat(section, cat)
+        actual_cum.setdefault(section, {})[cat]  = actual_cum.setdefault(section, {}).get(cat, 0) + val
+        actual_cum_acct.setdefault(section, {})[acct] = actual_cum_acct.setdefault(section, {}).get(acct, 0) + val
+
+    def line(section, key, by_account=False):
+        bc_src, bf_src, rem_src, ac_src = (
+            (budget_cum_acct, budget_full_acct, budget_rem_acct, actual_cum_acct) if by_account
+            else (budget_cum, budget_full, budget_rem, actual_cum)
+        )
+        bc  = bc_src.get(section, {}).get(key, 0)
+        bf  = bf_src.get(section, {}).get(key, 0)
+        rem = rem_src.get(section, {}).get(key, 0)
+        ac  = ac_src.get(section, {}).get(key, 0)
+        proj = ac + rem
+        return dict(plan=bc, act=ac, var=ac-bc, ann_plan=bf, ann_proj=proj, ann_var=proj-bf)
+
+    def total(section):
+        bc  = sum(budget_cum.get(section, {}).values())
+        ac  = sum(actual_cum.get(section, {}).values())
+        bf  = sum(budget_full.get(section, {}).values())
+        rem = sum(budget_rem.get(section, {}).values())
+        proj = ac + rem
+        return dict(plan=bc, act=ac, var=ac-bc, ann_plan=bf, ann_proj=proj, ann_var=proj-bf)
 
     jrf = {}
-    jrf['as_of'] = ws.cell(row=4, column=2).value
-    jrf['rev'] = line('rev', 'Total Revenue')
+    jrf['as_of'] = 'As of ' + as_of_str
+    jrf['rev'] = total('rev')
     jrf['rev_cats'] = [(c, line('rev', c)) for c in ['Corporate','DTC','Event','Other','Private','Raffle']]
-    jrf['don'] = line('don', 'Total Donations')
-    jrf['don_cats'] = [(c.replace('Donation - ',''), line('don', c)) for c in
+    jrf['don'] = total('don')
+    jrf['don_cats'] = [(c.replace('Donation - ',''), line('don', c, by_account=True)) for c in
         ['Donation - Community & Education','Donation - Environmental','Donation - Storm & Disaster Relief']]
-    jrf['opex'] = line('opex', 'Total OpEx')
+    jrf['opex'] = total('opex')
     jrf['opex_cats'] = [(c, line('opex', c)) for c in ['COGS','Program Services','Event','Finance','Labor','MKG','Other']]
-    jrf['net_income'] = line('net', 'Net Income (Loss)')
+    # Net Income has no line of its own in Monthly - Budget / Actual
+    # (Cumulative) - Sorted -- it's Revenue minus Donations minus OpEx,
+    # same as the Summary sheet's own formula.
+    jrf['net_income'] = {
+        k: jrf['rev'][k] - jrf['don'][k] - jrf['opex'][k] for k in jrf['rev']
+    }
 
     # Outstanding donation commitments (Name/Amount/Bucket), rows 16-30
     commitments = []
@@ -625,11 +694,11 @@ def read_jrf():
     )
 
     # YoY totals, top-level only (Total Income / Total COGS / Total OpEx /
-    # Net Income) -- the per-category labels in this sheet have the same
-    # cross-section collision problem as Summary above, so rather than
-    # re-derive category buckets here too, the category-level story is left
-    # to the Summary-sheet-driven cards above and this chart just shows the
-    # clean, unambiguous top-line trend across years.
+    # Net Income) -- prior years (2023-2025) only have a single annual
+    # actual on file, not a monthly budget to compare against, so there's
+    # no meaningful "cumulative to date" cut for past years the way there
+    # is for the current year above; this chart stays at the clean,
+    # unambiguous top-line full-year comparison instead.
     ws2 = wb['Actual (Cumulative) - Sorted']
     yoy = {}
     for row in ws2.iter_rows(min_row=7, max_row=ws2.max_row, values_only=True):
