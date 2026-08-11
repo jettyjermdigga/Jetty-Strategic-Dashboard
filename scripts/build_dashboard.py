@@ -227,6 +227,17 @@ def read_all():
     # — every channel has its own seasonality curve, so there's no single
     # curve for "all revenue" to run the ytd/expected-pace math against directly.
     d['rev_trend_total'] = sum(tp for *_, tp in d['rev_lines'])
+    # Net Income's trend blends Revenue's seasonality-adjusted trend (a real,
+    # validated signal -- consumer buying seasonality repeats year to year)
+    # with COGS+Labor+Shipping's, OpEx's, and EBIT Expenses' own plan-paced
+    # Full Year Projection, *not* a cost-side seasonality curve -- we tried
+    # that and reverted it, since bill/payment entry timing doesn't repeat
+    # the way revenue does (see the note by COGS_LS_TOTAL above). Building
+    # off net_income['ann_proj'] rather than re-deriving from rev/cogs/opex
+    # keeps EBIT Expenses (interest, D&A, taxes -- read directly off the
+    # Summary sheet, not broken out into `d`) correctly in the total: only
+    # the revenue term is swapped for its trend-adjusted counterpart.
+    d['net_income_trend'] = d['net_income']['ann_proj'] + (d['rev_trend_total'] - d['rev']['ann_proj'])
 
     cogs_map = [
         ('Contract design — brand', 'Contract Design - Brand'),
@@ -1501,7 +1512,9 @@ def build_html(d):
             favorable_if_below=True)
         + rc_card_kpi("Total OpEx", (opex['plan'],opex['act'],opex['var']), (opex['ann_plan'],opex['ann_proj'],opex['ann_var']),
             favorable_if_below=True)
-        + rc_card_kpi("Net Income", (ni['plan'],ni['act'],ni['var']), (ni['ann_plan'],ni['ann_proj'],ni['ann_var']))
+        + rc_card_kpi("Net Income", (ni['plan'],ni['act'],ni['var']), (ni['ann_plan'],ni['ann_proj'],ni['ann_var']),
+            trend=d['net_income_trend'],
+            desc="Trend uses Revenue's seasonality curve; COGS/OpEx use their plan-paced Full Year Projection.")
     )
 
     cogs_panel = (
