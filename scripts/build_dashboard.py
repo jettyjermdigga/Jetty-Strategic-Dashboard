@@ -462,6 +462,13 @@ def read_all():
 
     # On Order: total, by product category, and by half — for both this year
     # and next, since orders for 2027 H1 start landing well before 2026 closes.
+    # Column layout (row 4 headers): 5=Total, 6-13=categories (Clearance,
+    # Collab, F26, S25, S26, SP27, SU27, STARBOARD), 14=H1 2026, 15=H2 2026,
+    # 16=H1 2027, 17=H2 2027. STARBOARD was added as a category after this
+    # was first written, shifting the H1/H2 columns one to the right of what
+    # the code assumed -- verified against the sheet's own Total (col 5,
+    # which equals the sum of cols 6-13, and separately equals the sum of
+    # cols 14-17) that 14/15/16/17 is the correct mapping, not 13/14/15/16.
     d['on_order']={'total':0,'h1':0,'h2':0}
     d['on_order_cats'] = []
     d['on_order_periods'] = {'h1_2026':0,'h2_2026':0,'h1_2027':0,'h2_2027':0}
@@ -469,16 +476,16 @@ def read_all():
         if pd.notna(row[0]) and row[0]==2026 and pd.notna(row[2]) and int(row[2])==WK:
             d['on_order']={
                 'total': float(row[5])  if pd.notna(row[5])  else 0,
-                'h1':    float(row[13]) if pd.notna(row[13]) else 0,
-                'h2':    float(row[14]) if pd.notna(row[14]) else 0,
+                'h1':    float(row[14]) if pd.notna(row[14]) else 0,
+                'h2':    float(row[15]) if pd.notna(row[15]) else 0,
             }
-            cat_cols_oo = [('Clearance',6),('Collab',7),('F26',8),('S25',9),('S26',10),('SP27',11),('SU27',12)]
+            cat_cols_oo = [('Clearance',6),('Collab',7),('F26',8),('S25',9),('S26',10),('SP27',11),('SU27',12),('STARBOARD',13)]
             d['on_order_cats'] = [(name, float(row[c]) if pd.notna(row[c]) else 0.0) for name,c in cat_cols_oo]
             d['on_order_periods'] = {
-                'h1_2026': float(row[13]) if pd.notna(row[13]) else 0.0,
-                'h2_2026': float(row[14]) if pd.notna(row[14]) else 0.0,
-                'h1_2027': float(row[15]) if pd.notna(row[15]) else 0.0,
-                'h2_2027': float(row[16]) if pd.notna(row[16]) else 0.0,
+                'h1_2026': float(row[14]) if pd.notna(row[14]) else 0.0,
+                'h2_2026': float(row[15]) if pd.notna(row[15]) else 0.0,
+                'h1_2027': float(row[16]) if pd.notna(row[16]) else 0.0,
+                'h2_2027': float(row[17]) if pd.notna(row[17]) else 0.0,
             }
             break
 
