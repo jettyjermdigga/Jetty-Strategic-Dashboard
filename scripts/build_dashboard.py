@@ -231,6 +231,10 @@ def read_all():
     # — every channel has its own seasonality curve, so there's no single
     # curve for "all revenue" to run the ytd/expected-pace math against directly.
     d['rev_trend_total'] = sum(tp for *_, tp in d['rev_lines'])
+    # Net Income's trend rolls up the same way the plan/projection figures do
+    # -- Revenue minus COGS+Labor+Shipping minus OpEx -- just with each
+    # component's own trend projection instead of its plan-paced one.
+    d['net_income_trend'] = d['rev_trend_total'] - d['cogs_trend'] - d['opex_trend']
 
     cogs_map = [
         ('Contract design — brand', 'Contract Design - Brand'),
@@ -1505,7 +1509,8 @@ def build_html(d):
             favorable_if_below=True, trend=d['cogs_trend'])
         + rc_card_kpi("Total OpEx", (opex['plan'],opex['act'],opex['var']), (opex['ann_plan'],opex['ann_proj'],opex['ann_var']),
             favorable_if_below=True, trend=d['opex_trend'])
-        + rc_card_kpi("Net Income", (ni['plan'],ni['act'],ni['var']), (ni['ann_plan'],ni['ann_proj'],ni['ann_var']))
+        + rc_card_kpi("Net Income", (ni['plan'],ni['act'],ni['var']), (ni['ann_plan'],ni['ann_proj'],ni['ann_var']),
+            trend=d['net_income_trend'])
     )
 
     cogs_panel = (
