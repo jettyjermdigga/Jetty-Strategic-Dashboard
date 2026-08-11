@@ -96,6 +96,17 @@ CHANNEL_SEASONALITY = {
     'DTC - Long Branch':         [.000,.000,.000,.000,.069,.212,.203,.205,.121,.053,.057,.080],
     'DTC - Mobile Store & Tent': [.015,.012,.065,.026,.052,.081,.098,.151,.070,.337,.045,.047],
     'JRF - Screen Printing':     [.144,.141,.035,.000,.000,.100,.058,.049,.221,.142,.092,.018],
+
+    # These two are aggregate curves, not per-channel -- derived from the
+    # "2025 Actual" tab's "Total Cost of Goods Sold" (which bundles COGS +
+    # Labor + Shipping, matching the "COGS + Labor + Shipping" card) and
+    # "Total Operating Expenses" rows, at each 4-4-5 month-end week. December
+    # in the source P&L exports showed a ~$2.06M reclass from Labor into a new
+    # "Salaries - G&A" OpEx line (a year-end accounting true-up, confirmed
+    # with Jeremy) -- shifted back into Labor here so the Dec weight reflects
+    # actual spend, not a bookkeeping artifact.
+    'COGS_LS_TOTAL': [.050,.046,.129,.049,.058,.080,.121,.107,.094,.107,.048,.110],
+    'OPEX_TOTAL':    [.081,.052,.118,.071,.072,.096,.080,.035,.115,.056,.075,.149],
 }
 
 def _weekly_weights(monthly):
@@ -152,8 +163,8 @@ def read_categories():
 def read_all():
     d = {}
     df_s  = pd.read_excel(FP, sheet_name='Summary',             engine='pyxlsb', header=None)
-    df_a  = pd.read_excel(FP, sheet_name='Actual',              engine='pyxlsb', header=None)
-    df_b  = pd.read_excel(FP, sheet_name='Budget',              engine='pyxlsb', header=None)
+    df_a  = pd.read_excel(FP, sheet_name='2026 Actual',         engine='pyxlsb', header=None)
+    df_b  = pd.read_excel(FP, sheet_name='2026 Budget',         engine='pyxlsb', header=None)
     df_cf = pd.read_excel(FP, sheet_name='Cash Flow - Tracker', engine='pyxlsb', header=None)
     df_inv= pd.read_excel(FP, sheet_name='Inventory',           engine='pyxlsb', header=None)
     df_oo = pd.read_excel(FP, sheet_name='On Order',            engine='pyxlsb', header=None)
@@ -174,6 +185,12 @@ def read_all():
                       ('cash_in',68),('cash_out',75),('cf_var_pre',77),('cf_var_post',81)]:
         d[key] = {k: sc(row, c) for k,c in [('plan','B'),('act','C'),('var','D'),
                                               ('ann_plan','G'),('ann_proj','H'),('ann_var','I')]}
+
+    # Trend + seasonality-adjusted full-year projections for the two OpEx-side
+    # summary cards, mirroring Total Revenue's trend box -- see COGS_LS_TOTAL /
+    # OPEX_TOTAL in CHANNEL_SEASONALITY for how the 2025 curves were derived.
+    d['cogs_trend'] = seasonal_ann_proj('COGS_LS_TOTAL', d['cogs']['act'], d['cogs']['ann_plan'], WK)
+    d['opex_trend'] = seasonal_ann_proj('OPEX_TOTAL',    d['opex']['act'], d['opex']['ann_plan'], WK)
 
     def get_a(name):
         for i,row in df_a.iterrows():
@@ -978,7 +995,7 @@ def build_opex_panel(d):
 
     body = rc_card_kpi("Total OpEx",
         (opex['plan'], opex['act'], opex['var']),
-        (opex['ann_plan'], opex['ann_proj'], opex['ann_var']), favorable_if_below=True)
+        (opex['ann_plan'], opex['ann_proj'], opex['ann_var']), favorable_if_below=True, trend=d['opex_trend'])
 
     if not cats:
         rows = [(lbl, plan, act, ann, ap, False) for lbl, act, plan, ann, ap in lines]
@@ -1484,15 +1501,17 @@ def build_html(d):
     summary_panel = (
         rc_card_kpi("Total Revenue", (rev['plan'],rev['act'],rev['var']), (rev['ann_plan'],rev['ann_proj'],rev['ann_var']),
             trend=d['rev_trend_total'])
-        + rc_card_kpi("COGS + Labor + Shipping", (cogs['plan'],cogs['act'],cogs['var']), (cogs['ann_plan'],cogs['ann_proj'],cogs['ann_var']), favorable_if_below=True)
-        + rc_card_kpi("Total OpEx", (opex['plan'],opex['act'],opex['var']), (opex['ann_plan'],opex['ann_proj'],opex['ann_var']), favorable_if_below=True)
+        + rc_card_kpi("COGS + Labor + Shipping", (cogs['plan'],cogs['act'],cogs['var']), (cogs['ann_plan'],cogs['ann_proj'],cogs['ann_var']),
+            favorable_if_below=True, trend=d['cogs_trend'])
+        + rc_card_kpi("Total OpEx", (opex['plan'],opex['act'],opex['var']), (opex['ann_plan'],opex['ann_proj'],opex['ann_var']),
+            favorable_if_below=True, trend=d['opex_trend'])
         + rc_card_kpi("Net Income", (ni['plan'],ni['act'],ni['var']), (ni['ann_plan'],ni['ann_proj'],ni['ann_var']))
     )
 
     cogs_panel = (
         rc_card_kpi("Total COGS + Labor + Shipping",
             (cogs['plan'],cogs['act'],cogs['var']), (cogs['ann_plan'],cogs['ann_proj'],cogs['ann_var']),
-            favorable_if_below=True, body_extra=rc_hltable(cogs_rows, is_cost=True))
+            favorable_if_below=True, trend=d['cogs_trend'], body_extra=rc_hltable(cogs_rows, is_cost=True))
     )
 
     avg_unit_cost = (tc / tu) if tu else 0
