@@ -9,6 +9,10 @@ FP_JRF = "data/jrf_budget.xlsx"
 
 # ── Formatters ──────────────────────────────────────────────────────────────
 
+def html_escape(s):
+    return (s.replace('&', '&amp;').replace('"', '&quot;')
+             .replace('<', '&lt;').replace('>', '&gt;'))
+
 def fk(v):
     if v == 0: return "$0"
     a = abs(v); s = "minus" if v < 0 else ""
@@ -34,6 +38,67 @@ document.querySelectorAll(".tab").forEach(function(t){
       Object.values(Chart.instances).forEach(function(c){ c.resize(); });
     }
   });
+});
+'''
+
+# A single reusable full-screen modal: any chart registered into
+# window.__charts[chartId] (see build_summary_trend_charts_js) can be
+# blown up full-screen with a PNG download, via the card's Expand button
+# (see rc_trend_chart).
+CHART_MODAL_HTML = '''
+<div class="chart-modal-overlay" id="chart-modal">
+  <div class="chart-modal-content">
+    <div class="chart-modal-header">
+      <div class="chart-modal-title" id="chart-modal-title"></div>
+      <div class="chart-modal-actions">
+        <button onclick="downloadChartModal()">⬇ Download PNG</button>
+        <button class="chart-modal-close" onclick="closeChartModal()">✕</button>
+      </div>
+    </div>
+    <div class="chart-modal-canvas-wrap"><canvas id="chart-modal-canvas"></canvas></div>
+  </div>
+</div>
+'''
+
+CHART_MODAL_JS = '''
+window.__charts = window.__charts || {};
+window.__modalChart = null;
+function openChartModal(chartId, title){
+  var src = window.__charts[chartId];
+  var data = window.__chartData[chartId];
+  var optsFn = window.__chartOptsFn[chartId];
+  if(!src || !data) return;
+  document.getElementById("chart-modal-title").textContent = title;
+  document.getElementById("chart-modal").classList.add("open");
+  if(window.__modalChart){ window.__modalChart.destroy(); window.__modalChart = null; }
+  var ctx = document.getElementById("chart-modal-canvas");
+  window.__modalChart = new Chart(ctx, {
+    type: src.config.type,
+    data: data,
+    options: optsFn ? optsFn() : {responsive:true, maintainAspectRatio:false}
+  });
+  window.__modalTitle = title;
+}
+function closeChartModal(){
+  document.getElementById("chart-modal").classList.remove("open");
+  if(window.__modalChart){ window.__modalChart.destroy(); window.__modalChart = null; }
+}
+function downloadChartModal(){
+  if(!window.__modalChart) return;
+  var link = document.createElement("a");
+  link.download = (window.__modalTitle || "chart").replace(/[^a-z0-9]+/gi,"_") + ".png";
+  link.href = window.__modalChart.toBase64Image("image/png", 1);
+  link.click();
+}
+document.getElementById("chart-modal").addEventListener("click", function(e){
+  if(e.target.id === "chart-modal") closeChartModal();
+});
+document.addEventListener("click", function(e){
+  var btn = e.target.closest(".rc-expand-btn");
+  if(btn) openChartModal(btn.dataset.chartId, btn.dataset.chartTitle);
+});
+document.addEventListener("keydown", function(e){
+  if(e.key === "Escape") closeChartModal();
 });
 '''
 
@@ -866,6 +931,31 @@ EXTRA_CSS = '''
 .tab-panel.active{display:block}
 .chart-wrap{position:relative;width:100%}
 .rc-card{overflow-x:auto}
+.rc-expand-btn{
+  position:absolute;top:0;right:0;background:transparent;cursor:pointer;
+  border:1px solid var(--surface-alt);border-radius:4px;padding:4px 10px;
+  font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink);
+}
+.rc-expand-btn:hover{background:var(--surface)}
+.chart-modal-overlay{
+  display:none;position:fixed;inset:0;background:rgba(20,26,29,.6);
+  z-index:1000;align-items:center;justify-content:center;padding:24px;
+}
+.chart-modal-overlay.open{display:flex}
+.chart-modal-content{
+  background:#fff;border-radius:8px;width:min(1400px,95vw);height:min(820px,90vh);
+  display:flex;flex-direction:column;padding:20px 24px;
+}
+.chart-modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-shrink:0}
+.chart-modal-title{font-family:var(--display);font-weight:700;font-size:18px;color:#252933}
+.chart-modal-actions{display:flex;gap:8px;align-items:center}
+.chart-modal-actions button{
+  border:1px solid var(--surface-alt);border-radius:4px;background:#fff;cursor:pointer;
+  padding:6px 14px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink);
+}
+.chart-modal-actions button:hover{background:var(--surface)}
+.chart-modal-close{font-size:16px;line-height:1;padding:6px 10px !important}
+.chart-modal-canvas-wrap{flex:1;position:relative;min-height:0}
 '''
 
 # ── rc- component helpers ────────────────────────────────────────────────────
@@ -914,11 +1004,17 @@ def rc_card_kpi(title, cum, full, favorable_if_below=False, desc=None, body_extr
 def rc_trend_chart(chart_id, title, desc=None):
     """A 52-week canvas placed under a summary card -- see
     build_summary_trend_charts_js() for the four-line (2025 Actual, 2026
-    Plan, 2026 Actual, 2026 Trend) series it renders into this canvas."""
+    Plan, 2026 Actual, 2026 Trend) series it renders into this canvas. The
+    expand button opens the same chart full-screen via a delegated click
+    listener on .rc-expand-btn (see CHART_MODAL_JS) with a PNG download
+    option -- data attributes rather than an inline onclick, since the
+    title's own double quotes (from embedding it as a JS string) would
+    otherwise collide with the HTML attribute's double quotes."""
     return (
-        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-card" style="grid-column:1 / -1;position:relative">'
         '<div class="rc-headrow"><div class="rc-name">' + title + '</div>'
         + ('<div class="rc-desc">' + desc + '</div>' if desc else '') +
+        '<button class="rc-expand-btn" data-chart-id="' + chart_id + '" data-chart-title="' + html_escape(title) + '">⤢ Expand</button>'
         '</div>'
         '<div style="height:220px"><canvas id="' + chart_id + '"></canvas></div>'
         '</div>\n'
@@ -1084,22 +1180,32 @@ def build_summary_trend_charts_js(d):
         ('chart-trend-opex',       'opex'),
         ('chart-trend-net_income', 'net_income'),
     ]
+    # Options are built by a factory function, called fresh for every chart
+    # instance (including the modal's) -- Chart.js writes internal resolver
+    # state onto whatever options object it's given, so reusing one live
+    # instance's already-resolved .options for a second instance breaks it.
+    # data.datasets, by contrast, is plain and safe to share by reference
+    # (this is Chart.js's own supported pattern for one dataset in multiple
+    # charts), so window.__chartData is shared as-is with the modal.
     out = (
-        'const sumTrendOpts={responsive:true,maintainAspectRatio:false,'
+        'function sumTrendOpts(){return {responsive:true,maintainAspectRatio:false,'
         'plugins:{legend:{display:true,position:"top"},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
         'scales:{x:{type:"category",grid:{color:"#EDECED"},ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},'
-        'y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};\n'
+        'y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};}\n'
+        'window.__chartData=window.__chartData||{};window.__chartOptsFn=window.__chartOptsFn||{};window.__charts=window.__charts||{};\n'
     )
     for chart_id, key in sections:
         s = tc[key]
         out += (
             '(function(){const el=document.getElementById("' + chart_id + '");if(!el)return;'
-            'new Chart(el,{type:"line",data:{labels:HL,datasets:['
+            'const data={labels:HL,datasets:['
             '{label:"2025 Actual",data:' + trend_xy(s['act_2025'])   + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,pointRadius:2,tension:0.3,parsing:false},'
             '{label:"2026 Plan",data:'   + trend_xy(s['plan_2026'])  + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:0.3,parsing:false},'
             '{label:"2026 Actual",data:' + trend_xy(s['act_2026'])   + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3,parsing:false},'
             '{label:"2026 Trend",data:'  + trend_xy(s['trend_2026']) + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,borderDash:[6,4],pointRadius:0,tension:0.3,parsing:false},'
-            ']},options:sumTrendOpts});})();\n'
+            ']};'
+            'window.__chartData["' + chart_id + '"]=data;window.__chartOptsFn["' + chart_id + '"]=sumTrendOpts;'
+            'window.__charts["' + chart_id + '"]=new Chart(el,{type:"line",data:data,options:sumTrendOpts()});})();\n'
         )
     return out
 
@@ -1735,12 +1841,16 @@ def build_html(d):
         + (panel('jrf', build_jrf_panel(d['jrf'])) if d.get('jrf') else '')
         + '</main>\n'
         '</div>\n'
+        + CHART_MODAL_HTML +
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>\n'
         '<script>\n'
         + build_chart_js(d)
         + '</script>\n'
         '<script>\n'
         + TAB_JS +
+        '</script>\n'
+        '<script>\n'
+        + CHART_MODAL_JS +
         '</script>\n</body>\n</html>'
     )
 
