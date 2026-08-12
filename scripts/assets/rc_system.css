@@ -129,6 +129,7 @@ body{margin:0;background:var(--surface);font-family:var(--body);color:var(--ink)
 }
 .tab:hover{color:rgba(255,255,255,.85)}
 .tab.active{color:#fff;border-bottom-color:#fff}
+.tab-instructions{margin-left:auto}
 
 .notebelow{
   max-width:1400px;margin:28px auto 0;padding:0 32px;
@@ -335,3 +336,13 @@ body{margin:0;background:var(--surface);font-family:var(--body);color:var(--ink)
 .rc-hltable td.neg{color:var(--watch)}
 .rc-hltable td.pos{color:var(--good)}
 .rc-hltable .rc-hl-star{color:#BA7517;margin-right:5px}
+
+.instr-list{margin:14px 0 0;padding-left:20px;font-family:var(--body);font-size:13px;color:var(--ink);line-height:1.7}
+.instr-list li{margin-bottom:4px}
+.instr-badge{
+  display:inline-block;flex-shrink:0;font-family:var(--mono);font-weight:700;font-size:10px;
+  letter-spacing:.07em;text-transform:uppercase;padding:4px 10px;border-radius:999px;color:#fff;
+}
+.instr-badge-weekly{background:var(--primary)}
+.instr-badge-biweekly{background:var(--primary-alt)}
+.instr-badge-monthly{background:var(--ink)}

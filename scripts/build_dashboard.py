@@ -1681,6 +1681,71 @@ def build_jrf_chart_js(jrf):
 def sec_label(txt):
     return rc_divider(txt)
 
+def instr_badge(cadence):
+    """cadence: 'Weekly' | 'Bi-Weekly' | 'Monthly' -- colored pill matching
+    the badge's own cadence so the eye can scan for "what's due this week"
+    across sections."""
+    cls = {'Weekly': 'weekly', 'Bi-Weekly': 'biweekly', 'Monthly': 'monthly'}[cadence]
+    return '<span class="instr-badge instr-badge-' + cls + '">' + cadence + '</span>'
+
+def instr_section(tab_label, cadence, sheet_note, items):
+    lis = ''.join('<li>' + it + '</li>' for it in items)
+    return (
+        rc_divider(tab_label)
+        + '<div class="rc-card" style="grid-column:1 / -1">'
+        + '<div class="rc-headrow" style="display:flex;align-items:center;gap:10px">'
+        + instr_badge(cadence)
+        + ('<div class="rc-desc" style="margin:0">' + sheet_note + '</div>' if sheet_note else '')
+        + '</div>'
+        + '<ul class="instr-list">' + lis + '</ul>'
+        + '</div>\n'
+    )
+
+def build_instructions_panel(d):
+    """First-pass draft, inferred from which workbook tab feeds each
+    dashboard section (see read_all()) -- cadences and exact steps are
+    guesses about Jeremy's actual process and are meant to be corrected,
+    not treated as settled fact."""
+    intro = (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Keeping This Dashboard Current</div>'
+        '<div class="rc-desc">This is a first-draft checklist, not a confirmed process — the cadence tags '
+        '(Weekly / Bi-Weekly / Monthly) and specific steps below are guesses based on which tab in the budget '
+        'workbook feeds each dashboard section. Correct anything that’s wrong or missing. One thing that is '
+        'confirmed: once you save an edit to the workbook, the site checks for changes every 5 minutes and '
+        'rebuilds automatically — there’s no separate publish step.</div></div>'
+        '</div>\n'
+    )
+    sections = (
+        instr_section('Revenue', 'Weekly',
+            'Feeds the &ldquo;2026 Actual&rdquo; tab.',
+            ['Enter this week’s actual revenue by channel (DTC, Wholesale, Screen Printing/INK, etc.).',
+             'Reconcile the week’s total against Shopify/QuickBooks (or your source system) before saving.'])
+        + instr_section('COGS &amp; Shipping', 'Weekly',
+            'Also on the &ldquo;2026 Actual&rdquo; tab — Spring/Summer, Fall/Winter, and Special COGS, plus Brand/Ink Shipping.',
+            ['Book this week’s COGS by season (Spring/Summer, Fall/Winter, Special).',
+             'Enter Shipping actuals (Brand, Ink) for the week.'])
+        + instr_section('Inventory', 'Weekly',
+            'Feeds the &ldquo;Inventory&rdquo; and &ldquo;On Order&rdquo; tabs.',
+            ['Update the on-hand COG/units snapshot for the week.',
+             'Refresh sell-through % figures for the current season.',
+             'Add or update any new POs on the &ldquo;On Order&rdquo; tab.'])
+        + instr_section('Labor', 'Bi-Weekly',
+            'Feeds the &ldquo;Labor&rdquo; and &ldquo;Payroll&rdquo; tabs, aligned to the pay cycle.',
+            ['Enter headcount/hours by department for the completed pay period.',
+             'Enter payroll cost actuals for the same period.'])
+        + instr_section('OpEx', 'Monthly',
+            'Feeds the OpEx line items on the &ldquo;2026 Actual&rdquo; tab (plus the optional &ldquo;Categories&rdquo; '
+            'tab — see docs/opex-categories-setup.md).',
+            ['Enter the month’s actual spend per OpEx line item as bills/invoices are booked.',
+             'Add any new line item to the &ldquo;Categories&rdquo; tab so it doesn’t fall into Uncategorized.'])
+        + instr_section('Cash Flow', 'Weekly',
+            'Feeds the &ldquo;Cash Flow - Tracker&rdquo; tab.',
+            ['Enter the week’s actual cash in/out.',
+             'Confirm the forward schedule/forecast rows are still current.'])
+    )
+    return intro + sections
+
 def build_html(d):
     WK  = d['week']
     rev = d['rev']; cogs = d['cogs']; opex = d['opex']; ni = d['net_income']
@@ -1763,6 +1828,7 @@ def build_html(d):
         '  <div class="tab" data-panel="opex">OpEx</div>\n'
         '  <div class="tab" data-panel="cashflow">Cash Flow</div>\n'
         + ('  <div class="tab" data-panel="jrf">JRF</div>\n' if d.get('jrf') else '') +
+        '  <div class="tab tab-instructions" data-panel="instructions">Instructions</div>\n'
         '</nav>\n'
     )
 
@@ -1853,6 +1919,7 @@ def build_html(d):
         + panel('opex', build_opex_panel(d))
         + panel('cashflow', build_cashflow_panel(d))
         + (panel('jrf', build_jrf_panel(d['jrf'])) if d.get('jrf') else '')
+        + panel('instructions', build_instructions_panel(d))
         + '</main>\n'
         '</div>\n'
         + CHART_MODAL_HTML +
