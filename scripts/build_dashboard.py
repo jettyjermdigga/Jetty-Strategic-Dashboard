@@ -50,6 +50,13 @@ def st_xy(d, est=None):
     return '[' + ','.join('{x:"Wk ' + str(k) + '",y:' + str(v) + ',e:' + ('true' if k in est else 'false') + '}'
                            for k,v in sorted(d.items()) if v) + ']'
 
+def trend_xy(arr):
+    """arr is a 52-length list (index 0 = week 1), None where there's no data
+    for that week -- those weeks are omitted entirely so Chart.js draws a
+    gap/skip rather than a fake drop to zero."""
+    return '[' + ','.join('{x:"Wk ' + str(i+1) + '",y:' + repr(round(float(v), 2)) + '}'
+                           for i, v in enumerate(arr) if v is not None) + ']'
+
 # ── Seasonality / trend ───────────────────────────────────────────────────────
 # The dashboard's default "Ann. Proj." (used everywhere for variance reporting)
 # is deliberately naive: actual-to-date + whatever's still budgeted for the
@@ -167,6 +174,7 @@ def read_all():
     df_s  = pd.read_excel(FP, sheet_name='Summary',             engine='pyxlsb', header=None)
     df_a  = pd.read_excel(FP, sheet_name='2026 Actual',         engine='pyxlsb', header=None)
     df_b  = pd.read_excel(FP, sheet_name='2026 Budget',         engine='pyxlsb', header=None)
+    df_25 = pd.read_excel(FP, sheet_name='2025 Actual',         engine='pyxlsb', header=None)
     df_cf = pd.read_excel(FP, sheet_name='Cash Flow - Tracker', engine='pyxlsb', header=None)
     df_inv= pd.read_excel(FP, sheet_name='Inventory',           engine='pyxlsb', header=None)
     df_oo = pd.read_excel(FP, sheet_name='On Order',            engine='pyxlsb', header=None)
@@ -238,6 +246,87 @@ def read_all():
     # Summary sheet, not broken out into `d`) correctly in the total: only
     # the revenue term is swapped for its trend-adjusted counterpart.
     d['net_income_trend'] = d['net_income']['ann_proj'] + (d['rev_trend_total'] - d['rev']['ann_proj'])
+
+    # ── 52-week trend charts (Summary tab) ──────────────────────────────────
+    # Row indices are consistent across '2025 Actual', '2026 Budget', and
+    # '2026 Actual' -- all three sheets share the same P&L layout.
+    TREND_ROWS = {'revenue': 18, 'cogs': 32, 'opex': 96, 'ebit': 105, 'net_income': 107}
+    # 2025's Total COGS/OpEx/EBIT rows are SUM formulas over mostly-blank
+    # category rows -- only the 12 month-end weeks (where we backfilled a
+    # typed-over cumulative value, per the Net Income trend project) hold a
+    # real figure; every other week reads as a plain 0, not blank, so it has
+    # to be filtered explicitly rather than relying on NaN. Net Income is
+    # itself a formula off those two (Income - COGS - OpEx), so at every
+    # non-month-end week it silently evaluates to Income - 0 - 0 == Income --
+    # caught by cross-checking it against the Total Income row directly.
+    # Revenue is the one row genuinely populated for all 52 weeks.
+    MONTH_END_WEEKS = {4,8,13,17,21,26,30,34,39,43,47,52}
+
+    def cum_from_weekly_budget(df, row):
+        weekly = [df.iloc[row, c] or 0 for c in range(1, 53)]
+        out = []; s = 0
+        for v in weekly:
+            s += v
+            out.append(s)
+        return out  # 52 values, index 0 = week 1
+
+    def cum_from_actual(df, row, thru_wk=52, month_end_only=False):
+        out = []
+        for wk in range(1, 53):
+            v = df.iloc[row, wk]
+            if wk > thru_wk or pd.isna(v) or (month_end_only and wk not in MONTH_END_WEEKS):
+                out.append(None)
+            else:
+                out.append(float(v))
+        return out
+
+    d['trend_charts'] = {}
+    for key, row in TREND_ROWS.items():
+        d['trend_charts'][key] = {
+            'act_2025':  cum_from_actual(df_25, row, month_end_only=(key in ('cogs','opex','ebit','net_income'))),
+            'plan_2026': cum_from_weekly_budget(df_b, row),
+            'act_2026':  cum_from_actual(df_a, row, thru_wk=WK),
+        }
+
+    # Trend continuation for weeks WK..52, anchored to the real actual value
+    # at WK so it joins the solid actual line without a visible seam:
+    #  - revenue: each channel's own validated seasonality curve, summed --
+    #    this naturally lands on the real actual total at week WK by
+    #    construction (trend_v * cum_weight_at_WK == that channel's actual).
+    #  - cogs/opex/ebit: parallels the remaining *budgeted* weekly shape --
+    #    no cost-side seasonality curve exists (see the note above
+    #    CHANNEL_SEASONALITY for why that was tried and reverted).
+    #  - net_income: revenue trend minus cogs/opex/ebit trend, week by week.
+    # Normalized so each channel's own cumulative weight hits exactly 1.0 at
+    # week 52 (raw monthly weights are rounded to 3 decimals and sum to
+    # ~0.998-1.001 per channel) -- without this, the week-52 chart point
+    # drifts a fraction of a percent off the "Trend Proj." figure already
+    # shown on the Total Revenue card, which uses trend_v as-is.
+    def _norm_cum_weights(k):
+        raw = _weekly_weights(CHANNEL_SEASONALITY[k])
+        total = sum(raw)
+        return [sum(raw[:i]) / total for i in range(1, 53)]
+    rev_cum_weights = {k: _norm_cum_weights(k) for _, k in rev_map}
+    rev_trend_v = {k: seasonal_ann_proj(k, get_a(k), get_ann(k), WK) for _, k in rev_map}
+    rev_trend = [None]*52
+    for wk in range(WK, 53):
+        rev_trend[wk-1] = sum(rev_trend_v[k] * rev_cum_weights[k][wk-1] for _, k in rev_map)
+    d['trend_charts']['revenue']['trend_2026'] = rev_trend
+
+    def plan_paced_trend(tc):
+        plan = tc['plan_2026']; act_wk = tc['act_2026'][WK-1]
+        return [None]*(WK-1) + [act_wk] + [act_wk + (plan[wk-1]-plan[WK-1]) for wk in range(WK+1, 53)]
+
+    for key in ('cogs', 'opex', 'ebit'):
+        d['trend_charts'][key]['trend_2026'] = plan_paced_trend(d['trend_charts'][key])
+
+    d['trend_charts']['net_income']['trend_2026'] = [
+        None if any(x is None for x in (r,c,o,e)) else r-c-o-e
+        for r,c,o,e in zip(d['trend_charts']['revenue']['trend_2026'],
+                            d['trend_charts']['cogs']['trend_2026'],
+                            d['trend_charts']['opex']['trend_2026'],
+                            d['trend_charts']['ebit']['trend_2026'])
+    ]
 
     cogs_map = [
         ('Contract design — brand', 'Contract Design - Brand'),
@@ -822,6 +911,19 @@ def rc_card_kpi(title, cum, full, favorable_if_below=False, desc=None, body_extr
         '</div>\n'
     )
 
+def rc_trend_chart(chart_id, title, desc=None):
+    """A 52-week canvas placed under a summary card -- see
+    build_summary_trend_charts_js() for the four-line (2025 Actual, 2026
+    Plan, 2026 Actual, 2026 Trend) series it renders into this canvas."""
+    return (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">' + title + '</div>'
+        + ('<div class="rc-desc">' + desc + '</div>' if desc else '') +
+        '</div>'
+        '<div style="height:220px"><canvas id="' + chart_id + '"></canvas></div>'
+        '</div>\n'
+    )
+
 def rc_divider(title):
     return '<div class="rc-divider"><div class="rc-divider-title">' + title + '</div></div>\n'
 
@@ -966,8 +1068,40 @@ def build_chart_js(d):
         '{l:"F25",d:' + st_xy(d['st_f25'], d['inv_est']['st_f25']) + ',c:"#586D72"},'
         '{l:"F26",d:' + st_xy(d['st_f26'], d['inv_est']['st_f26']) + ',c:"#43575E"}]);\n'
         + build_labor_chart_js(d)
+        + build_summary_trend_charts_js(d)
         + (build_jrf_chart_js(d['jrf']) if d.get('jrf') else '')
     )
+
+def build_summary_trend_charts_js(d):
+    """52-week line chart for each Summary card: 2025 Actual (reference),
+    2026 Plan, 2026 Actual (solid, stops at the current week), and 2026
+    Trend (dashed continuation from the current week to week 52) -- see
+    the trend_charts computation in read_all()."""
+    tc = d['trend_charts']
+    sections = [
+        ('chart-trend-revenue',    'revenue'),
+        ('chart-trend-cogs',       'cogs'),
+        ('chart-trend-opex',       'opex'),
+        ('chart-trend-net_income', 'net_income'),
+    ]
+    out = (
+        'const sumTrendOpts={responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:true,position:"top"},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
+        'scales:{x:{type:"category",grid:{color:"#EDECED"},ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},'
+        'y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};\n'
+    )
+    for chart_id, key in sections:
+        s = tc[key]
+        out += (
+            '(function(){const el=document.getElementById("' + chart_id + '");if(!el)return;'
+            'new Chart(el,{type:"line",data:{labels:HL,datasets:['
+            '{label:"2025 Actual",data:' + trend_xy(s['act_2025'])   + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,pointRadius:2,tension:0.3,parsing:false},'
+            '{label:"2026 Plan",data:'   + trend_xy(s['plan_2026'])  + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:0.3,parsing:false},'
+            '{label:"2026 Actual",data:' + trend_xy(s['act_2026'])   + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3,parsing:false},'
+            '{label:"2026 Trend",data:'  + trend_xy(s['trend_2026']) + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,borderDash:[6,4],pointRadius:0,tension:0.3,parsing:false},'
+            ']},options:sumTrendOpts});})();\n'
+        )
+    return out
 
 def build_labor_chart_js(d):
     months = d['labor_total']['months']
@@ -1512,16 +1646,24 @@ def build_html(d):
         '</nav>\n'
     )
 
+    trend_chart_desc = (
+        "2025 Actual (gray) is last year's cumulative pace for reference. 2026 Trend (dashed) "
+        "continues the solid 2026 Actual line from this week forward."
+    )
     summary_panel = (
         rc_card_kpi("Total Revenue", (rev['plan'],rev['act'],rev['var']), (rev['ann_plan'],rev['ann_proj'],rev['ann_var']),
             trend=d['rev_trend_total'])
+        + rc_trend_chart('chart-trend-revenue', '52-Week Trend — Total Revenue', trend_chart_desc)
         + rc_card_kpi("COGS + Labor + Shipping", (cogs['plan'],cogs['act'],cogs['var']), (cogs['ann_plan'],cogs['ann_proj'],cogs['ann_var']),
             favorable_if_below=True)
+        + rc_trend_chart('chart-trend-cogs', '52-Week Trend — COGS + Labor + Shipping', trend_chart_desc)
         + rc_card_kpi("Total OpEx", (opex['plan'],opex['act'],opex['var']), (opex['ann_plan'],opex['ann_proj'],opex['ann_var']),
             favorable_if_below=True)
+        + rc_trend_chart('chart-trend-opex', '52-Week Trend — Total OpEx', trend_chart_desc)
         + rc_card_kpi("Net Income", (ni['plan'],ni['act'],ni['var']), (ni['ann_plan'],ni['ann_proj'],ni['ann_var']),
             trend=d['net_income_trend'],
             desc="Trend uses Revenue's seasonality curve; COGS/OpEx use their plan-paced Full Year Projection.")
+        + rc_trend_chart('chart-trend-net_income', '52-Week Trend — Net Income', trend_chart_desc)
     )
 
     cogs_panel = (
