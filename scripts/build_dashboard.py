@@ -85,9 +85,23 @@ function closeChartModal(){
 }
 function downloadChartModal(){
   if(!window.__modalChart) return;
+  // toBase64Image()'s canvas is transparent -- fine on a white page, but
+  // most image viewers (and dark-mode ones especially) render transparency
+  // as black, making the light gridlines/text unreadable. Composite a white
+  // fill behind the existing pixels ("destination-over" draws under, not
+  // over), grab the URL, then redraw the chart to undo it on-screen.
+  var canvas = window.__modalChart.canvas;
+  var ctx = canvas.getContext("2d");
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  var url = canvas.toDataURL("image/png", 1);
+  ctx.restore();
+  window.__modalChart.draw();
   var link = document.createElement("a");
   link.download = (window.__modalTitle || "chart").replace(/[^a-z0-9]+/gi,"_") + ".png";
-  link.href = window.__modalChart.toBase64Image("image/png", 1);
+  link.href = url;
   link.click();
 }
 document.getElementById("chart-modal").addEventListener("click", function(e){
