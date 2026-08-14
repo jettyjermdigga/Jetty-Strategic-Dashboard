@@ -9,6 +9,10 @@ on:
         description: 'Dry run (parse + log only, no writes to Airtable/Gmail)'
         type: boolean
         default: true
+      diagnose_shopify:
+        description: 'Run the one-off Shopify Admin API diagnostic instead of the normal sync'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,7 +26,13 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r scripts/requirements.txt
+      - name: Shopify Admin API diagnostic
+        if: github.event_name == 'workflow_dispatch' && inputs.diagnose_shopify
+        env:
+          SHOPIFY_ADMIN_API_TOKEN: ${{ secrets.SHOPIFY_ADMIN_API_TOKEN }}
+        run: python scripts/shopify_payout_diagnostic.py
       - name: Sync Shopify/Stripe/CardPointe/GoCardless/Printavo emails to Ledger
+        if: "!(github.event_name == 'workflow_dispatch' && inputs.diagnose_shopify)"
         env:
           GMAIL_CREDENTIALS: ${{ secrets.GMAIL_CREDENTIALS }}
           GMAIL_DELEGATED_USER: ${{ secrets.GMAIL_DELEGATED_USER }}

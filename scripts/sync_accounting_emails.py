@@ -330,7 +330,9 @@ def main():
     for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:donotreply@cardpointe.com subject:"Batch Summary"'):
         safe_process(gmail, msg_id, parse_cardpointe, lambda p: CARDPOINTE_RULE, "cardpointe")
 
-    for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:no-reply@gocardless.com subject:"has paid you"'):
+    # GoCardless has sent from both no-reply@gocardless.com and no-reply@payments.gocardless.com
+    # (started 2026-08-11); match either so a sender-domain change doesn't silently drop mail.
+    for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:(no-reply@gocardless.com OR no-reply@payments.gocardless.com) subject:"has paid you"'):
         safe_process(gmail, msg_id, parse_gocardless, lambda p: GOCARDLESS_RULE, "gocardless")
 
     for msg_id in search_all(gmail, f'{SEARCH_WINDOW} from:no-reply@notifications.printavo.com subject:"received a deposit"'):
