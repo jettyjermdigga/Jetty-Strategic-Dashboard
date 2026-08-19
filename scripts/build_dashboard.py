@@ -2,10 +2,72 @@ import os, json, datetime
 import pandas as pd
 import pyxlsb
 import openpyxl
+import requests
 
 FP = "data/budget.xlsb"
 CATEGORIES_SHEET = "Categories"
 FP_JRF = "data/jrf_budget.xlsx"
+
+# ── A/P - CNS (live, from Airtable) ───────────────────────────────────────────
+# Overseas COGS purchase-order payables tracked in the "Ledger 💰" Airtable
+# base -- real vendor debt that hasn't hit the Cash Flow - Tracker's cash-out
+# actuals yet (it only shows up there once actually paid), so it's the piece
+# missing from a pure spreadsheet-based cash projection.
+AIRTABLE_API = "https://api.airtable.com/v0"
+AIRTABLE_LEDGER_BASE = "appW8jAfERj3iBzqt"  # Ledger 💰
+AP_CNS_TABLE = "tblC9gQD9rrRbVtno"
+
+def fetch_ap_cns():
+    """Unpaid A/P - CNS balances with a due date, bucketed into overdue vs.
+    due by year-end. Returns None (rather than raising) if AIRTABLE_API_KEY
+    isn't configured or the request fails, so a local/offline build just
+    omits the Paydown Feasibility section instead of breaking."""
+    token = os.environ.get('AIRTABLE_API_KEY')
+    if not token:
+        return None
+    url = f"{AIRTABLE_API}/{AIRTABLE_LEDGER_BASE}/{AP_CNS_TABLE}"
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {
+        "filterByFormula": "AND(NOT({Paid in Full}), {⚠ Due Date} != '')",
+        "fields[]": ["⚠ Due Date", "Remaining Due"],
+        "pageSize": 100,
+    }
+    records = []
+    try:
+        offset = None
+        while True:
+            p = dict(params)
+            if offset:
+                p["offset"] = offset
+            r = requests.get(url, headers=headers, params=p, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+            records.extend(data.get("records", []))
+            offset = data.get("offset")
+            if not offset:
+                break
+    except requests.RequestException as e:
+        print("A/P - CNS fetch failed, skipping paydown feasibility:", e)
+        return None
+
+    today = datetime.date.today()
+    year_end = datetime.date(today.year, 12, 31)
+    overdue = upcoming = beyond_year = 0.0
+    for rec in records:
+        f = rec.get("fields", {})
+        remaining = f.get("Remaining Due") or 0
+        due_str = f.get("⚠ Due Date")
+        if not due_str or not remaining:
+            continue
+        due = datetime.date.fromisoformat(due_str)
+        if due < today:
+            overdue += remaining
+        elif due <= year_end:
+            upcoming += remaining
+        else:
+            beyond_year += remaining
+    return dict(overdue=overdue, upcoming=upcoming, beyond_year=beyond_year,
+                total=overdue + upcoming, as_of=today.isoformat())
 
 # ── Formatters ──────────────────────────────────────────────────────────────
 
@@ -590,6 +652,8 @@ def read_all():
     else:
         d['loc_2026_trend'] = ([None]*(n_elapsed-1) + [d['loc_2026_act'][n_elapsed-1]]
                                 + loc_plan_bom[n_elapsed:12])
+
+    d['ap_cns'] = fetch_ap_cns()
 
     # Inventory. A missing weekly reading is not the same as zero on hand — it
     # just means nobody recorded a count that week. carry_forward fills those
@@ -1492,6 +1556,79 @@ def build_loc_plan_table(d):
         '</table></div>'
     )
 
+def build_paydown_feasibility(d):
+    """Will current-pace cash generation actually cover the planned
+    paydown? Two forward estimates for cash still to come through Dec 31 --
+    the existing plan-based Ann. Proj. convention (actual-to-date +
+    whatever's still budgeted), and a pace-adjusted trend that extrapolates
+    the YTD plan-vs-actual variance forward at the same $/week rate -- both
+    netted against known outstanding A/P (live from Airtable's A/P - CNS
+    table, see fetch_ap_cns) that hasn't hit cash-out yet. Returns '' if
+    the A/P feed isn't available (no Airtable token) or the credit line
+    hasn't been certified yet this year -- there's nothing sound to show."""
+    ap = d.get('ap_cns')
+    if not ap or not d['loc_n_elapsed']:
+        return ''
+
+    WK = d['week']
+    remaining_weeks = 52 - WK
+    cf = d['cf_var_pre']
+    remaining_plan_cf = cf['ann_proj'] - cf['act']       # plan-based cash flow still to come
+    variance_rate = (cf['var'] / WK) if WK else 0.0       # $/week the actual is beating plan by, so far
+    remaining_trend_cf = remaining_plan_cf + variance_rate * remaining_weeks
+
+    current_balance = d['loc_2026_act'][d['loc_n_elapsed'] - 1]
+    target_balance = d['loc_plan_monthly'][-1]['eom']
+    required_paydown = current_balance - target_balance
+
+    net_plan = remaining_plan_cf - ap['total']
+    net_trend = remaining_trend_cf - ap['total']
+    gap_plan = net_plan - required_paydown
+    gap_trend = net_trend - required_paydown
+
+    if gap_plan >= 0 and gap_trend >= 0:
+        verdict = ('Both estimates clear the paydown goal: a cushion of ' + fk(gap_plan) +
+                   ' (plan-based) to ' + fk(gap_trend) + ' (trend-adjusted).')
+    elif gap_plan < 0 and gap_trend < 0:
+        verdict = ('Neither estimate covers the paydown goal: short by ' + fk(abs(gap_trend)) +
+                   ' (trend-adjusted) to ' + fk(abs(gap_plan)) + ' (plan-based).')
+    else:
+        ok_lbl, ok_gap = ('trend-adjusted', gap_trend) if gap_trend >= 0 else ('plan-based', gap_plan)
+        bad_lbl, bad_gap = ('plan-based', gap_plan) if gap_trend >= 0 else ('trend-adjusted', gap_trend)
+        verdict = ('Mixed signal: the ' + ok_lbl + ' estimate clears the goal by ' + fk(ok_gap) +
+                   ', but the ' + bad_lbl + ' estimate falls short by ' + fk(abs(bad_gap)) +
+                   ' -- treat this as tight, not certain.')
+
+    desc = ('Cash still to come through Dec 31, netted against ' + fk(ap['total']) +
+            ' in known outstanding vendor payables (' + fk(ap['overdue']) + ' already past due, ' +
+            fk(ap['upcoming']) + ' due before year end -- live from the A/P - CNS ledger as of ' +
+            ap['as_of'] + '). Both estimates exclude any new A/P not yet entered in that ledger.')
+
+    return (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Paydown Feasibility</div></div>'
+        '<div class="rc-subhead ' + ('pos' if (gap_plan >= 0 and gap_trend >= 0) else 'neg') + '">'
+        + verdict + '</div>'
+        '<div class="rc-desc" style="margin:8px 0 14px">' + desc + '</div>'
+        '<div class="rc-boxrow">'
+        '<div class="rc-box"><div class="rc-group-label">Required Paydown</div><div class="rc-row">'
+        + rc_stat('Current Balance', fk(current_balance))
+        + rc_stat('Year-End Target', fk(target_balance))
+        + rc_stat('To Pay Down', fk(required_paydown))
+        + '</div></div>'
+        '<div class="rc-box"><div class="rc-group-label">Cash Still to Come (thru Dec 31)</div><div class="rc-row">'
+        + rc_stat('Plan-Based', fk(remaining_plan_cf))
+        + rc_stat('Trend-Adjusted', fk(remaining_trend_cf))
+        + rc_stat('Known A/P Due', fk(ap['total']), 'neg')
+        + '</div></div>'
+        '<div class="rc-box"><div class="rc-group-label">Net vs. Paydown Goal</div><div class="rc-row">'
+        + rc_stat('Plan-Based', vk(gap_plan), var_cls(gap_plan))
+        + rc_stat('Trend-Adjusted', vk(gap_trend), var_cls(gap_trend))
+        + '</div></div>'
+        '</div>'
+        '</div>\n'
+    )
+
 def build_cashflow_panel(d):
     cf = d['cf']
     def p(k): return cf[k][-1] if cf[k] else 0
@@ -1553,6 +1690,7 @@ def build_cashflow_panel(d):
         + build_loc_plan_table(d) +
         '</div>\n'
     )
+    body += build_paydown_feasibility(d)
 
     ann_plan = d['cf_ann_plan']
     body += rc_divider("Cash In by Channel")

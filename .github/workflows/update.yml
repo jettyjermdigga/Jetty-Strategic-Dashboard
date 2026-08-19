@@ -51,6 +51,7 @@ jobs:
         env:
           SOURCE_MODIFIED_TIME: ${{ steps.check.outputs.modified_time }}
           JRF_MODIFIED_TIME: ${{ steps.check.outputs.jrf_modified_time }}
+          AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
         run: python scripts/build_dashboard.py
       # The dashboard itself now deploys only to Cloudflare Workers (behind
       # Access). gh-pages no longer serves the site, but check_modified.py
