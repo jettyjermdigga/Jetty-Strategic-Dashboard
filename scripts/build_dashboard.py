@@ -1558,14 +1558,24 @@ def build_loc_plan_table(d):
 
 def build_paydown_feasibility(d):
     """Will current-pace cash generation actually cover the planned
-    paydown? Two forward estimates for cash still to come through Dec 31 --
-    the existing plan-based Ann. Proj. convention (actual-to-date +
-    whatever's still budgeted), and a pace-adjusted trend that extrapolates
-    the YTD plan-vs-actual variance forward at the same $/week rate -- both
-    netted against known outstanding A/P (live from Airtable's A/P - CNS
-    table, see fetch_ap_cns) that hasn't hit cash-out yet. Returns '' if
-    the A/P feed isn't available (no Airtable token) or the credit line
-    hasn't been certified yet this year -- there's nothing sound to show."""
+    paydown? The naive version of this (net a plan-based cash-flow
+    projection against known A/P) double-counts: COGS - Brand alone
+    accounts for essentially all of the YTD "ahead of plan" cash-flow
+    variance (it's -128% of it -- Cash In is actually running behind plan,
+    and every other cost category is a rounding error), and that
+    favorability is exactly the same phenomenon as the A/P backlog -- cash
+    that "looks" available only because vendor invoices haven't been paid.
+    Extrapolating that variance forward as a "trend" would double the same
+    dollars: once via the trend, again via subtracting A/P.
+
+    So instead of netting a generic cash-flow projection against A/P, this
+    swaps out the *plan's* COGS - Brand assumption for the *live* A/P - CNS
+    total (the more reliable, bottom-up source for exactly that one
+    category) and only trend-extrapolates the genuine signal in the
+    remaining categories (Cash In pace + Labor/OpEx/COGS-INK/Other
+    COGS+Shipping, where the combined variance is negligible either way).
+    Returns '' if the A/P feed isn't available (no Airtable token) or the
+    credit line hasn't been certified yet this year."""
     ap = d.get('ap_cns')
     if not ap or not d['loc_n_elapsed']:
         return ''
@@ -1573,36 +1583,50 @@ def build_paydown_feasibility(d):
     WK = d['week']
     remaining_weeks = 52 - WK
     cf = d['cf_var_pre']
-    remaining_plan_cf = cf['ann_proj'] - cf['act']       # plan-based cash flow still to come
-    variance_rate = (cf['var'] / WK) if WK else 0.0       # $/week the actual is beating plan by, so far
-    remaining_trend_cf = remaining_plan_cf + variance_rate * remaining_weeks
+    cfd = d['cf']
+    def p(k): return cfd[k][-1] if cfd[k] else 0
+
+    remaining_plan_cf = cf['ann_proj'] - cf['act']  # plan-based cash flow still to come, as everywhere else
+    remaining_plan_cogs_brand = d['cf_ann_plan']['b'] - p('proj_b')  # what the plan still expects to pay
+
+    # Swap the plan's COGS - Brand assumption for the live ledger total.
+    remaining_plan_cf_adj = remaining_plan_cf + remaining_plan_cogs_brand - ap['total']
+
+    # Trend-extrapolate only the genuine signal: Cash In pace plus the
+    # other cost categories, excluding COGS - Brand (already handled above
+    # via the live ledger, not a variance extrapolation).
+    other_cost_var = sum(p(a) - p(b) for a, b in
+                          [('cout_i','proj_i2'), ('cout_o','proj_o'), ('cout_l','proj_l'), ('cout_e','proj_e')])
+    genuine_var = d['cash_in']['var'] - other_cost_var
+    genuine_rate = (genuine_var / WK) if WK else 0.0
+    remaining_trend_cf_adj = remaining_plan_cf_adj + genuine_rate * remaining_weeks
 
     current_balance = d['loc_2026_act'][d['loc_n_elapsed'] - 1]
     target_balance = d['loc_plan_monthly'][-1]['eom']
     required_paydown = current_balance - target_balance
 
-    net_plan = remaining_plan_cf - ap['total']
-    net_trend = remaining_trend_cf - ap['total']
-    gap_plan = net_plan - required_paydown
-    gap_trend = net_trend - required_paydown
+    gap_plan = remaining_plan_cf_adj - required_paydown
+    gap_trend = remaining_trend_cf_adj - required_paydown
+    lo_lbl, lo_gap = ('trend-adjusted', gap_trend) if gap_trend <= gap_plan else ('plan-based', gap_plan)
+    hi_lbl, hi_gap = ('plan-based', gap_plan) if gap_trend <= gap_plan else ('trend-adjusted', gap_trend)
 
     if gap_plan >= 0 and gap_trend >= 0:
-        verdict = ('Both estimates clear the paydown goal: a cushion of ' + fk(gap_plan) +
-                   ' (plan-based) to ' + fk(gap_trend) + ' (trend-adjusted).')
+        verdict = 'Both estimates clear the paydown goal: a cushion of ' + fk(lo_gap) + ' to ' + fk(hi_gap) + '.'
     elif gap_plan < 0 and gap_trend < 0:
-        verdict = ('Neither estimate covers the paydown goal: short by ' + fk(abs(gap_trend)) +
-                   ' (trend-adjusted) to ' + fk(abs(gap_plan)) + ' (plan-based).')
+        verdict = ('Neither estimate covers the paydown goal: short by ' + fk(abs(hi_gap)) + ' (' + hi_lbl +
+                   ') to ' + fk(abs(lo_gap)) + ' (' + lo_lbl + ').')
     else:
-        ok_lbl, ok_gap = ('trend-adjusted', gap_trend) if gap_trend >= 0 else ('plan-based', gap_plan)
-        bad_lbl, bad_gap = ('plan-based', gap_plan) if gap_trend >= 0 else ('trend-adjusted', gap_trend)
-        verdict = ('Mixed signal: the ' + ok_lbl + ' estimate clears the goal by ' + fk(ok_gap) +
-                   ', but the ' + bad_lbl + ' estimate falls short by ' + fk(abs(bad_gap)) +
+        verdict = ('Mixed signal: the ' + hi_lbl + ' estimate clears the goal by ' + fk(hi_gap) +
+                   ', but the ' + lo_lbl + ' estimate falls short by ' + fk(abs(lo_gap)) +
                    ' -- treat this as tight, not certain.')
 
-    desc = ('Cash still to come through Dec 31, netted against ' + fk(ap['total']) +
-            ' in known outstanding vendor payables (' + fk(ap['overdue']) + ' already past due, ' +
-            fk(ap['upcoming']) + ' due before year end -- live from the A/P - CNS ledger as of ' +
-            ap['as_of'] + '). Both estimates exclude any new A/P not yet entered in that ledger.')
+    desc = ('Nets remaining-year Cash In against Labor/OpEx/COGS-INK/Other COGS+Shipping per the original '
+             'plan, and against COGS - Brand using the live A/P - CNS ledger (' + fk(ap['total']) +
+             ' outstanding -- ' + fk(ap['overdue']) + ' already past due, ' + fk(ap['upcoming']) +
+             ' due before year end, as of ' + ap['as_of'] + ') instead of the plan’s own COGS - Brand '
+             'assumption, to avoid double-counting the same dollars. The trend estimate only extrapolates '
+             'genuine pace (Cash In + the other cost categories) -- not the COGS - Brand variance, which is '
+             'a payment-timing artifact, not real performance.')
 
     return (
         '<div class="rc-card" style="grid-column:1 / -1">'
@@ -1616,10 +1640,16 @@ def build_paydown_feasibility(d):
         + rc_stat('Year-End Target', fk(target_balance))
         + rc_stat('To Pay Down', fk(required_paydown))
         + '</div></div>'
-        '<div class="rc-box"><div class="rc-group-label">Cash Still to Come (thru Dec 31)</div><div class="rc-row">'
-        + rc_stat('Plan-Based', fk(remaining_plan_cf))
-        + rc_stat('Trend-Adjusted', fk(remaining_trend_cf))
-        + rc_stat('Known A/P Due', fk(ap['total']), 'neg')
+        '<div class="rc-box"><div class="rc-group-label">COGS &mdash; Brand: Plan vs. Live A/P</div><div class="rc-row">'
+        + rc_stat('Plan Still Assumes', fk(remaining_plan_cogs_brand))
+        + rc_stat('Live A/P (CNS)', fk(ap['total']))
+        + rc_stat('Gap', vk(ap['total'] - remaining_plan_cogs_brand), 'neg' if ap['total'] > remaining_plan_cogs_brand else 'pos')
+        + '</div></div>'
+        '</div>'
+        '<div class="rc-boxrow">'
+        '<div class="rc-box"><div class="rc-group-label">Cash Still to Come (thru Dec 31, COGS-Brand via live A/P)</div><div class="rc-row">'
+        + rc_stat('Plan-Based', fk(remaining_plan_cf_adj))
+        + rc_stat('Trend-Adjusted', fk(remaining_trend_cf_adj))
         + '</div></div>'
         '<div class="rc-box"><div class="rc-group-label">Net vs. Paydown Goal</div><div class="rc-row">'
         + rc_stat('Plan-Based', vk(gap_plan), var_cls(gap_plan))
