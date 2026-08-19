@@ -271,7 +271,8 @@ def read_all():
     d['net_inc_var']= sc(21, 'D')
     d['ytd_status'] = 'ahead' if d['net_inc_var'] >= 0 else 'behind'
     for key, row in [('rev',11),('cogs',13),('opex',15),('net_income',21),
-                      ('cash_in',68),('cash_out',75),('cf_var_pre',77),('cf_var_post',81)]:
+                      ('cash_in',68),('cash_out',75),('cf_var_pre',77),('cf_var_post',81),
+                      ('credit_line',79)]:
         d[key] = {k: sc(row, c) for k,c in [('plan','B'),('act','C'),('var','D'),
                                               ('ann_plan','G'),('ann_proj','H'),('ann_var','I')]}
 
@@ -538,6 +539,57 @@ def read_all():
                              b=ab_full, i2=ai2_full, o=ao_full, l=al_full, e=ae_full)
     d['cf_weekly']   = cf_weekly
     d['cf_forecast'] = cf_forecast
+
+    # Credit line: monthly cadence (unlike the weekly cash schedule above),
+    # from two different sources -- the bank's monthly Borrowing Certificate
+    # (actual balance, submitted after the fact) for the 2025 and 2026
+    # actual trajectories, and the original "Cash Flow - Plan" sheet for the
+    # full-year 2026 plan. That plan sheet is never edited after the year
+    # starts, so it stays a true fixed reference rather than drifting to
+    # match reality the way the certificate's actuals naturally do.
+    MONTH_ORDER = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']
+    df_cert = pd.read_excel(FP, sheet_name='Columbia Certificate', engine='pyxlsb', header=None)
+    cert_2025, cert_2026, loc_status = {}, {}, None
+    for r in range(6, df_cert.shape[0]):
+        row = df_cert.iloc[r]
+        yr, mon, bal = row[0], row[1], row[7]
+        if pd.isna(yr) or pd.isna(mon) or pd.isna(bal):
+            continue  # future months not yet certified -- placeholder row
+        entry = dict(balance=float(bal), month=str(mon).strip(),
+                     coverage_x=(float(row[11]) if pd.notna(row[11]) and not isinstance(row[11], str) else None),
+                     status=(str(row[13]) if pd.notna(row[13]) else ''))
+        (cert_2025 if int(yr) == 2025 else cert_2026)[str(mon).strip()] = entry
+        if int(yr) == 2026:
+            loc_status = entry  # rows are chronological -- last write is the latest certified month
+    d['loc_2025']     = [cert_2025[m]['balance'] if m in cert_2025 else None for m in MONTH_ORDER]
+    d['loc_2026_act'] = [cert_2026[m]['balance'] if m in cert_2026 else None for m in MONTH_ORDER]
+    d['loc_status']   = loc_status
+
+    df_locplan = pd.read_excel(FP, sheet_name='Cash Flow - Plan', engine='pyxlsb', header=None)
+    plan_month_cols = [1,2,3,4,5,6,8,9,10,11,12,13]  # Jan..Jun, Jul..Dec (skips the H1/H2 rollup columns)
+    def loc_plan_row(r):
+        row = df_locplan.iloc[r]
+        return [float(row[c]) if pd.notna(row[c]) else 0.0 for c in plan_month_cols]
+    loc_plan_bom = loc_plan_row(34)  # "Balance BOM"
+    loc_plan_use = loc_plan_row(35)  # "Use of Credit"
+    loc_plan_pay = loc_plan_row(36)  # "Paydown of Credit"
+    loc_plan_eom = loc_plan_row(37)  # "Balance EOM"
+    d['loc_plan_bom']     = loc_plan_bom
+    d['loc_plan_monthly'] = [dict(month=MONTH_ORDER[i], bom=loc_plan_bom[i], draw=loc_plan_use[i],
+                                   paydown=loc_plan_pay[i], eom=loc_plan_eom[i]) for i in range(12)]
+
+    # Trend continuation: certified actual through the latest certified
+    # month, then the original plan's remaining months -- anchored on the
+    # last actual value (duplicated at the seam) so the dashed line picks up
+    # exactly where the solid actual line stops, same convention as the
+    # Summary tab's 52-week trend charts.
+    n_elapsed = sum(1 for v in d['loc_2026_act'] if v is not None)
+    d['loc_n_elapsed'] = n_elapsed
+    if n_elapsed == 0:
+        d['loc_2026_trend'] = list(loc_plan_bom)
+    else:
+        d['loc_2026_trend'] = ([None]*(n_elapsed-1) + [d['loc_2026_act'][n_elapsed-1]]
+                                + loc_plan_bom[n_elapsed:12])
 
     # Inventory. A missing weekly reading is not the same as zero on hand — it
     # just means nobody recorded a count that week. carry_forward fills those
@@ -1179,6 +1231,7 @@ def build_chart_js(d):
         '{l:"F26",d:' + st_xy(d['st_f26'], d['inv_est']['st_f26']) + ',c:"#43575E"}]);\n'
         + build_labor_chart_js(d)
         + build_summary_trend_charts_js(d)
+        + build_creditline_chart_js(d)
         + (build_jrf_chart_js(d['jrf']) if d.get('jrf') else '')
     )
 
@@ -1222,6 +1275,34 @@ def build_summary_trend_charts_js(d):
             'window.__charts["' + chart_id + '"]=new Chart(el,{type:"line",data:data,options:sumTrendOpts()});})();\n'
         )
     return out
+
+def build_creditline_chart_js(d):
+    """Monthly Line-of-Credit balance: 2025 Actual (certified monthly,
+    prior-year reference), 2026 Plan (the original static full-year plan,
+    never revised), 2026 Actual (certified through the latest month,
+    solid), and 2026 Trend (dashed continuation using the plan's remaining
+    months, anchored at the last certified balance) -- same convention as
+    the Summary tab's 52-week trend charts, just monthly instead of weekly."""
+    labels_py = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    labels_js = '[' + ','.join('"' + l + '"' for l in labels_py) + ']'
+    def mxy(arr):
+        return '[' + ','.join('{x:"' + labels_py[i] + '",y:' + repr(round(float(v), 2)) + '}'
+                               for i, v in enumerate(arr) if v is not None) + ']'
+    return (
+        'function locChartOpts(){return {responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:true,position:"top"},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
+        'scales:{x:{type:"category",grid:{color:"#EDECED"}},y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};}\n'
+        'window.__chartData=window.__chartData||{};window.__chartOptsFn=window.__chartOptsFn||{};window.__charts=window.__charts||{};\n'
+        '(function(){const el=document.getElementById("chart-loc-balance");if(!el)return;'
+        'const data={labels:' + labels_js + ',datasets:['
+        '{label:"2025 Actual",data:' + mxy(d['loc_2025'])       + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,pointRadius:2,tension:0.3,parsing:false},'
+        '{label:"2026 Plan",data:'   + mxy(d['loc_plan_bom'])   + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:0.3,parsing:false},'
+        '{label:"2026 Actual",data:' + mxy(d['loc_2026_act'])   + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3,parsing:false},'
+        '{label:"2026 Trend",data:'  + mxy(d['loc_2026_trend']) + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,borderDash:[6,4],pointRadius:0,tension:0.3,parsing:false},'
+        ']};'
+        'window.__chartData["chart-loc-balance"]=data;window.__chartOptsFn["chart-loc-balance"]=locChartOpts;'
+        'window.__charts["chart-loc-balance"]=new Chart(el,{type:"line",data:data,options:locChartOpts()});})();\n'
+    )
 
 def build_labor_chart_js(d):
     months = d['labor_total']['months']
@@ -1369,6 +1450,48 @@ def build_cf_weekly_table(d):
         '</table></div>'
     )
 
+def build_loc_plan_table(d):
+    """2026 monthly credit-line schedule from the original static plan:
+    draws, paydowns, and resulting balance, Jan through Dec. Months already
+    certified (see loc_n_elapsed) render normally; remaining months render
+    muted, same convention as the weekly cash-collection schedule's
+    forecast rows."""
+    n_elapsed = d['loc_n_elapsed']
+    rows = ''
+    for i, m in enumerate(d['loc_plan_monthly']):
+        muted = ' style="opacity:.55"' if i >= n_elapsed else ''
+        rows += (
+            '<tr' + muted + '>'
+            '<td style="text-align:left;font-family:var(--body)">' + m['month'].title() + '</td>'
+            '<td>' + fk(m['bom']) + '</td>'
+            '<td>' + (fk(m['draw']) if m['draw'] else '—') + '</td>'
+            '<td style="color:' + ('var(--good)' if m['paydown'] else 'var(--ink)') + '">'
+            + (fk(m['paydown']) if m['paydown'] else '—') + '</td>'
+            '<td style="font-weight:600">' + fk(m['eom']) + '</td>'
+            '</tr>\n'
+        )
+    year_draw = sum(m['draw'] for m in d['loc_plan_monthly'])
+    year_pay  = sum(m['paydown'] for m in d['loc_plan_monthly'])
+    eoy       = d['loc_plan_monthly'][-1]['eom']
+    rows += (
+        '<tr style="border-top:1.5px solid var(--ink)">'
+        '<td style="text-align:left;font-family:var(--body);font-weight:700;border-bottom:none">Full-Year Plan</td>'
+        '<td style="font-weight:700;border-bottom:none">' + fk(d['loc_plan_monthly'][0]['bom']) + '</td>'
+        '<td style="font-weight:700;border-bottom:none">' + fk(year_draw) + '</td>'
+        '<td style="font-weight:700;color:var(--good);border-bottom:none">' + fk(year_pay) + '</td>'
+        '<td style="font-weight:700;border-bottom:none">' + fk(eoy) + '</td>'
+        '</tr>\n'
+    )
+    return (
+        '<div class="rc-hl">'
+        '<table class="rc-hltable">'
+        '<colgroup><col class="rc-hl-col-name"><col class="rc-hl-col-stat">'
+        '<col class="rc-hl-col-stat"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat"></colgroup>'
+        '<thead><tr><th>Month</th><th>Balance (BOM)</th><th>Draws</th><th>Paydowns</th><th>Balance (EOM)</th></tr></thead>\n'
+        '<tbody>\n' + rows + '</tbody>\n'
+        '</table></div>'
+    )
+
 def build_cashflow_panel(d):
     cf = d['cf']
     def p(k): return cf[k][-1] if cf[k] else 0
@@ -1385,6 +1508,10 @@ def build_cashflow_panel(d):
     body += rc_card_kpi("Net Cash Flow (After Borrowing)",
         (d['cf_var_post']['plan'], d['cf_var_post']['act'], d['cf_var_post']['var']),
         (d['cf_var_post']['ann_plan'], d['cf_var_post']['ann_proj'], d['cf_var_post']['ann_var']))
+    body += rc_card_kpi("Total Credit Line Borrowing",
+        (d['credit_line']['plan'], d['credit_line']['act'], d['credit_line']['var']),
+        (d['credit_line']['ann_plan'], d['credit_line']['ann_proj'], d['credit_line']['ann_var']),
+        desc="The gap between the two cards above — drawn against the line of credit, not repaid.")
 
     cf_surplus = d['cf_var_pre']['act']
     cf_cls = 'pos' if cf_surplus >= 0 else 'neg'
@@ -1398,6 +1525,32 @@ def build_cashflow_panel(d):
         '<div class="rc-headrow"><div class="rc-name">Cash In vs. Cash Out — Cumulative by Week</div></div>'
         '<div class="rc-subhead ' + cf_cls + '">' + subhead + '</div>'
         '<div class="rc-chart chart-wrap" style="height:220px;margin-top:10px"><canvas id="cfChart"></canvas></div>'
+        '</div>\n'
+    )
+
+    body += rc_divider("Credit Line")
+    loc_status = d.get('loc_status')
+    if loc_status:
+        loc_desc = ('As of ' + loc_status['month'].title() + " 2026's Borrowing Certificate: "
+                    + fk(loc_status['balance']) + ' outstanding. ' + loc_status['status'])
+    else:
+        loc_desc = None
+    body += rc_trend_chart('chart-loc-balance', 'Line of Credit Balance — Monthly', desc=loc_desc)
+
+    n_elapsed = d['loc_n_elapsed']
+    year_pay = sum(m['paydown'] for m in d['loc_plan_monthly'])
+    eoy = d['loc_plan_monthly'][-1]['eom']
+    peak = max(m['eom'] for m in d['loc_plan_monthly'])
+    paydown_desc = ('The plan (fixed at the start of the year, not updated since) calls for ' + fk(year_pay) +
+                     ' paid down in the back half of the year, bringing the balance from a ' + fk(peak) +
+                     ' peak down to ' + fk(eoy) + ' by Dec 31' +
+                     ((' — ' + str(12 - n_elapsed) + ' months of that still ahead of us.')
+                      if n_elapsed < 12 else '.'))
+    body += (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">2026 Paydown Plan</div></div>'
+        '<div class="rc-subhead">' + paydown_desc + '</div>'
+        + build_loc_plan_table(d) +
         '</div>\n'
     )
 
