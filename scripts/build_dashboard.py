@@ -602,6 +602,75 @@ def read_all():
     d['cf_weekly']   = cf_weekly
     d['cf_forecast'] = cf_forecast
 
+    # ── Bank Position & Weekly Reconciliation (Cash Flow - Weekly / Bank Balance) ──
+    # Added once actual bank activity started getting tracked directly: "Cash
+    # Flow - Weekly" is a straight pull of Xero's General Ledger Report --
+    # every real credit/debit across both bank accounts (Columbia + BOA) for
+    # the week, no plan-vs-channel modeling involved. "Bank Balance" is the
+    # two accounts' actual recorded starting/ending balances, independently
+    # entered from online banking. Because these come from two different
+    # sources, "prior week's actual balance + this week's true cash in - true
+    # cash out" should equal this week's recorded actual balance -- any gap
+    # is a real unreconciled transaction or double-entry, not a modeling
+    # artifact, which is exactly why this is useful as an ongoing weekly
+    # check rather than just a one-time cleanup.
+    df_cfw = pd.read_excel(FP, sheet_name='Cash Flow - Weekly', engine='pyxlsb', header=None)
+    df_bb  = pd.read_excel(FP, sheet_name='Bank Balance',      engine='pyxlsb', header=None)
+
+    def cfw_row(label):
+        for _, row in df_cfw.iterrows():
+            if str(row[0]).strip() == label:
+                return row
+        return None
+    r_cin, r_cout, r_draw, r_pay = (cfw_row(l) for l in
+        ('Total Cash IN', 'Total Cash Out', 'Columbia CL Draw', 'Columbia CL Paydown'))
+
+    bb_2026 = df_bb[df_bb[0] == 2026]
+    bb_total_by_wk = {int(row[2]): float(row[8]) for _, row in bb_2026.iterrows() if pd.notna(row[8]) and row[8] != 0}
+    bb_accts_by_wk = {int(row[2]): dict(columbia=float(row[5]) if pd.notna(row[5]) else 0.0,
+                                         boa=float(row[6]) if pd.notna(row[6]) else 0.0,
+                                         ramp=float(row[7]) if pd.notna(row[7]) else 0.0)
+                      for _, row in bb_2026.iterrows() if pd.notna(row[8]) and row[8] != 0}
+    prior_year_row = df_bb[(df_bb[0] == 2025) & (df_bb[2] == 52)]
+    bb_prior_year_end = float(prior_year_row.iloc[0][8]) if len(prior_year_row) else None
+
+    bank_position = []
+    prev_end = bb_prior_year_end
+    if r_cin is not None and r_cout is not None and prev_end is not None:
+        for wk in range(1, 53):
+            cin  = float(r_cin[wk])  if pd.notna(r_cin[wk])  else None
+            cout = float(r_cout[wk]) if pd.notna(r_cout[wk]) else None
+            if cin is None or cout is None:
+                break  # no further weeks entered yet
+            draw = float(r_draw[wk]) if r_draw is not None and pd.notna(r_draw[wk]) else 0.0
+            pay  = float(r_pay[wk])  if r_pay  is not None and pd.notna(r_pay[wk])  else 0.0
+            computed_end = prev_end + cin - cout
+            actual_end = bb_total_by_wk.get(wk)
+            gap = (actual_end - computed_end) if actual_end is not None else None
+            bank_position.append(dict(wk=wk, start=prev_end, cash_in=cin, cash_out=cout,
+                                       cl_draw=draw, cl_paydown=pay, computed_end=computed_end,
+                                       actual_end=actual_end, gap=gap, accts=bb_accts_by_wk.get(wk)))
+            # Chain off the actual recorded balance when we have one, so a
+            # single week's gap doesn't compound into every week after it.
+            prev_end = actual_end if actual_end is not None else computed_end
+
+    d['bank_position']  = bank_position
+    d['bp_latest']       = bank_position[-1] if bank_position else None
+    d['bp_year_start']   = bb_prior_year_end
+    GAP_WATCH = 15000  # weekly reconciliation gap large enough to flag for follow-up
+    d['bp_gap_watch']    = GAP_WATCH
+    d['bp_flags']        = [bp for bp in bank_position if bp['gap'] is not None and abs(bp['gap']) > GAP_WATCH]
+    if bank_position:
+        d['bp_ytd'] = dict(
+            cash_in    = sum(bp['cash_in']    for bp in bank_position),
+            cash_out   = sum(bp['cash_out']   for bp in bank_position),
+            cl_draw    = sum(bp['cl_draw']    for bp in bank_position),
+            cl_paydown = sum(bp['cl_paydown'] for bp in bank_position),
+        )
+        d['bp_ytd']['net'] = d['bp_ytd']['cash_in'] - d['bp_ytd']['cash_out']
+    else:
+        d['bp_ytd'] = None
+
     # Credit line: monthly cadence (unlike the weekly cash schedule above),
     # from two different sources -- the bank's monthly Borrowing Certificate
     # (actual balance, submitted after the fact) for the 2025 and 2026
@@ -1514,6 +1583,99 @@ def build_cf_weekly_table(d):
         '</table></div>'
     )
 
+def bp_gap_cell(gap, watch):
+    """Colors a reconciliation gap: quiet (near-zero, normal rounding/timing
+    noise), ink (real but small), or watch (big enough that it's probably a
+    genuine unreconciled transaction or double-entry, not noise)."""
+    a = abs(gap)
+    color = 'var(--watch)' if a > watch else ('var(--ink)' if a > watch/3 else 'var(--ink)')
+    opacity = '' if a > watch else ';opacity:.6'
+    return '<td style="color:' + color + opacity + ';font-weight:' + ('700' if a > watch else '600') + '">' + vk(gap) + '</td>'
+
+def build_bank_reconciliation_table(d):
+    """Week by week: does 'prior actual balance + true cash in - true cash
+    out' land on this week's actually-recorded balance? The two sides come
+    from independently-maintained tabs (Xero's GL report vs. online-banking
+    balances), so a gap here is a real signal -- an unreconciled transaction
+    or a double-entry -- not a modeling artifact, and it's meant to be
+    checked every week as new figures are entered, not just once."""
+    watch = d['bp_gap_watch']
+    rows = ''
+    for bp in d['bank_position']:
+        has_actual = bp['actual_end'] is not None
+        rows += (
+            '<tr' + ('' if has_actual else ' style="opacity:.55"') + '>'
+            '<td style="text-align:left;font-family:var(--body)">Wk ' + str(bp['wk']) + '</td>'
+            '<td>' + fk(bp['start']) + '</td>'
+            '<td style="color:var(--good)">' + fk(bp['cash_in']) + '</td>'
+            '<td style="color:var(--watch)">' + fk(bp['cash_out']) + '</td>'
+            '<td>' + fk(bp['computed_end']) + '</td>'
+            '<td style="font-weight:600">' + (fk(bp['actual_end']) if has_actual else '—') + '</td>'
+            + (bp_gap_cell(bp['gap'], watch) if bp['gap'] is not None else '<td>—</td>')
+            + '</tr>\n'
+        )
+    return (
+        '<div class="rc-hl">'
+        '<table class="rc-hltable">'
+        '<colgroup><col class="rc-hl-col-name"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat">'
+        '<col class="rc-hl-col-stat"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat"></colgroup>'
+        '<thead><tr><th>Week</th><th>Start Bal.</th><th>Cash In</th><th>Cash Out</th>'
+        '<th>Computed End</th><th>Actual End</th><th>Gap</th></tr></thead>\n'
+        '<tbody>\n' + rows + '</tbody>\n'
+        '</table></div>'
+    )
+
+def build_bank_position_section(d):
+    """Ground-truth cash position, built from the actual bank ledger (Cash
+    Flow - Weekly / Bank Balance) rather than the plan-modeled Cash Flow -
+    Tracker below it -- see the read_all() comment for why the two tabs
+    cross-check each other. Returns '' if those tabs aren't populated yet
+    (e.g. a very early-year build), so an incomplete data entry doesn't
+    break the page."""
+    bp = d.get('bank_position')
+    if not bp:
+        return ''
+    latest = d['bp_latest']
+    ytd = d['bp_ytd']
+    current_balance = latest['actual_end'] if latest['actual_end'] is not None else latest['computed_end']
+    accts = latest.get('accts')
+    accts_sub = (('Columbia ' + fk(accts['columbia']) + ' · BOA ' + fk(accts['boa'])
+                  + (' · RAMP ' + fk(accts['ramp']) if accts['ramp'] else ''))
+                 if accts else None)
+
+    body = rc_divider("Cash Position — Actual (Bank Ledger)")
+    body += (
+        '<div class="rc-desc" style="grid-column:1 / -1;margin-bottom:2px">'
+        'Pulled straight from the bank ledger, not the plan below -- Xero\'s General Ledger Report for '
+        'true weekly cash in/out, cross-checked every week against the banks\' own recorded balances.'
+        '</div>\n'
+    )
+    body += rc_bignum_card('Starting Balance', fk(d['bp_year_start']), 'Jan 1, 2026 (carried in from Dec 2025)')
+    body += rc_bignum_card('True Cash In (YTD)', fk(ytd['cash_in']), 'All credits, both bank accounts — Wk 1–' + str(latest['wk']))
+    body += rc_bignum_card('True Cash Out (YTD)', fk(ytd['cash_out']), 'All debits, incl. credit-card payments & CL paydowns')
+    body += rc_bignum_card('Current Balance', fk(current_balance),
+                            'As of Week ' + str(latest['wk']) + (' (recorded)' if latest['actual_end'] is not None else ' (computed — not yet recorded)'),
+                            sub2=accts_sub, sub2_cls='')
+
+    n_flags = len(d['bp_flags'])
+    if n_flags:
+        recon_desc = (str(n_flags) + ' of ' + str(len(bp)) + ' weeks show a gap over ' + fk(d['bp_gap_watch']) +
+                      ' between the computed and recorded ending balance — worth a look next time the '
+                      'Accounting Manager reconciles the accounts.')
+        recon_cls = 'neg'
+    else:
+        recon_desc = 'Every week so far reconciles within ' + fk(d['bp_gap_watch']) + '.'
+        recon_cls = 'pos'
+    body += rc_divider("Weekly Bank Reconciliation")
+    body += (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Computed vs. Recorded Ending Balance</div></div>'
+        '<div class="rc-subhead ' + recon_cls + '">' + recon_desc + '</div>'
+        + build_bank_reconciliation_table(d) +
+        '</div>\n'
+    )
+    return body
+
 def build_loc_plan_table(d):
     """2026 monthly credit-line schedule from the original static plan:
     draws, paydowns, and resulting balance, Jan through Dec. Months already
@@ -1663,7 +1825,17 @@ def build_cashflow_panel(d):
     cf = d['cf']
     def p(k): return cf[k][-1] if cf[k] else 0
 
-    body = rc_card_kpi("Total Cash In",
+    body = build_bank_position_section(d)
+
+    body += rc_divider("Cash Flow vs. Plan (Cash Flow - Tracker)")
+    body += (
+        '<div class="rc-desc" style="grid-column:1 / -1;margin-bottom:2px">'
+        'Everything below models cash by channel/category against the original weekly plan -- useful for '
+        'seeing where collections and payments are running ahead or behind, but plan-based rather than a '
+        'direct read of the bank ledger above.'
+        '</div>\n'
+    )
+    body += rc_card_kpi("Total Cash In",
         (d['cash_in']['plan'], d['cash_in']['act'], d['cash_in']['var']),
         (d['cash_in']['ann_plan'], d['cash_in']['ann_proj'], d['cash_in']['ann_var']))
     body += rc_card_kpi("Total Cash Out",
