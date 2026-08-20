@@ -1625,6 +1625,119 @@ def build_bank_reconciliation_table(d):
         '</table></div>'
     )
 
+def bridge_row(label, amount, balance, bold=False, indent=False, amount_cls=''):
+    """One row of the Cash Bridge table. amount/balance are already-formatted
+    strings (or '' to leave the cell blank) -- callers pass vk()/fk() output
+    so the sign convention (running total vs. this line's delta) stays
+    explicit at the call site instead of being inferred here."""
+    label_style = 'padding-left:20px;opacity:.7' if indent else ''
+    weight = 'font-weight:700' if bold else ''
+    top = 'border-top:1.5px solid var(--ink)' if bold else ''
+    return (
+        '<tr style="' + top + '">'
+        '<td style="' + label_style + ';' + weight + '">' + label + '</td>'
+        '<td class="' + amount_cls + '" style="' + weight + '">' + amount + '</td>'
+        '<td style="' + weight + '">' + balance + '</td>'
+        '</tr>\n'
+    )
+
+def build_cash_bridge(d):
+    """The plain-English question this page exists to answer: starting from
+    cash in the bank today, what do we still expect in and out through Dec
+    31, and where does that leave the credit line? Everything here reuses
+    figures already computed elsewhere in read_all() -- Expected Cash In by
+    channel and Expected Cash Out by COGS/Labor/OpEx both come straight off
+    the 2026 Budget tab's own remaining-plan totals (ann_plan - cumulative
+    plan-to-date, the same actual+remaining-plan convention used throughout
+    this dashboard), not the Cash Flow - Tracker's payment-timing model --
+    that's a deliberate simplification so this one table reads as a single
+    formula, not a reconciliation of two different plans.
+
+    A/P - CNS and A/R are shown as memo lines only, not netted into the
+    total: A/P - CNS is already reflected in COGS's own remaining-plan
+    figure (see the Paydown Feasibility note on double-counting), and A/R
+    isn't yet tracked in a weekly, pullable form (it's presently only in
+    per-invoice attachments on the Ledger's BANK tab) -- both are flagged
+    here as open refinements rather than silently folded into a number
+    that would overstate precision."""
+    bp = d.get('bank_position')
+    if not bp:
+        return ''
+    latest = d['bp_latest']
+    cash_on_hand = latest['actual_end'] if latest['actual_end'] is not None else latest['computed_end']
+
+    cf = d['cf']
+    def p(k): return cf[k][-1] if cf[k] else 0
+    ann_plan = d['cf_ann_plan']
+    rem_whsl = ann_plan['w'] - p('proj_w')
+    rem_dtc  = ann_plan['d'] - p('proj_d')
+    rem_ink  = ann_plan['i'] - p('proj_i')
+    rem_cash_in = rem_whsl + rem_dtc + rem_ink
+
+    rem_cogs  = d['cogs']['ann_plan']  - d['cogs']['plan']
+    rem_labor = d['labor_total']['ann_plan'] - d['labor_total']['ytd_plan']
+    rem_opex  = d['opex']['ann_plan']  - d['opex']['plan']
+    rem_cash_out = rem_cogs + rem_labor + rem_opex
+
+    projected_pre_cl = cash_on_hand + rem_cash_in - rem_cash_out
+
+    n_elapsed = d['loc_n_elapsed']
+    remaining_months = d['loc_plan_monthly'][n_elapsed:]
+    rem_paydown = sum(m['paydown'] for m in remaining_months)
+    rem_draw    = sum(m['draw']    for m in remaining_months)
+    projected_final = projected_pre_cl - rem_paydown + rem_draw
+
+    rows = bridge_row('Cash on Hand (Today)', '—', fk(cash_on_hand), bold=True)
+    rows += bridge_row('Wholesale', fk(rem_whsl), '', indent=True)
+    rows += bridge_row('DTC', fk(rem_dtc), '', indent=True)
+    rows += bridge_row('INK', fk(rem_ink), '', indent=True)
+    rows += bridge_row('+ Expected Cash In (Remaining Weeks)', vk(rem_cash_in),
+                        fk(cash_on_hand + rem_cash_in), bold=True, amount_cls='pos')
+    rows += bridge_row('COGS', fk(rem_cogs), '', indent=True)
+    rows += bridge_row('Labor', fk(rem_labor), '', indent=True)
+    rows += bridge_row('OpEx', fk(rem_opex), '', indent=True)
+    rows += bridge_row('&minus; Expected Cash Out (Remaining Weeks)', vk(-rem_cash_out),
+                        fk(projected_pre_cl), bold=True, amount_cls='neg')
+    rows += bridge_row('= Projected Cash Before Credit Line Activity', '', fk(projected_pre_cl), bold=True)
+    if rem_draw:
+        rows += bridge_row('+ Planned Credit Line Draw (Remaining)', vk(rem_draw),
+                            fk(projected_pre_cl + rem_draw), bold=True, amount_cls='pos')
+    rows += bridge_row('&minus; Planned Credit Line Paydown (Remaining)', vk(-rem_paydown),
+                        fk(projected_final), bold=True, amount_cls='neg')
+    rows += bridge_row('= Projected Cash at Year-End', '', fk(projected_final), bold=True)
+
+    ap = d.get('ap_cns')
+    notes = ''
+    if ap:
+        notes += ('<div class="rc-desc" style="margin-top:10px">'
+                   '<strong>A/P &mdash; CNS (memo, not netted above):</strong> ' + fk(ap['total']) +
+                   ' outstanding to overseas vendors (' + fk(ap['overdue']) + ' past due, ' + fk(ap['upcoming']) +
+                   ' due before year end) &mdash; already reflected in COGS\'s remaining-plan figure above, '
+                   'so it isn\'t subtracted again here.</div>')
+    notes += ('<div class="rc-desc" style="margin-top:6px">'
+               '<strong>A/R &mdash; Brand &amp; INK (memo, not yet included):</strong> tracked weekly on the '
+               'Ledger\'s BANK tab (&lt;90 / 90+ days), but currently only as per-invoice attachments &mdash; '
+               'not yet a pullable weekly figure. Will be added here once tracked weekly in the XL sheet.</div>')
+
+    cls = 'pos' if projected_final >= 0 else 'neg'
+    subhead = ('Cash on hand today, plus everything the 2026 plan still expects in and out through Dec 31, '
+                'lands at ' + fk(projected_final) + ' after the planned credit-line paydown' +
+                (' and draw' if rem_draw else '') + '.')
+
+    return (
+        rc_divider("Cash Bridge to Year-End")
+        + '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Cash on Hand &rarr; Expected In/Out &rarr; Credit Line &rarr; Year-End</div></div>'
+        '<div class="rc-subhead ' + cls + '">' + subhead + '</div>'
+        '<div class="rc-hl"><table class="rc-hltable">'
+        '<colgroup><col style="width:56%"><col style="width:22%"><col style="width:22%"></colgroup>'
+        '<thead><tr><th>Line</th><th>Amount</th><th>Balance</th></tr></thead>'
+        '<tbody>' + rows + '</tbody>'
+        '</table></div>'
+        + notes +
+        '</div>\n'
+    )
+
 def build_bank_position_section(d):
     """Ground-truth cash position, built from the actual bank ledger (Cash
     Flow - Weekly / Bank Balance) rather than the plan-modeled Cash Flow -
@@ -1825,7 +1938,8 @@ def build_cashflow_panel(d):
     cf = d['cf']
     def p(k): return cf[k][-1] if cf[k] else 0
 
-    body = build_bank_position_section(d)
+    body = build_cash_bridge(d)
+    body += build_bank_position_section(d)
 
     body += rc_divider("Cash Flow vs. Plan (Cash Flow - Tracker)")
     body += (
