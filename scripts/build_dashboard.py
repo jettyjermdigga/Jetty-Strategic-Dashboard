@@ -614,10 +614,19 @@ def read_all():
     # is a real unreconciled transaction or double-entry, not a modeling
     # artifact, which is exactly why this is useful as an ongoing weekly
     # check rather than just a one-time cleanup.
-    df_cfw = pd.read_excel(FP, sheet_name='Cash Flow - Weekly', engine='pyxlsb', header=None)
-    df_bb  = pd.read_excel(FP, sheet_name='Bank Balance',      engine='pyxlsb', header=None)
+    # These two tabs have come and gone before (rebuilt from scratch, or lost
+    # entirely to an unsaved-sheet mishap) -- a missing sheet should degrade
+    # this section to empty, not take down the whole build.
+    try:
+        df_cfw = pd.read_excel(FP, sheet_name='Cash Flow - Weekly', engine='pyxlsb', header=None)
+        df_bb  = pd.read_excel(FP, sheet_name='Bank Balance',      engine='pyxlsb', header=None)
+    except ValueError as e:
+        print("Bank Position skipped, sheet not found:", e)
+        df_cfw = df_bb = None
 
     def cfw_row(label):
+        if df_cfw is None:
+            return None
         for _, row in df_cfw.iterrows():
             if str(row[0]).strip() == label:
                 return row
@@ -625,14 +634,17 @@ def read_all():
     r_cin, r_cout, r_draw, r_pay = (cfw_row(l) for l in
         ('Total Cash IN', 'Total Cash Out', 'Columbia CL Draw', 'Columbia CL Paydown'))
 
-    bb_2026 = df_bb[df_bb[0] == 2026]
-    bb_total_by_wk = {int(row[2]): float(row[8]) for _, row in bb_2026.iterrows() if pd.notna(row[8]) and row[8] != 0}
-    bb_accts_by_wk = {int(row[2]): dict(columbia=float(row[5]) if pd.notna(row[5]) else 0.0,
-                                         boa=float(row[6]) if pd.notna(row[6]) else 0.0,
-                                         ramp=float(row[7]) if pd.notna(row[7]) else 0.0)
-                      for _, row in bb_2026.iterrows() if pd.notna(row[8]) and row[8] != 0}
-    prior_year_row = df_bb[(df_bb[0] == 2025) & (df_bb[2] == 52)]
-    bb_prior_year_end = float(prior_year_row.iloc[0][8]) if len(prior_year_row) else None
+    if df_bb is not None:
+        bb_2026 = df_bb[df_bb[0] == 2026]
+        bb_total_by_wk = {int(row[2]): float(row[8]) for _, row in bb_2026.iterrows() if pd.notna(row[8]) and row[8] != 0}
+        bb_accts_by_wk = {int(row[2]): dict(columbia=float(row[5]) if pd.notna(row[5]) else 0.0,
+                                             boa=float(row[6]) if pd.notna(row[6]) else 0.0,
+                                             ramp=float(row[7]) if pd.notna(row[7]) else 0.0)
+                          for _, row in bb_2026.iterrows() if pd.notna(row[8]) and row[8] != 0}
+        prior_year_row = df_bb[(df_bb[0] == 2025) & (df_bb[2] == 52)]
+        bb_prior_year_end = float(prior_year_row.iloc[0][8]) if len(prior_year_row) else None
+    else:
+        bb_total_by_wk, bb_accts_by_wk, bb_prior_year_end = {}, {}, None
 
     bank_position = []
     prev_end = bb_prior_year_end
