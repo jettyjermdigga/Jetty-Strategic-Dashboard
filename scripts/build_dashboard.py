@@ -614,25 +614,40 @@ def read_all():
     # is a real unreconciled transaction or double-entry, not a modeling
     # artifact, which is exactly why this is useful as an ongoing weekly
     # check rather than just a one-time cleanup.
-    df_cfw = pd.read_excel(FP, sheet_name='Cash Flow - Weekly', engine='pyxlsb', header=None)
-    df_bb  = pd.read_excel(FP, sheet_name='Bank Balance',      engine='pyxlsb', header=None)
+    # These two tabs have come and gone before (rebuilt from scratch, or lost
+    # entirely to an unsaved-sheet mishap) -- a missing sheet should degrade
+    # this section to empty, not take down the whole build.
+    try:
+        df_cfw = pd.read_excel(FP, sheet_name='Cash Flow - Weekly', engine='pyxlsb', header=None)
+        df_bb  = pd.read_excel(FP, sheet_name='Bank Balance',      engine='pyxlsb', header=None)
+    except ValueError as e:
+        print("Bank Position skipped, sheet not found:", e)
+        df_cfw = df_bb = None
 
     def cfw_row(label):
+        # Case-insensitive: the sheet's row label has drifted between "Total
+        # Cash Out" and "Total Cash OUT" before, which silently zeroed out
+        # this whole section (r_cout came back None) without erroring.
+        if df_cfw is None:
+            return None
         for _, row in df_cfw.iterrows():
-            if str(row[0]).strip() == label:
+            if str(row[0]).strip().lower() == label.lower():
                 return row
         return None
     r_cin, r_cout, r_draw, r_pay = (cfw_row(l) for l in
         ('Total Cash IN', 'Total Cash Out', 'Columbia CL Draw', 'Columbia CL Paydown'))
 
-    bb_2026 = df_bb[df_bb[0] == 2026]
-    bb_total_by_wk = {int(row[2]): float(row[8]) for _, row in bb_2026.iterrows() if pd.notna(row[8]) and row[8] != 0}
-    bb_accts_by_wk = {int(row[2]): dict(columbia=float(row[5]) if pd.notna(row[5]) else 0.0,
-                                         boa=float(row[6]) if pd.notna(row[6]) else 0.0,
-                                         ramp=float(row[7]) if pd.notna(row[7]) else 0.0)
-                      for _, row in bb_2026.iterrows() if pd.notna(row[8]) and row[8] != 0}
-    prior_year_row = df_bb[(df_bb[0] == 2025) & (df_bb[2] == 52)]
-    bb_prior_year_end = float(prior_year_row.iloc[0][8]) if len(prior_year_row) else None
+    if df_bb is not None:
+        bb_2026 = df_bb[df_bb[0] == 2026]
+        bb_total_by_wk = {int(row[2]): float(row[8]) for _, row in bb_2026.iterrows() if pd.notna(row[8]) and row[8] != 0}
+        bb_accts_by_wk = {int(row[2]): dict(columbia=float(row[5]) if pd.notna(row[5]) else 0.0,
+                                             boa=float(row[6]) if pd.notna(row[6]) else 0.0,
+                                             ramp=float(row[7]) if pd.notna(row[7]) else 0.0)
+                          for _, row in bb_2026.iterrows() if pd.notna(row[8]) and row[8] != 0}
+        prior_year_row = df_bb[(df_bb[0] == 2025) & (df_bb[2] == 52)]
+        bb_prior_year_end = float(prior_year_row.iloc[0][8]) if len(prior_year_row) else None
+    else:
+        bb_total_by_wk, bb_accts_by_wk, bb_prior_year_end = {}, {}, None
 
     bank_position = []
     prev_end = bb_prior_year_end
@@ -670,6 +685,32 @@ def read_all():
         d['bp_ytd']['net'] = d['bp_ytd']['cash_in'] - d['bp_ytd']['cash_out']
     else:
         d['bp_ytd'] = None
+
+    # ── Accounts Receivable (AR tab) ────────────────────────────────────────
+    # Weekly aging, hand-entered from Xero's Accounts Receivable Aging report
+    # for both entities. Total (0-90 Days) per entity is real, already-
+    # invoiced money expected to convert to cash soon -- concrete in a way a
+    # pace extrapolation isn't, which is why the Cash Bridge Trend below
+    # pulls it in. A missing/rebuilt sheet degrades to no A/R signal rather
+    # than breaking the build, same convention as Bank Position above.
+    try:
+        df_ar = pd.read_excel(FP, sheet_name='AR', engine='pyxlsb', header=None)
+    except ValueError as e:
+        print("AR aging skipped, sheet not found:", e)
+        df_ar = None
+
+    ar_weekly = []
+    if df_ar is not None:
+        for _, row in df_ar[df_ar[0] == 2026].iterrows():
+            if not pd.notna(row[2]):
+                continue
+            brand_090 = float(row[10]) if pd.notna(row[10]) else 0.0
+            ink_090   = float(row[17]) if pd.notna(row[17]) else 0.0
+            if not brand_090 and not ink_090:
+                continue  # week not entered yet
+            ar_weekly.append(dict(wk=int(row[2]), brand_090=brand_090, ink_090=ink_090))
+    d['ar_weekly'] = ar_weekly
+    d['ar_latest'] = ar_weekly[-1] if ar_weekly else None
 
     # Credit line: monthly cadence (unlike the weekly cash schedule above),
     # from two different sources -- the bank's monthly Borrowing Certificate
@@ -1365,6 +1406,8 @@ def build_chart_js(d):
         + build_labor_chart_js(d)
         + build_summary_trend_charts_js(d)
         + build_creditline_chart_js(d)
+        + build_bp_gap_chart_js(d)
+        + build_cl_activity_chart_js(d)
         + (build_jrf_chart_js(d['jrf']) if d.get('jrf') else '')
     )
 
@@ -1408,6 +1451,53 @@ def build_summary_trend_charts_js(d):
             'window.__charts["' + chart_id + '"]=new Chart(el,{type:"line",data:data,options:sumTrendOpts()});})();\n'
         )
     return out
+
+def build_bp_gap_chart_js(d):
+    """Weekly reconciliation gap (computed vs. recorded ending balance) as a
+    bar chart -- bars past the watch threshold render in the watch color, so
+    a growing/shrinking drift pattern (or an isolated one-off) is visible at
+    a glance instead of scanning the full week-by-week table."""
+    bp = d.get('bank_position')
+    if not bp:
+        return ''
+    watch = d['bp_gap_watch']
+    labels = '[' + ','.join('"Wk ' + str(b['wk']) + '"' for b in bp) + ']'
+    gaps   = '[' + ','.join(('null' if b['gap'] is None else str(round(b['gap'], 2))) for b in bp) + ']'
+    colors = ('[' + ','.join('"' + ('#B4482F' if (b['gap'] is not None and abs(b['gap']) > watch) else '#B0B4B8') + '"'
+               for b in bp) + ']')
+    return (
+        '(function(){const el=document.getElementById("chart-bp-gap");if(!el)return;'
+        'new Chart(el,{type:"bar",data:{labels:' + labels + ',datasets:['
+        '{label:"Gap",data:' + gaps + ',backgroundColor:' + colors + ',borderRadius:2}'
+        ']},options:{responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>"Gap: "+fmtK(c.raw)}}},'
+        'scales:{x:{grid:{display:false},ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},'
+        'y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}'
+        '}});})();\n'
+    )
+
+def build_cl_activity_chart_js(d):
+    """Weekly Columbia CL Draw (up) / Paydown (down, shown negative) across
+    every week of bank-ledger data -- makes both the timing of each draw and
+    the absence (or presence) of paydown activity visually obvious, rather
+    than buried in the Weekly Bank Reconciliation table."""
+    bp = d.get('bank_position')
+    if not bp:
+        return ''
+    labels   = '[' + ','.join('"Wk ' + str(b['wk']) + '"' for b in bp) + ']'
+    draws    = js_arr([round(b['cl_draw'], 2) for b in bp])
+    paydowns = js_arr([round(-b['cl_paydown'], 2) for b in bp])
+    return (
+        '(function(){const el=document.getElementById("chart-cl-activity");if(!el)return;'
+        'new Chart(el,{type:"bar",data:{labels:' + labels + ',datasets:['
+        '{label:"Draw",data:' + draws + ',backgroundColor:"#2F7A5C",borderRadius:2},'
+        '{label:"Paydown",data:' + paydowns + ',backgroundColor:"#B4482F",borderRadius:2},'
+        ']},options:{responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:true,position:"top"},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(Math.abs(c.raw))}}},'
+        'scales:{x:{grid:{display:false},ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},'
+        'y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}'
+        '}});})();\n'
+    )
 
 def build_creditline_chart_js(d):
     """Monthly Line-of-Credit balance: 2025 Actual (certified monthly,
@@ -1673,14 +1763,14 @@ def build_cash_bridge(d):
           not a forecast -- it's subtracted the same way from both tracks,
           so the range shows whether either one can actually support it.
 
-    A/R (Brand & INK, <90 days) isn't in the Trend track yet -- it's
-    tracked weekly on the Ledger's BANK tab, but currently only as
-    per-invoice attachments, not a pullable figure. Once it's in the XL
-    sheet it belongs here narrowing the Wholesale/INK trend lines (it's
-    more concrete than a pace extrapolation), not as an addition on top of
-    On Order (On Order is pre-invoice backlog; A/R is post-invoice -- the
-    two are non-overlapping dollars, so summing them is safe once both
-    exist)."""
+    A/R (Brand & INK, <90 days -- the AR tab's own Total (0-90 Days)
+    columns, latest week entered) adds onto both trend lines: combined
+    with the On Order backlog for Wholesale, and combined with the pace
+    extrapolation for INK (which has no On Order equivalent of its own).
+    On Order is pre-invoice (orders placed, not yet billed); A/R is
+    post-invoice (already billed, awaiting collection) -- non-overlapping
+    dollars, so summing them is safe. Falls back to $0 for both if the AR
+    tab isn't populated for this build."""
     bp = d.get('bank_position')
     if not bp:
         return ''
@@ -1704,10 +1794,14 @@ def build_cash_bridge(d):
     rem_ink_plan  = ann_plan['i'] - p('proj_i')
     rem_in_plan   = rem_whsl_plan + rem_dtc_plan + rem_ink_plan
 
+    ar = d.get('ar_latest')
+    ar_brand_090 = ar['brand_090'] if ar else 0.0
+    ar_ink_090   = ar['ink_090']   if ar else 0.0
+
     on_order_backlog = d['on_order']['h1'] + d['on_order']['h2']
-    rem_whsl_trend = on_order_backlog
+    rem_whsl_trend = on_order_backlog + ar_brand_090
     rem_dtc_trend  = pace('cin_d')
-    rem_ink_trend  = pace('cin_i')
+    rem_ink_trend  = pace('cin_i') + ar_ink_090
     rem_in_trend   = rem_whsl_trend + rem_dtc_trend + rem_ink_trend
 
     rem_cogs_plan  = d['cogs']['ann_plan']  - d['cogs']['plan']
@@ -1756,7 +1850,8 @@ def build_cash_bridge(d):
 
     notes = (
         '<div class="rc-desc" style="margin-top:10px">'
-        '<strong>Trend &mdash; Wholesale</strong> is the known On Order backlog only (' + fk(on_order_backlog) +
+        '<strong>Trend &mdash; Wholesale</strong> is the On Order backlog (' + fk(on_order_backlog) +
+        ') plus Brand A/R &lt;90 Days (' + fk(ar_brand_090) + (', as of Week ' + str(ar['wk']) if ar else '') +
         ') &mdash; a conservative floor, not a forecast of new orders still to be booked and invoiced between '
         'now and Dec 31. The real number is likely higher; this deliberately doesn\'t guess by how much.</div>'
     )
@@ -1764,11 +1859,17 @@ def build_cash_bridge(d):
         notes += ('<div class="rc-desc" style="margin-top:10px">'
                    '<strong>Trend COGS &mdash; Brand</strong> is a pace extrapolation, not the live A/P - CNS '
                    'balance &mdash; no <code>AIRTABLE_API_KEY</code> configured for this build.</div>')
-    notes += ('<div class="rc-desc" style="margin-top:6px">'
-               '<strong>A/R &mdash; Brand &amp; INK (not yet in the Trend track):</strong> tracked weekly on the '
-               'Ledger\'s BANK tab (&lt;90 / 90+ days), but currently only as per-invoice attachments &mdash; '
-               'not yet a pullable weekly figure. Once it is, it narrows the Wholesale/INK trend lines above '
-               '(it\'s post-invoice, non-overlapping with the pre-invoice On Order backlog already included).</div>')
+    if ar:
+        notes += ('<div class="rc-desc" style="margin-top:6px">'
+                   '<strong>Trend &mdash; INK</strong> adds INK A/R &lt;90 Days (' + fk(ar_ink_090) +
+                   ', as of Week ' + str(ar['wk']) + ') on top of the pace extrapolation &mdash; already-'
+                   'invoiced money awaiting collection, not something the historical cash-in pace already '
+                   'captures.</div>')
+    else:
+        notes += ('<div class="rc-desc" style="margin-top:6px">'
+                   '<strong>A/R &mdash; Brand &amp; INK:</strong> the AR tab isn\'t populated for this build, so '
+                   'both trend lines above exclude it (Wholesale is On Order backlog only; INK is a pure pace '
+                   'extrapolation).</div>')
 
     lo, hi = (plan_final, trend_final) if plan_final <= trend_final else (trend_final, plan_final)
     cls = 'pos' if lo >= 0 else ('neg' if hi < 0 else '')
@@ -1838,6 +1939,7 @@ def build_bank_position_section(d):
         '<div class="rc-card" style="grid-column:1 / -1">'
         '<div class="rc-headrow"><div class="rc-name">Computed vs. Recorded Ending Balance</div></div>'
         '<div class="rc-subhead ' + recon_cls + '">' + recon_desc + '</div>'
+        '<div style="height:180px;margin:12px 0 16px"><canvas id="chart-bp-gap"></canvas></div>'
         + build_bank_reconciliation_table(d) +
         '</div>\n'
     )
@@ -2043,6 +2145,24 @@ def build_cashflow_panel(d):
     else:
         loc_desc = None
     body += rc_trend_chart('chart-loc-balance', 'Line of Credit Balance — Monthly', desc=loc_desc)
+
+    # Weekly draw/paydown activity, from the same bank-ledger data as the
+    # Weekly Bank Reconciliation above -- makes the timing of each draw (and
+    # any paydown activity, or its absence) visible at a glance instead of
+    # buried in that table.
+    if d.get('bank_position'):
+        bp_ytd = d['bp_ytd']
+        cl_desc = ('YTD: ' + fk(bp_ytd['cl_draw']) + ' drawn, ' +
+                   (fk(bp_ytd['cl_paydown']) + ' paid down' if bp_ytd['cl_paydown']
+                    else '$0 paid down so far') +
+                   ' — from the same weekly bank-ledger data as the reconciliation above.')
+        body += (
+            '<div class="rc-card" style="grid-column:1 / -1">'
+            '<div class="rc-headrow"><div class="rc-name">Weekly Credit Line Activity</div></div>'
+            '<div class="rc-desc">' + cl_desc + '</div>'
+            '<div style="height:200px;margin-top:10px"><canvas id="chart-cl-activity"></canvas></div>'
+            '</div>\n'
+        )
 
     n_elapsed = d['loc_n_elapsed']
     year_pay = sum(m['paydown'] for m in d['loc_plan_monthly'])
