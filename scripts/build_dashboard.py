@@ -625,10 +625,13 @@ def read_all():
         df_cfw = df_bb = None
 
     def cfw_row(label):
+        # Case-insensitive: the sheet's row label has drifted between "Total
+        # Cash Out" and "Total Cash OUT" before, which silently zeroed out
+        # this whole section (r_cout came back None) without erroring.
         if df_cfw is None:
             return None
         for _, row in df_cfw.iterrows():
-            if str(row[0]).strip() == label:
+            if str(row[0]).strip().lower() == label.lower():
                 return row
         return None
     r_cin, r_cout, r_draw, r_pay = (cfw_row(l) for l in
