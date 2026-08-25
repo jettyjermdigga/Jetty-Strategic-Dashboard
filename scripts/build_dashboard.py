@@ -13,6 +13,16 @@ FP_JRF = "data/jrf_budget.xlsx"
 # base -- real vendor debt that hasn't hit the Cash Flow - Tracker's cash-out
 # actuals yet (it only shows up there once actually paid), so it's the piece
 # missing from a pure spreadsheet-based cash projection.
+#
+# KNOWN GAP (2026-08-24): this table only covers CNS vendors. It does not
+# include key blank-goods vendors (S&S Activewear, SanMar, As Colour, etc.)
+# -- real COGS - Brand cash-out, confirmed showing up week after week in the
+# Xero GL exports -- so "live A/P" here understates true outstanding
+# COGS - Brand payables, not overstates. Flagged by Jeremy: COGS needs a
+# better forecast overall, since payment *timing* (not just PO/invoice
+# amount) is what actually drives near-term cash out. Not solved yet --
+# needs either a second A/P source for blank-goods vendors or a
+# timing-aware model, not just a bigger balance to swap in.
 AIRTABLE_API = "https://api.airtable.com/v0"
 AIRTABLE_LEDGER_BASE = "appW8jAfERj3iBzqt"  # Ledger 💰
 AP_CNS_TABLE = "tblC9gQD9rrRbVtno"
@@ -1673,6 +1683,22 @@ def build_cf_weekly_table(d):
         '</table></div>'
     )
 
+def remaining_plan_totals(d):
+    """Total remaining-weeks plan for cash in (Wholesale+DTC+INK) and cash
+    out (COGS-Brand+COGS-INK+Other+Labor+OpEx), from Cash Flow - Tracker's
+    own category columns -- the same 'actual + what's still budgeted'
+    convention used everywhere else, just summed across categories rather
+    than kept separate (see build_cash_bridge for the per-category version).
+    Shared so the Cash Flow vs. Plan KPI cards and the Cash Bridge agree on
+    what's still expected before Dec 31."""
+    cf = d['cf']
+    def p(k): return cf[k][-1] if cf[k] else 0
+    ann_plan = d['cf_ann_plan']
+    rem_in  = (ann_plan['w']  - p('proj_w'))  + (ann_plan['d'] - p('proj_d')) + (ann_plan['i'] - p('proj_i'))
+    rem_out = (ann_plan['b']  - p('proj_b'))  + (ann_plan['i2'] - p('proj_i2')) + (ann_plan['o'] - p('proj_o')) \
+            + (ann_plan['l']  - p('proj_l'))  + (ann_plan['e']  - p('proj_e'))
+    return rem_in, rem_out
+
 def bp_gap_cell(gap, watch):
     """Colors a reconciliation gap: quiet (near-zero, normal rounding/timing
     noise), ink (real but small), or watch (big enough that it's probably a
@@ -2057,7 +2083,12 @@ def build_paydown_feasibility(d):
              ' due before year end, as of ' + ap['as_of'] + ') instead of the plan’s own COGS - Brand '
              'assumption, to avoid double-counting the same dollars. The trend estimate only extrapolates '
              'genuine pace (Cash In + the other cost categories) -- not the COGS - Brand variance, which is '
-             'a payment-timing artifact, not real performance.')
+             'a payment-timing artifact, not real performance.'
+             '<br><br><strong>Known gap:</strong> A/P - CNS only covers CNS vendors, not blank-goods vendors '
+             '(S&amp;S Activewear, SanMar, As Colour, etc.) -- so the figure above understates true '
+             'outstanding COGS - Brand payables, not overstates. COGS still needs a better forecast overall: '
+             'payment timing, not just PO/invoice amount, is what actually drives near-term cash out. Not '
+             'solved yet.')
 
     return (
         '<div class="rc-card" style="grid-column:1 / -1">'
@@ -2100,32 +2131,84 @@ def build_cashflow_panel(d):
     body += rc_divider("Cash Flow vs. Plan (Cash Flow - Tracker)")
     body += (
         '<div class="rc-desc" style="grid-column:1 / -1;margin-bottom:2px">'
-        'Everything below models cash by channel/category against the original weekly plan -- useful for '
-        'seeing where collections and payments are running ahead or behind, but plan-based rather than a '
-        'direct read of the bank ledger above.'
+        'Actual-to-date Cash In/Out below are the true bank-ledger totals (same source as Cash Position above), '
+        'not Cash Flow - Tracker\'s own category actuals -- a bank statement has no channel/category breakdown, '
+        'so those categories are used only to build the remaining-weeks plan/trend forecast (same figures the '
+        'Cash Bridge above uses).'
         '</div>\n'
     )
-    body += rc_card_kpi("Total Cash In",
-        (d['cash_in']['plan'], d['cash_in']['act'], d['cash_in']['var']),
-        (d['cash_in']['ann_plan'], d['cash_in']['ann_proj'], d['cash_in']['ann_var']))
-    body += rc_card_kpi("Total Cash Out",
-        (d['cash_out']['plan'], d['cash_out']['act'], d['cash_out']['var']),
-        (d['cash_out']['ann_plan'], d['cash_out']['ann_proj'], d['cash_out']['ann_var']))
-    body += rc_card_kpi("Net Cash Flow (Before Borrowing)",
-        (d['cf_var_pre']['plan'], d['cf_var_pre']['act'], d['cf_var_pre']['var']),
-        (d['cf_var_pre']['ann_plan'], d['cf_var_pre']['ann_proj'], d['cf_var_pre']['ann_var']))
-    body += rc_card_kpi("Net Cash Flow (After Borrowing)",
-        (d['cf_var_post']['plan'], d['cf_var_post']['act'], d['cf_var_post']['var']),
-        (d['cf_var_post']['ann_plan'], d['cf_var_post']['ann_proj'], d['cf_var_post']['ann_var']))
-    body += rc_card_kpi("Total Credit Line Borrowing",
-        (d['credit_line']['plan'], d['credit_line']['act'], d['credit_line']['var']),
-        (d['credit_line']['ann_plan'], d['credit_line']['ann_proj'], d['credit_line']['ann_var']),
-        desc="The gap between the two cards above — drawn against the line of credit, not repaid.")
 
-    cf_surplus = d['cf_var_pre']['act']
+    bp_ytd = d.get('bp_ytd')
+    if not bp_ytd:
+        body += ('<div class="rc-desc" style="grid-column:1 / -1">Bank ledger not populated for this build -- '
+                  'see Cash Position above.</div>\n')
+        return body
+
+    rem_in_plan, rem_out_plan = remaining_plan_totals(d)
+    # Bank-ledger totals include Credit Line draws/paydowns as ordinary
+    # credits/debits (a draw is a real "Receive Money" transaction) -- back
+    # those out to get pure operating collections/spend, so "Cash In"/"Cash
+    # Out" read as the business's own performance, not inflated or deflated
+    # by financing activity.
+    op_cash_in  = bp_ytd['cash_in']  - bp_ytd['cl_draw']
+    op_cash_out = bp_ytd['cash_out'] - bp_ytd['cl_paydown']
+    cash_in_ann_proj  = op_cash_in  + rem_in_plan
+    cash_out_ann_proj = op_cash_out + rem_out_plan
+
+    before_act      = op_cash_in - op_cash_out
+    before_ann_proj = cash_in_ann_proj - cash_out_ann_proj
+
+    n_elapsed = d['loc_n_elapsed']
+    elapsed_months   = d['loc_plan_monthly'][:n_elapsed]
+    remaining_months = d['loc_plan_monthly'][n_elapsed:]
+    rem_draw_plan    = sum(m['draw']    for m in remaining_months)
+    rem_paydown_plan = sum(m['paydown'] for m in remaining_months)
+    # d['credit_line']['plan'] (Summary row 79) turns out to be circular --
+    # B79 == C79 exactly (975,000 == 975,000), i.e. it's just echoing the
+    # actual, not an independent plan -- so pull a genuine plan-to-date from
+    # Cash Flow - Plan's own monthly draw/paydown schedule instead, same
+    # source the 2026 Paydown Plan table below already uses.
+    cl_plan_to_date = sum(m['draw'] - m['paydown'] for m in elapsed_months)
+    cl_full_year_plan = sum(m['draw'] - m['paydown'] for m in d['loc_plan_monthly'])
+    cl_net_act      = bp_ytd['cl_draw'] - bp_ytd['cl_paydown']
+    cl_net_ann_proj = cl_net_act + (rem_draw_plan - rem_paydown_plan)
+
+    # After Borrowing adds the draws back in and subtracts paydowns -- which
+    # nets out to exactly the raw bank-ledger movement (true cash in - true
+    # cash out), computed directly rather than via the roundabout algebra so
+    # it can't silently drift from Cash Position above if the pieces change.
+    after_act      = bp_ytd['cash_in'] - bp_ytd['cash_out']
+    after_ann_proj = before_ann_proj + cl_net_ann_proj
+
+    body += rc_card_kpi("Total Cash In",
+        (d['cash_in']['plan'], op_cash_in, op_cash_in - d['cash_in']['plan']),
+        (d['cash_in']['ann_plan'], cash_in_ann_proj, cash_in_ann_proj - d['cash_in']['ann_plan']),
+        desc="Operating collections only — Credit Line draws are broken out below, not counted as revenue.")
+    body += rc_card_kpi("Total Cash Out",
+        (d['cash_out']['plan'], op_cash_out, op_cash_out - d['cash_out']['plan']),
+        (d['cash_out']['ann_plan'], cash_out_ann_proj, cash_out_ann_proj - d['cash_out']['ann_plan']),
+        desc="Operating spend only — Credit Line paydowns are broken out below.")
+    body += rc_card_kpi("Net Cash Flow (Before Borrowing)",
+        (d['cf_var_pre']['plan'], before_act, before_act - d['cf_var_pre']['plan']),
+        (d['cf_var_pre']['ann_plan'], before_ann_proj, before_ann_proj - d['cf_var_pre']['ann_plan']),
+        desc=("The shortage that made borrowing necessary." if before_act < 0 else
+              "Cash In minus Cash Out, operating only — no shortage YTD."))
+    body += rc_card_kpi("Credit Line Activity",
+        (cl_plan_to_date, cl_net_act, cl_net_act - cl_plan_to_date),
+        (cl_full_year_plan, cl_net_ann_proj, cl_net_ann_proj - cl_full_year_plan),
+        desc=("Why we had to borrow: " + fk(bp_ytd['cl_draw']) + " drawn" +
+              (", " + fk(bp_ytd['cl_paydown']) + " paid down" if bp_ytd['cl_paydown'] else ", $0 paid down so far") +
+              " YTD, against the shortage above. Plan/Ann. Plan from Cash Flow - Plan's monthly schedule, "
+              "not the Summary tab's Credit Line row — that cell just echoes the actual, not an independent plan."))
+    body += rc_card_kpi("Net Cash Flow (After Borrowing)",
+        (d['cf_var_post']['plan'], after_act, after_act - d['cf_var_post']['plan']),
+        (d['cf_var_post']['ann_plan'], after_ann_proj, after_ann_proj - d['cf_var_post']['ann_plan']),
+        desc="Before Borrowing, plus draws, minus paydowns — matches Cash Position's true net movement above.")
+
+    cf_surplus = before_act
     cf_cls = 'pos' if cf_surplus >= 0 else 'neg'
-    subhead = ('Through Week ' + str(d['week']) + ', cumulative cash in is ' + fk(d['cash_in']['act']) +
-               ' vs. cumulative cash out of ' + fk(d['cash_out']['act']) + ' — a ' + fk(abs(cf_surplus)) +
+    subhead = ('Through Week ' + str(d['week']) + ', true cumulative cash in is ' + fk(op_cash_in) +
+               ' vs. cumulative cash out of ' + fk(op_cash_out) + ' — a ' + fk(abs(cf_surplus)) +
                (' surplus' if cf_surplus >= 0 else ' deficit') + ' before borrowing.')
 
     body += rc_divider("Cumulative Trend — Weekly")
