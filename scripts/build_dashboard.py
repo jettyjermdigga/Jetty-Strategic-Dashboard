@@ -79,6 +79,161 @@ def fetch_ap_cns():
     return dict(overdue=overdue, upcoming=upcoming, beyond_year=beyond_year,
                 total=overdue + upcoming, as_of=today.isoformat())
 
+# ── A/P - Key Vendors (live, from Airtable) ───────────────────────────────────
+# Domestic blank-goods vendors (S&S Activewear, SanMar, AS Colour, etc.),
+# purchased through Jetty INK, covering both Brand's own product and INK's
+# private-label/screen-printing work -- the domestic counterpart to A/P-CNS's
+# overseas Cut & Sew production. Two live sources, both in Airtable:
+#  - "Ledger" base's BANK table: a hand-entered weekly aging snapshot
+#    (Current/1-30/31-60/61-90/90+), split BRAND vs INK, back to Week 1 of
+#    2026 -- the long-run trend, but not broken out per vendor.
+#  - "Brand Production" base's WHSL PMT Tracker + Vendor List: live, per-PO
+#    detail (vendor, due date, INK $ / Brand $, paid status) plus each
+#    vendor's stated payment terms -- real-time per-vendor exposure and
+#    aging, computed here from today's date rather than Airtable's own live
+#    "Days Past Due" formula, so a build is reproducible against the data as
+#    of when it ran, not whenever someone happens to re-open the base.
+AIRTABLE_BANK_TABLE = "tbl4U2p2USUU9Qst6"
+AIRTABLE_BRAND_PROD_BASE = "applvN4vFAPqnDwK2"  # Brand Production
+VENDOR_LIST_TABLE = "tblOk4r79oc9Hsv4L"
+WHSL_PMT_TABLE = "tblIIvVAkqGOSeKrR"
+
+def _airtable_get_all(base, table, token, params):
+    """Paginate through every record for a table/filter, return the raw list."""
+    url = f"{AIRTABLE_API}/{base}/{table}"
+    headers = {"Authorization": f"Bearer {token}"}
+    records = []
+    offset = None
+    while True:
+        p = dict(params)
+        if offset:
+            p["offset"] = offset
+        r = requests.get(url, headers=headers, params=p, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        records.extend(data.get("records", []))
+        offset = data.get("offset")
+        if not offset:
+            break
+    return records
+
+def fetch_ap_key_vendors_weekly():
+    """Weekly A/P - Key Vendors aging (BRAND + INK, each broken out), from the
+    Ledger base's BANK table -- the same Current/1-30/31-60/61-90/90+
+    structure as the AR tab, just for domestic blank-goods payables instead
+    of receivables. Returns None on any failure so the build degrades
+    gracefully, same convention as fetch_ap_cns()."""
+    token = os.environ.get('AIRTABLE_API_KEY')
+    if not token:
+        return None
+    params = {
+        "filterByFormula": "AND(OR({Category}='BRAND',{Category}='INK'), {Year}='2026', {Total Aged A/P}>0)",
+        "fields[]": ["Week", "Category", "Current", "1-30 Days", "31-60 Days", "61-90 Days", "90+ Days"],
+        "pageSize": 100,
+    }
+    try:
+        records = _airtable_get_all(AIRTABLE_LEDGER_BASE, AIRTABLE_BANK_TABLE, token, params)
+    except requests.RequestException as e:
+        print("A/P - Key Vendors weekly fetch failed, skipping:", e)
+        return None
+
+    def empty_bucket():
+        return dict(current=0.0, d1_30=0.0, d31_60=0.0, d61_90=0.0, d90_plus=0.0, total=0.0)
+
+    by_week = {}
+    for rec in records:
+        f = rec.get("fields", {})
+        wk, cat = f.get("Week"), f.get("Category")
+        if wk is None or cat not in ("BRAND", "INK"):
+            continue
+        entry = by_week.setdefault(int(wk), dict(wk=int(wk), brand=None, ink=None))
+        bucket = dict(current=f.get("Current", 0) or 0, d1_30=f.get("1-30 Days", 0) or 0,
+                      d31_60=f.get("31-60 Days", 0) or 0, d61_90=f.get("61-90 Days", 0) or 0,
+                      d90_plus=f.get("90+ Days", 0) or 0)
+        bucket["total"] = sum(bucket.values())
+        entry["brand" if cat == "BRAND" else "ink"] = bucket
+    weekly = [by_week[wk] for wk in sorted(by_week)]
+    for w in weekly:
+        w["brand"] = w["brand"] or empty_bucket()
+        w["ink"]   = w["ink"]   or empty_bucket()
+        w["total"] = w["brand"]["total"] + w["ink"]["total"]
+    return weekly
+
+def fetch_ap_key_vendors_terms():
+    """Vendor name -> stated payment terms (e.g. 'NET30', 'NET60', 'Credit
+    Card'), from Brand Production's Vendor List. Returns {} on failure."""
+    token = os.environ.get('AIRTABLE_API_KEY')
+    if not token:
+        return {}
+    params = {"fields[]": ["Name", "Terms"], "pageSize": 100}
+    try:
+        records = _airtable_get_all(AIRTABLE_BRAND_PROD_BASE, VENDOR_LIST_TABLE, token, params)
+    except requests.RequestException as e:
+        print("Vendor List fetch failed, skipping terms:", e)
+        return {}
+    terms = {}
+    for rec in records:
+        f = rec.get("fields", {})
+        name = f.get("Name")
+        t = f.get("Terms") or []
+        if name:
+            terms[name] = t[0] if t else None
+    return terms
+
+def fetch_ap_key_vendors_open():
+    """Every currently-unpaid PO in WHSL PMT Tracker, grouped by vendor and
+    bucketed into Current/1-30/31-60/61-90/90+ from each PO's Due Date vs.
+    today -- live per-vendor aging, which the weekly BANK snapshot doesn't
+    give. Each PO's dollars are split into its INK vs. Brand-side share (the
+    table's own INK / Total BRAND A/P columns), so the totals returned here
+    can feed each side's own trend line without double-counting or guessing
+    a split. Returns None on failure."""
+    token = os.environ.get('AIRTABLE_API_KEY')
+    if not token:
+        return None
+    params = {
+        "filterByFormula": "NOT({Paid})",
+        "fields[]": ["Vendor", "Due Date", "INK", "Total BRAND A/P"],
+        "pageSize": 100,
+    }
+    try:
+        records = _airtable_get_all(AIRTABLE_BRAND_PROD_BASE, WHSL_PMT_TABLE, token, params)
+    except requests.RequestException as e:
+        print("WHSL PMT Tracker fetch failed, skipping open A/P detail:", e)
+        return None
+
+    today = datetime.date.today()
+    by_vendor = {}
+    for rec in records:
+        f = rec.get("fields", {})
+        vendor_list = f.get("Vendor") or []
+        vendor = vendor_list[0] if vendor_list else "(unknown)"
+        ink_amt = f.get("INK") or 0
+        brand_amt = f.get("Total BRAND A/P") or 0
+        amt = ink_amt + brand_amt
+        due_str = f.get("Due Date")
+        if not amt or not due_str:
+            continue
+        due = datetime.date.fromisoformat(due_str)
+        days_past = (today - due).days
+        v = by_vendor.setdefault(vendor, dict(vendor=vendor, current=0.0, d1_30=0.0, d31_60=0.0,
+                                               d61_90=0.0, d90_plus=0.0, ink_total=0.0, brand_total=0.0,
+                                               count=0, worst_days=days_past))
+        bucket_key = ('current' if days_past <= 0 else 'd1_30' if days_past <= 30 else
+                      'd31_60' if days_past <= 60 else 'd61_90' if days_past <= 90 else 'd90_plus')
+        v[bucket_key] += amt
+        v["ink_total"] += ink_amt
+        v["brand_total"] += brand_amt
+        v["count"] += 1
+        v["worst_days"] = max(v["worst_days"], days_past)
+    for v in by_vendor.values():
+        v["total"] = v["current"] + v["d1_30"] + v["d31_60"] + v["d61_90"] + v["d90_plus"]
+    vendors = sorted(by_vendor.values(), key=lambda v: -v["total"])
+    return dict(as_of=today.isoformat(), vendors=vendors,
+                total=sum(v["total"] for v in vendors),
+                ink_total=sum(v["ink_total"] for v in vendors),
+                brand_total=sum(v["brand_total"] for v in vendors))
+
 # ── Formatters ──────────────────────────────────────────────────────────────
 
 def html_escape(s):
@@ -774,6 +929,9 @@ def read_all():
                                 + loc_plan_bom[n_elapsed:12])
 
     d['ap_cns'] = fetch_ap_cns()
+    d['ap_key_vendors_weekly'] = fetch_ap_key_vendors_weekly()
+    d['ap_key_vendors_terms']  = fetch_ap_key_vendors_terms()
+    d['ap_key_vendors_open']   = fetch_ap_key_vendors_open()
 
     # Inventory. A missing weekly reading is not the same as zero on hand — it
     # just means nobody recorded a count that week. carry_forward fills those
@@ -1418,6 +1576,7 @@ def build_chart_js(d):
         + build_creditline_chart_js(d)
         + build_bp_gap_chart_js(d)
         + build_cl_activity_chart_js(d)
+        + build_ap_key_vendors_chart_js(d)
         + (build_jrf_chart_js(d['jrf']) if d.get('jrf') else '')
     )
 
@@ -1507,6 +1666,29 @@ def build_cl_activity_chart_js(d):
         'scales:{x:{grid:{display:false},ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},'
         'y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}'
         '}});})();\n'
+    )
+
+def build_ap_key_vendors_chart_js(d):
+    """Weekly A/P - Key Vendors aging trend, Brand vs. INK, from the BANK
+    table's hand-entered weekly snapshot (see fetch_ap_key_vendors_weekly)."""
+    kv_weekly = d.get('ap_key_vendors_weekly')
+    if not kv_weekly:
+        return ''
+    labels_js = '[' + ','.join('"Wk ' + str(w['wk']) + '"' for w in kv_weekly) + ']'
+    brand_arr = js_arr([round(w['brand']['total'], 2) for w in kv_weekly])
+    ink_arr   = js_arr([round(w['ink']['total'], 2) for w in kv_weekly])
+    return (
+        'function apKvOpts(){return {responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:true,position:"top"},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
+        'scales:{x:{type:"category",grid:{color:"#EDECED"}},y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};}\n'
+        'window.__chartData=window.__chartData||{};window.__chartOptsFn=window.__chartOptsFn||{};window.__charts=window.__charts||{};\n'
+        '(function(){const el=document.getElementById("chart-ap-kv-weekly");if(!el)return;'
+        'const data={labels:' + labels_js + ',datasets:['
+        '{label:"Brand",data:' + brand_arr + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3},'
+        '{label:"INK",data:' + ink_arr + ',borderColor:"#B4482F",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3},'
+        ']};'
+        'window.__chartData["chart-ap-kv-weekly"]=data;window.__chartOptsFn["chart-ap-kv-weekly"]=apKvOpts;'
+        'window.__charts["chart-ap-kv-weekly"]=new Chart(el,{type:"line",data:data,options:apKvOpts()});})();\n'
     )
 
 def build_creditline_chart_js(d):
@@ -1836,8 +2018,16 @@ def build_cash_bridge(d):
     rem_out_plan   = rem_cogs_plan + rem_labor_plan + rem_opex_plan
 
     ap = d.get('ap_cns')
-    cogs_brand_trend = ap['total'] if ap else pace('cout_b')
-    rem_cogs_trend  = cogs_brand_trend + pace('cout_i') + pace('cout_o')
+    kv = d.get('ap_key_vendors_open')
+    # Live-A/P swap, same convention as before: replace the pace estimate
+    # entirely when live data exists (summing pace + a live balance would
+    # double-count -- the pace already reflects historical payments to
+    # these same vendors), fall back to pace only when no live source is
+    # configured for that side at all.
+    cogs_brand_trend = ((ap['total'] if ap else 0.0) + (kv['brand_total'] if kv else 0.0)
+                         if (ap or kv) else pace('cout_b'))
+    cogs_ink_trend    = kv['ink_total'] if kv else pace('cout_i')
+    rem_cogs_trend  = cogs_brand_trend + cogs_ink_trend + pace('cout_o')
     rem_labor_trend = pace('cout_l')
     rem_opex_trend  = pace('cout_e')
     rem_out_trend   = rem_cogs_trend + rem_labor_trend + rem_opex_trend
@@ -1881,10 +2071,21 @@ def build_cash_bridge(d):
         ') &mdash; a conservative floor, not a forecast of new orders still to be booked and invoiced between '
         'now and Dec 31. The real number is likely higher; this deliberately doesn\'t guess by how much.</div>'
     )
-    if not ap:
+    if ap or kv:
+        notes += ('<div class="rc-desc" style="margin-top:6px">'
+                   '<strong>Trend COGS &mdash; Brand</strong> is the live combined A/P balance (' +
+                   fk(cogs_brand_trend) + ': ' + fk(ap['total'] if ap else 0.0) + ' A/P - CNS + ' +
+                   fk(kv['brand_total'] if kv else 0.0) + ' A/P - Key Vendors\' open Brand-side POs' +
+                   ('' if (ap and kv) else ', partial coverage only') +
+                   ') instead of a pace extrapolation.</div>')
+    else:
         notes += ('<div class="rc-desc" style="margin-top:10px">'
-                   '<strong>Trend COGS &mdash; Brand</strong> is a pace extrapolation, not the live A/P - CNS '
-                   'balance &mdash; no <code>AIRTABLE_API_KEY</code> configured for this build.</div>')
+                   '<strong>Trend COGS &mdash; Brand</strong> is a pace extrapolation, not live A/P balances '
+                   '&mdash; no <code>AIRTABLE_API_KEY</code> configured for this build.</div>')
+    if kv:
+        notes += ('<div class="rc-desc" style="margin-top:6px">'
+                   '<strong>Trend COGS &mdash; INK</strong> is A/P - Key Vendors\' currently-open INK-side POs (' +
+                   fk(kv['ink_total']) + ', as of ' + kv['as_of'] + ') instead of a pace extrapolation.</div>')
     if ar:
         notes += ('<div class="rc-desc" style="margin-top:6px">'
                    '<strong>Trend &mdash; INK</strong> adds INK A/R &lt;90 Days (' + fk(ar_ink_090) +
@@ -2026,16 +2227,23 @@ def build_paydown_feasibility(d):
     dollars: once via the trend, again via subtracting A/P.
 
     So instead of netting a generic cash-flow projection against A/P, this
-    swaps out the *plan's* COGS - Brand assumption for the *live* A/P - CNS
-    total (the more reliable, bottom-up source for exactly that one
-    category) and only trend-extrapolates the genuine signal in the
-    remaining categories (Cash In pace + Labor/OpEx/COGS-INK/Other
-    COGS+Shipping, where the combined variance is negligible either way).
-    Returns '' if the A/P feed isn't available (no Airtable token) or the
-    credit line hasn't been certified yet this year."""
+    swaps out the *plan's* COGS - Brand assumption for the *live* combined
+    A/P total -- A/P - CNS (overseas Cut & Sew) plus A/P - Key Vendors'
+    currently-open Brand-side POs (domestic blank goods) -- the more
+    reliable, bottom-up source for exactly that one category, and only
+    trend-extrapolates the genuine signal in the remaining categories (Cash
+    In pace + Labor/OpEx/COGS-INK/Other COGS+Shipping, where the combined
+    variance is negligible either way).
+    Returns '' if the A/P - CNS feed isn't available (no Airtable token) or
+    the credit line hasn't been certified yet this year. A/P - Key Vendors
+    is additive when available but not required -- CNS alone is still a
+    real improvement over the plan assumption."""
     ap = d.get('ap_cns')
     if not ap or not d['loc_n_elapsed']:
         return ''
+    kv = d.get('ap_key_vendors_open')
+    kv_brand = kv['brand_total'] if kv else 0.0
+    live_ap_brand = ap['total'] + kv_brand
 
     WK = d['week']
     remaining_weeks = 52 - WK
@@ -2046,8 +2254,8 @@ def build_paydown_feasibility(d):
     remaining_plan_cf = cf['ann_proj'] - cf['act']  # plan-based cash flow still to come, as everywhere else
     remaining_plan_cogs_brand = d['cf_ann_plan']['b'] - p('proj_b')  # what the plan still expects to pay
 
-    # Swap the plan's COGS - Brand assumption for the live ledger total.
-    remaining_plan_cf_adj = remaining_plan_cf + remaining_plan_cogs_brand - ap['total']
+    # Swap the plan's COGS - Brand assumption for the live combined A/P total.
+    remaining_plan_cf_adj = remaining_plan_cf + remaining_plan_cogs_brand - live_ap_brand
 
     # Trend-extrapolate only the genuine signal: Cash In pace plus the
     # other cost categories, excluding COGS - Brand (already handled above
@@ -2078,17 +2286,18 @@ def build_paydown_feasibility(d):
                    ' -- treat this as tight, not certain.')
 
     desc = ('Nets remaining-year Cash In against Labor/OpEx/COGS-INK/Other COGS+Shipping per the original '
-             'plan, and against COGS - Brand using the live A/P - CNS ledger (' + fk(ap['total']) +
-             ' outstanding -- ' + fk(ap['overdue']) + ' already past due, ' + fk(ap['upcoming']) +
-             ' due before year end, as of ' + ap['as_of'] + ') instead of the plan’s own COGS - Brand '
-             'assumption, to avoid double-counting the same dollars. The trend estimate only extrapolates '
-             'genuine pace (Cash In + the other cost categories) -- not the COGS - Brand variance, which is '
-             'a payment-timing artifact, not real performance.'
-             '<br><br><strong>Known gap:</strong> A/P - CNS only covers CNS vendors, not blank-goods vendors '
-             '(S&amp;S Activewear, SanMar, As Colour, etc.) -- so the figure above understates true '
-             'outstanding COGS - Brand payables, not overstates. COGS still needs a better forecast overall: '
-             'payment timing, not just PO/invoice amount, is what actually drives near-term cash out. Not '
-             'solved yet.')
+             'plan, and against COGS - Brand using the live combined A/P ledger (' + fk(live_ap_brand) +
+             ' outstanding -- ' + fk(ap['total']) + ' A/P - CNS, ' + fk(kv_brand) +
+             ' A/P - Key Vendors\' currently-open Brand-side POs' + (', as of ' + kv['as_of'] if kv else '') +
+             ') instead of the plan’s own COGS - Brand assumption, to avoid double-counting the same '
+             'dollars. The trend estimate only extrapolates genuine pace (Cash In + the other cost '
+             'categories) -- not the COGS - Brand variance, which is a payment-timing artifact, not real '
+             'performance.' +
+             ('' if kv else
+              '<br><br><strong>Partial coverage:</strong> A/P - Key Vendors (domestic blank-goods vendors -- '
+              'S&amp;S Activewear, SanMar, AS Colour, etc.) isn\'t available for this build (no Airtable '
+              'token), so the figure above is CNS-only and understates true outstanding COGS - Brand '
+              'payables.'))
 
     return (
         '<div class="rc-card" style="grid-column:1 / -1">'
@@ -2104,8 +2313,8 @@ def build_paydown_feasibility(d):
         + '</div></div>'
         '<div class="rc-box"><div class="rc-group-label">COGS &mdash; Brand: Plan vs. Live A/P</div><div class="rc-row">'
         + rc_stat('Plan Still Assumes', fk(remaining_plan_cogs_brand))
-        + rc_stat('Live A/P (CNS)', fk(ap['total']))
-        + rc_stat('Gap', vk(ap['total'] - remaining_plan_cogs_brand), 'neg' if ap['total'] > remaining_plan_cogs_brand else 'pos')
+        + rc_stat('Live A/P (CNS + Key Vendors)', fk(live_ap_brand))
+        + rc_stat('Gap', vk(live_ap_brand - remaining_plan_cogs_brand), 'neg' if live_ap_brand > remaining_plan_cogs_brand else 'pos')
         + '</div></div>'
         '</div>'
         '<div class="rc-boxrow">'
@@ -2120,6 +2329,100 @@ def build_paydown_feasibility(d):
         '</div>'
         '</div>\n'
     )
+
+def build_ap_key_vendors_table(d):
+    """Current open (unpaid) A/P - Key Vendors POs, by vendor -- terms,
+    aging bucket, and the most-overdue PO on file for that vendor, from
+    WHSL PMT Tracker's live per-PO detail."""
+    kv = d['ap_key_vendors_open']
+    terms = d.get('ap_key_vendors_terms') or {}
+    vendors = kv['vendors']
+    rows = ''
+    for v in vendors:
+        t = terms.get(v['vendor']) or '—'
+        worst = v['worst_days']
+        worst_lbl = (str(worst) + 'd overdue') if worst > 0 else 'not yet due'
+        rows += (
+            '<tr>'
+            '<td style="text-align:left;font-family:var(--body)">' + html_escape(v['vendor']) + '</td>'
+            '<td style="font-family:var(--body)">' + html_escape(t) + '</td>'
+            '<td>' + fk(v['current']) + '</td>'
+            '<td>' + fk(v['d1_30']) + '</td>'
+            '<td>' + fk(v['d31_60']) + '</td>'
+            '<td style="color:var(--watch)">' + fk(v['d61_90']) + '</td>'
+            '<td style="color:var(--watch);font-weight:700">' + fk(v['d90_plus']) + '</td>'
+            '<td style="font-weight:700">' + fk(v['total']) + '</td>'
+            '<td style="font-family:var(--body);opacity:.75">' + worst_lbl + '</td>'
+            '</tr>\n'
+        )
+    sums = {k: sum(v[k] for v in vendors) for k in ('current','d1_30','d31_60','d61_90','d90_plus','total')}
+    rows += (
+        '<tr style="border-top:1.5px solid var(--ink)">'
+        '<td style="text-align:left;font-family:var(--body);font-weight:700;border-bottom:none">All Vendors</td>'
+        '<td style="border-bottom:none"></td>'
+        + ''.join('<td style="font-weight:700;border-bottom:none">' + fk(sums[k]) + '</td>'
+                  for k in ('current','d1_30','d31_60','d61_90','d90_plus','total'))
+        + '<td style="border-bottom:none"></td>'
+        '</tr>\n'
+    )
+    return (
+        '<div class="rc-hl">'
+        '<table class="rc-hltable">'
+        '<colgroup><col class="rc-hl-col-name"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat">'
+        '<col class="rc-hl-col-stat"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat">'
+        '<col class="rc-hl-col-stat"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat"></colgroup>'
+        '<thead><tr><th>Vendor</th><th>Terms</th><th>Current</th><th>1-30</th><th>31-60</th>'
+        '<th>61-90</th><th>90+</th><th>Total</th><th>Worst PO</th></tr></thead>\n'
+        '<tbody>\n' + rows + '</tbody>\n'
+        '</table></div>'
+    )
+
+def build_ap_key_vendors_section(d):
+    """A/P - Key Vendors: domestic blank-goods payables (S&S Activewear,
+    SanMar, AS Colour, etc.), purchased through Jetty INK for both Brand's
+    own product and INK's private-label/screen-printing work -- the
+    domestic counterpart to A/P - CNS. Two live Airtable sources:
+    - Ledger base's BANK table: hand-entered weekly BRAND/INK aging trend.
+    - Brand Production base's WHSL PMT Tracker + Vendor List: live per-
+      vendor open-PO detail with payment terms.
+    Returns '' if neither source is available for this build."""
+    kv_weekly = d.get('ap_key_vendors_weekly')
+    kv_open   = d.get('ap_key_vendors_open')
+    if not kv_weekly and not kv_open:
+        return ''
+
+    body = rc_divider("A/P - Key Vendors (Domestic Blank Goods)")
+    body += (
+        '<div class="rc-desc" style="grid-column:1 / -1;margin-bottom:2px">'
+        'Domestic blank-goods vendors purchased through Jetty INK, serving both Brand\'s own product and '
+        'INK\'s private-label/screen-printing work &mdash; the domestic counterpart to A/P - CNS\'s overseas '
+        'Cut &amp; Sew production.'
+        '</div>\n'
+    )
+
+    if kv_open:
+        vendors = kv_open['vendors']
+        body += rc_bignum_card('Total Open (Unpaid)', fk(kv_open['total']),
+                                str(sum(v['count'] for v in vendors)) + ' open POs, as of ' + kv_open['as_of'])
+        body += rc_bignum_card('Brand-Side', fk(kv_open['brand_total']), 'Feeds Paydown Feasibility & Cash Bridge')
+        body += rc_bignum_card('INK-Side', fk(kv_open['ink_total']), 'Feeds Cash Bridge COGS - INK trend')
+        n_overdue = sum(1 for v in vendors if v['d1_30']+v['d31_60']+v['d61_90']+v['d90_plus'] > 0)
+        worst = max((v['worst_days'] for v in vendors), default=0)
+        flag_cls = 'neg' if worst > 60 else ('' if worst > 0 else 'pos')
+        body += rc_bignum_card('Most Overdue', (str(worst) + ' days') if worst > 0 else 'None overdue',
+                                str(n_overdue) + ' of ' + str(len(vendors)) + ' vendors carrying overdue POs',
+                                sub2_cls=flag_cls)
+
+    if kv_weekly:
+        body += rc_trend_chart('chart-ap-kv-weekly', 'Weekly Aging Trend — Brand + INK',
+                                desc='From the BANK table\'s hand-entered weekly snapshot, Week 1 through '
+                                     'Week ' + str(kv_weekly[-1]['wk']) + ' of 2026.')
+
+    if kv_open:
+        body += rc_divider("Open POs by Vendor")
+        body += ('<div class="rc-card" style="grid-column:1 / -1">' + build_ap_key_vendors_table(d) + '</div>\n')
+
+    return body
 
 def build_cashflow_panel(d):
     cf = d['cf']
@@ -2264,6 +2567,7 @@ def build_cashflow_panel(d):
         '</div>\n'
     )
     body += build_paydown_feasibility(d)
+    body += build_ap_key_vendors_section(d)
 
     ann_plan = d['cf_ann_plan']
     body += rc_divider("Cash In by Channel")
