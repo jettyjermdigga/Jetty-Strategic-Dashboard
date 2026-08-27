@@ -1983,7 +1983,13 @@ def build_cash_bridge(d):
     if not bp:
         return ''
     latest = d['bp_latest']
-    cash_on_hand = latest['actual_end'] if latest['actual_end'] is not None else latest['computed_end']
+    # Use the Xero-derived running balance (this week's true cash in/out
+    # chained forward), not the Bank Balance tab's recorded ending balance --
+    # that tab is a manually-transcribed snapshot, and general cash in/out
+    # from Xero is the more reliable source for the bridge's starting point.
+    # (The Weekly Bank Reconciliation section below still compares the two
+    # and flags any gap -- that check is unaffected by this choice.)
+    cash_on_hand = latest['computed_end']
 
     WK = d['week']
     remaining_weeks = 52 - WK
