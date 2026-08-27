@@ -1923,14 +1923,18 @@ def build_bank_reconciliation_table(d):
         '</table></div>'
     )
 
-def bridge_row(label, plan_amt, trend_amt, plan_bal, trend_bal,
+def bridge_row(label, plan_amt, trend_amt, plan_bal, trend_bal, note='',
                bold=False, indent=False, plan_cls='', trend_cls=''):
     """One row of the Cash Bridge table. Amounts/balances are already-
     formatted strings (or '' to leave a cell blank) -- callers pass
     vk()/fk() output so the sign convention (running total vs. this line's
     delta) stays explicit at the call site instead of being inferred here.
     Plan and Trend run as two parallel columns throughout, converging into
-    a range at the final row rather than a single blended number."""
+    a range at the final row rather than a single blended number. `note`
+    is a plain-English sentence naming where this row's numbers come from
+    and/or what formula was applied -- rendered in the Notes column so the
+    numeric columns can stay narrow instead of the source living only in
+    the prose block below the table."""
     label_style = 'padding-left:20px;opacity:.7' if indent else ''
     weight = 'font-weight:700' if bold else ''
     top = 'border-top:1.5px solid var(--ink)' if bold else ''
@@ -1941,55 +1945,39 @@ def bridge_row(label, plan_amt, trend_amt, plan_bal, trend_bal,
         '<td class="' + trend_cls + '" style="' + weight + '">' + trend_amt + '</td>'
         '<td style="' + weight + '">' + plan_bal + '</td>'
         '<td style="' + weight + '">' + trend_bal + '</td>'
+        '<td style="text-align:left;font-family:var(--body);font-weight:400;opacity:.75">' + note + '</td>'
         '</tr>\n'
     )
 
 def build_cash_bridge(d):
-    """The plain-English question this page exists to answer: starting from
-    cash in the bank today, what do we still expect in and out through Dec
-    31, and where does that leave the credit line? Two parallel tracks run
-    side by side rather than one blended number, because a single figure
-    hides how much of it is "if everything goes exactly to budget" vs.
-    "based on what's actually happening":
+    """Card #1 on the Cash Flow tab, laid out to Jeremy's own Sept 2026
+    sketch (a Cash_Flow.xlsx mockup): Cash on Hand -> Cash IN -> Cash OUT
+    -> Cash Surplus/Deficiency -> Credit Line context -> Projected Cash at
+    Year-End -> A/P Carryforward. Two parallel columns, Plan and Trend, run
+    throughout for every row that represents a forward-looking estimate --
+    Plan is the 2026 Budget's own remaining-plan figure, untouched; Trend
+    is grounded in live, bottom-up signals (on-order backlog, A/R, live
+    A/P balances) instead of the budget's assumed pace. Rows that are
+    already-known facts (Cash on Hand, the Cash IN/Credit Line actuals,
+    A/P Carryforward) aren't a Plan-vs-Trend estimate at all -- Plan is
+    left blank ('—') and only Trend carries the real figure.
 
-    - Plan: the 2026 Budget tab's own remaining-plan totals (ann_plan minus
-      cumulative plan-to-date, the same actual+remaining-plan convention
-      used throughout this dashboard) -- the original budget, untouched.
-    - Trend: grounded in live, bottom-up signals instead of the budget's
-      assumed pace --
-        * Wholesale cash in uses the On Order backlog (orders placed but
-          not yet invoiced, so not yet in A/R -- see the On Order sheet)
-          rather than a pace extrapolation, since a lumpy backlog wouldn't
-          show up in a flat continuation of past weekly pace anyway.
-        * INK and DTC cash in extrapolate current actual weekly pace
-          forward (no on-order/A/R equivalent exists for either yet).
-        * COGS - Brand cash out swaps in the live A/P - CNS balance (same
-          swap already proven out in Paydown Feasibility) instead of a
-          pace extrapolation; COGS - INK, Other COGS, Labor, and OpEx all
-          extrapolate current actual cash-out pace.
-        * The planned credit-line paydown schedule is a fixed commitment,
-          not a forecast -- it's subtracted the same way from both tracks,
-          so the range shows whether either one can actually support it.
-
-    A/R (Brand & INK, <90 days -- the AR tab's own Total (0-90 Days)
-    columns, latest week entered) adds onto both trend lines: combined
-    with the On Order backlog for Wholesale, and combined with the pace
-    extrapolation for INK (which has no On Order equivalent of its own).
-    On Order is pre-invoice (orders placed, not yet billed); A/R is
-    post-invoice (already billed, awaiting collection) -- non-overlapping
-    dollars, so summing them is safe. Falls back to $0 for both if the AR
-    tab isn't populated for this build."""
+    Only two rows actually move the running Balance columns: "Projected
+    Cash IN" and "Total Cash OUT (Projected)" -- both remaining-weeks
+    forecasts. Everything else under "Cash IN" and "Credit Line" is
+    already-happened, already-baked into Cash on Hand's bank balance, and
+    shown purely for context (so "why is the bank balance what it is" has
+    an answer on this same card) -- summing it again would double-count."""
     bp = d.get('bank_position')
     if not bp:
         return ''
     latest = d['bp_latest']
-    # Use the Xero-derived running balance (this week's true cash in/out
-    # chained forward), not the Bank Balance tab's recorded ending balance --
-    # that tab is a manually-transcribed snapshot, and general cash in/out
-    # from Xero is the more reliable source for the bridge's starting point.
-    # (The Weekly Bank Reconciliation section below still compares the two
-    # and flags any gap -- that check is unaffected by this choice.)
-    cash_on_hand = latest['computed_end']
+    # Per Jeremy's sketch: Cash on Hand comes from the Bank Balance tab's
+    # own recorded ending balance (an independently-entered snapshot),
+    # falling back to the Xero-derived running total only on a week that
+    # hasn't been recorded yet. (Weekly Bank Reconciliation below still
+    # compares the two and flags any gap.)
+    cash_on_hand = latest['actual_end'] if latest['actual_end'] is not None else latest['computed_end']
 
     WK = d['week']
     remaining_weeks = 52 - WK
@@ -2018,113 +2006,123 @@ def build_cash_bridge(d):
     rem_ink_trend  = pace('cin_i') + ar_ink_090
     rem_in_trend   = rem_whsl_trend + rem_dtc_trend + rem_ink_trend
 
+    bp_ytd = d.get('bp_ytd')
+    cash_in_ytd_act  = (bp_ytd['cash_in']  - bp_ytd['cl_draw'])    if bp_ytd else 0.0
+    cash_in_ytd_plan = d['cash_in']['plan']
+
     rem_cogs_plan  = d['cogs']['ann_plan']  - d['cogs']['plan']
     rem_labor_plan = d['labor_total']['ann_plan'] - d['labor_total']['ytd_plan']
     rem_opex_plan  = d['opex']['ann_plan']  - d['opex']['plan']
-    rem_out_plan   = rem_cogs_plan + rem_labor_plan + rem_opex_plan
 
     ap = d.get('ap_cns')
     kv = d.get('ap_key_vendors_open')
-    # Live-A/P swap, same convention as before: replace the pace estimate
-    # entirely when live data exists (summing pace + a live balance would
-    # double-count -- the pace already reflects historical payments to
-    # these same vendors), fall back to pace only when no live source is
-    # configured for that side at all.
-    cogs_brand_trend = ((ap['total'] if ap else 0.0) + (kv['brand_total'] if kv else 0.0)
-                         if (ap or kv) else pace('cout_b'))
-    cogs_ink_trend    = kv['ink_total'] if kv else pace('cout_i')
-    rem_cogs_trend  = cogs_brand_trend + cogs_ink_trend + pace('cout_o')
-    rem_labor_trend = pace('cout_l')
-    rem_opex_trend  = pace('cout_e')
-    rem_out_trend   = rem_cogs_trend + rem_labor_trend + rem_opex_trend
+    # Labor and OpEx have held close to plan all year (unlike Cash In or
+    # COGS timing), so their Trend column is the plan figure itself, not a
+    # pace extrapolation -- extrapolating pace for a category that isn't
+    # actually drifting just adds noise. COGS is split into its two live,
+    # vendor-specific sources -- A/P - CNS and A/P - Key Vendors -- each
+    # falling back to a pace extrapolation only if its own Airtable source
+    # isn't configured. The 2026 Budget doesn't split its COGS plan by
+    # vendor source, so the one Plan figure for both COGS rows combined
+    # lives on the CNS row; a small Other COGS + Shipping pace estimate
+    # (freight, etc. -- not tracked by vendor) is folded into that row's
+    # Trend too, so nothing is silently dropped from the total.
+    other_cogs_trend = pace('cout_o')
+    ap_cns_trend = (ap['total'] if ap else pace('cout_b')) + other_cogs_trend
+    ap_kv_trend  = (kv['brand_total'] + kv['ink_total']) if kv else pace('cout_i')
+    rem_labor_trend = rem_labor_plan
+    rem_opex_trend  = rem_opex_plan
+    rem_out_plan  = rem_cogs_plan + rem_labor_plan + rem_opex_plan
+    rem_out_trend = ap_cns_trend + ap_kv_trend + rem_labor_trend + rem_opex_trend
 
     plan_bal1  = cash_on_hand + rem_in_plan
     trend_bal1 = cash_on_hand + rem_in_trend
     plan_bal2  = plan_bal1  - rem_out_plan
     trend_bal2 = trend_bal1 - rem_out_trend
 
+    # Credit Line rows below are YTD-actual context only (already reflected
+    # in Cash on Hand's bank balance) -- they don't move the Balance
+    # columns. Plan-to-date comes from Cash Flow - Plan's own monthly
+    # schedule, elapsed months only, same source used elsewhere on this tab.
     n_elapsed = d['loc_n_elapsed']
-    remaining_months = d['loc_plan_monthly'][n_elapsed:]
-    rem_paydown = sum(m['paydown'] for m in remaining_months)
-    rem_draw    = sum(m['draw']    for m in remaining_months)
-    plan_final  = plan_bal2  - rem_paydown + rem_draw
-    trend_final = trend_bal2 - rem_paydown + rem_draw
+    elapsed_months = d['loc_plan_monthly'][:n_elapsed]
+    cl_draw_plan_to_date    = sum(m['draw']    for m in elapsed_months)
+    cl_paydown_plan_to_date = sum(m['paydown'] for m in elapsed_months)
+    cl_draw_act    = bp_ytd['cl_draw']    if bp_ytd else 0.0
+    cl_paydown_act = bp_ytd['cl_paydown'] if bp_ytd else 0.0
 
-    # Wholesale/DTC/INK sub-rows dropped -- their own channel breakdown
-    # already lives in "Cash In by Channel" further down the page, and
-    # repeating it here just to feed one aggregate number was noise, not
-    # signal. Cash In (Remaining Weeks) below still sums the same three
-    # figures (rem_whsl_/rem_dtc_/rem_ink_*), just doesn't itemize them.
-    rows = bridge_row('Cash on Hand (Today)', '—', '—', fk(cash_on_hand), fk(cash_on_hand), bold=True)
-    rows += bridge_row('+ Cash In (Remaining Weeks)', vk(rem_in_plan), vk(rem_in_trend),
-                        fk(plan_bal1), fk(trend_bal1), bold=True, plan_cls='pos', trend_cls='pos')
-    rows += bridge_row('COGS', fk(rem_cogs_plan), fk(rem_cogs_trend), '', '', indent=True)
-    rows += bridge_row('Labor', fk(rem_labor_plan), fk(rem_labor_trend), '', '', indent=True)
-    rows += bridge_row('OpEx', fk(rem_opex_plan), fk(rem_opex_trend), '', '', indent=True)
-    rows += bridge_row('&minus; Cash Out (Remaining Weeks)', vk(-rem_out_plan), vk(-rem_out_trend),
-                        fk(plan_bal2), fk(trend_bal2), bold=True, plan_cls='neg', trend_cls='neg')
-    rows += bridge_row('= Cash Before Credit Line Activity', '', '', fk(plan_bal2), fk(trend_bal2), bold=True)
-    if rem_draw:
-        rows += bridge_row('+ Planned Credit Line Draw (Remaining)', vk(rem_draw), vk(rem_draw),
-                            fk(plan_bal2 + rem_draw), fk(trend_bal2 + rem_draw),
-                            bold=True, plan_cls='pos', trend_cls='pos')
-    rows += bridge_row('&minus; Planned Credit Line Paydown (Remaining)', vk(-rem_paydown), vk(-rem_paydown),
-                        fk(plan_final), fk(trend_final), bold=True, plan_cls='neg', trend_cls='neg')
-    rows += bridge_row('= Projected Cash at Year-End', '', '', fk(plan_final), fk(trend_final), bold=True)
+    # A/P Carryforward is the end-all of every row above it: the two COGS -
+    # A/P rows above assume the *entire* live A/P balance gets paid within
+    # the remaining weeks, which is only realistic if there's actually cash
+    # (or credit line capacity, already reflected in Cash on Hand) to cover
+    # it. If Cash Surplus/Deficiency lands negative, that shortfall is the
+    # A/P that realistically doesn't get paid this year -- it rolls to next
+    # year instead of the company overdrawing. A positive balance means the
+    # model already has the cash to cover every open PO, so nothing carries.
+    ap_carry_plan  = max(0.0, -plan_bal2)
+    ap_carry_trend = max(0.0, -trend_bal2)
 
-    notes = (
-        '<div class="rc-desc" style="margin-top:10px">'
-        '<strong>Trend &mdash; Wholesale</strong> is the On Order backlog (' + fk(on_order_backlog) +
-        ') plus Brand A/R &lt;90 Days (' + fk(ar_brand_090) + (', as of Week ' + str(ar['wk']) if ar else '') +
-        ') &mdash; a conservative floor, not a forecast of new orders still to be booked and invoiced between '
-        'now and Dec 31. The real number is likely higher; this deliberately doesn\'t guess by how much.</div>'
-    )
-    if ap or kv:
-        notes += ('<div class="rc-desc" style="margin-top:6px">'
-                   '<strong>Trend COGS &mdash; Brand</strong> is the live combined A/P balance (' +
-                   fk(cogs_brand_trend) + ': ' + fk(ap['total'] if ap else 0.0) + ' A/P - CNS + ' +
-                   fk(kv['brand_total'] if kv else 0.0) + ' A/P - Key Vendors\' open Brand-side POs' +
-                   ('' if (ap and kv) else ', partial coverage only') +
-                   ') instead of a pace extrapolation.</div>')
-    else:
-        notes += ('<div class="rc-desc" style="margin-top:10px">'
-                   '<strong>Trend COGS &mdash; Brand</strong> is a pace extrapolation, not live A/P balances '
-                   '&mdash; no <code>AIRTABLE_API_KEY</code> configured for this build.</div>')
-    if kv:
-        notes += ('<div class="rc-desc" style="margin-top:6px">'
-                   '<strong>Trend COGS &mdash; INK</strong> is A/P - Key Vendors\' currently-open INK-side POs (' +
-                   fk(kv['ink_total']) + ', as of ' + kv['as_of'] + ') instead of a pace extrapolation.</div>')
-    if ar:
-        notes += ('<div class="rc-desc" style="margin-top:6px">'
-                   '<strong>Trend &mdash; INK</strong> adds INK A/R &lt;90 Days (' + fk(ar_ink_090) +
-                   ', as of Week ' + str(ar['wk']) + ') on top of the pace extrapolation &mdash; already-'
-                   'invoiced money awaiting collection, not something the historical cash-in pace already '
-                   'captures.</div>')
-    else:
-        notes += ('<div class="rc-desc" style="margin-top:6px">'
-                   '<strong>A/R &mdash; Brand &amp; INK:</strong> the AR tab isn\'t populated for this build, so '
-                   'both trend lines above exclude it (Wholesale is On Order backlog only; INK is a pure pace '
-                   'extrapolation).</div>')
+    rows = bridge_row('Cash on Hand', '—', '—', fk(cash_on_hand), fk(cash_on_hand),
+                       note="Cash on hand via Master Budget XL sheet (Bank Balance).", bold=True)
 
-    lo, hi = (plan_final, trend_final) if plan_final <= trend_final else (trend_final, plan_final)
-    cls = 'pos' if lo >= 0 else ('neg' if hi < 0 else '')
-    subhead = ('Cash on hand today, plus everything still expected in and out through Dec 31, lands '
-               'somewhere between ' + fk(lo) + ' and ' + fk(hi) + ' after the planned credit-line paydown' +
-               (' and draw' if rem_draw else '') + ', depending on whether the year plays out closer to plan '
-               'or to current trend.')
+    rows += bridge_row('Cash IN', '', '', '', '', note='', bold=True)
+    rows += bridge_row('Cash IN (Actual)', fk(cash_in_ytd_plan), fk(cash_in_ytd_act), '', '',
+                        note="Cash IN via Xero General Ledger (Weekly Cash IN/OUT) report.", indent=True)
+    rows += bridge_row('Projected Cash IN', vk(rem_in_plan), vk(rem_in_trend), fk(plan_bal1), fk(trend_bal1),
+                        note="Cash IN projected via plan and on order.",
+                        indent=True, plan_cls='pos', trend_cls='pos')
+    rows += bridge_row('Total Cash IN', fk(cash_in_ytd_plan + rem_in_plan), fk(cash_in_ytd_act + rem_in_trend),
+                        '', '', note='', bold=True)
+
+    rows += bridge_row('Cash OUT', '', '', '', '', note='', bold=True)
+    rows += bridge_row('COGS - A/P CNS', fk(rem_cogs_plan), fk(ap_cns_trend), '', '',
+                        note="A/P to overseas & 3rd-party vendors via Airtable, plus a pace estimate for "
+                             "Other COGS + Shipping. Plan is the full remaining COGS budget (not split by "
+                             "CNS vs. Key Vendors) — must adjust based on actual cash flow.", indent=True)
+    rows += bridge_row('COGS - A/P - Key Vendors', '—', fk(ap_kv_trend), '', '',
+                        note="A/P - Key Vendors are domestic-sourced blanks for both Brand & INK — must "
+                             "adjust based on vendor balances, terms, and leniency (leniency rules TBD, "
+                             "e.g. S&amp;S must be paid 90+ in any given week).", indent=True)
+    rows += bridge_row('Labor', fk(rem_labor_plan), fk(rem_labor_trend), '', '',
+                        note="Labor per plan.", indent=True)
+    rows += bridge_row('OpEx', fk(rem_opex_plan), fk(rem_opex_trend), '', '',
+                        note="OpEx per plan.", indent=True)
+    rows += bridge_row('Total Cash OUT (Projected)', vk(-rem_out_plan), vk(-rem_out_trend),
+                        fk(plan_bal2), fk(trend_bal2), note='', bold=True, plan_cls='neg', trend_cls='neg')
+
+    rows += bridge_row('Cash Surplus/Deficiency', '', '', fk(plan_bal2), fk(trend_bal2),
+                        note="Cash flow surplus/deficiency before borrowing.", bold=True)
+
+    rows += bridge_row('Credit Line Borrowing to Date', fk(cl_draw_plan_to_date), fk(cl_draw_act), '', '',
+                        note="Credit Line advances via Master Budget XL sheet (Cash Flow Weekly) — context "
+                             "only, already reflected in Cash on Hand above.", indent=True)
+    rows += bridge_row('Credit Line Paydown', fk(cl_paydown_plan_to_date), fk(cl_paydown_act), '', '',
+                        note="Credit Line paydowns via Master Budget XL sheet (Cash Flow Weekly) — context "
+                             "only, already reflected in Cash on Hand above.", indent=True)
+
+    rows += bridge_row('Projected Cash at Year-end', '', '', fk(plan_bal2), fk(trend_bal2),
+                        note="Equal to Cash Surplus/Deficiency above — Credit Line activity to date is "
+                             "already reflected in Cash on Hand, so it isn't subtracted twice.", bold=True)
+
+    rows += bridge_row('A/P Carryforward', fk(ap_carry_plan), fk(ap_carry_trend), '', '',
+                        note="Estimated unpaid A/P carried to next year — the shortfall, if any, once Cash "
+                             "Surplus/Deficiency runs negative: if there isn't enough cash to cover every "
+                             "open A/P - CNS / A/P - Key Vendors PO above, that gap is what doesn't get "
+                             "paid this year. Doesn't yet account for Credit Line headroom beyond what's "
+                             "already drawn.",
+                        indent=True)
 
     return (
         rc_divider("Cash Bridge to Year-End")
         + '<div class="rc-card" style="grid-column:1 / -1">'
-        '<div class="rc-headrow"><div class="rc-name">Cash on Hand &rarr; Expected In/Out &rarr; Credit Line &rarr; Year-End</div></div>'
-        '<div class="rc-subhead ' + cls + '">' + subhead + '</div>'
+        '<div class="rc-subhead pos">Updated as of Week ' + str(latest['wk']) + '</div>'
         '<div class="rc-hl"><table class="rc-hltable">'
-        '<colgroup><col style="width:36%"><col style="width:16%"><col style="width:16%">'
-        '<col style="width:16%"><col style="width:16%"></colgroup>'
-        '<thead><tr><th>Line</th><th>Plan</th><th>Trend</th><th>Bal. (Plan)</th><th>Bal. (Trend)</th></tr></thead>'
+        '<colgroup><col style="width:16%"><col style="width:9%"><col style="width:9%">'
+        '<col style="width:9%"><col style="width:9%"><col style="width:48%"></colgroup>'
+        '<thead><tr><th>Line</th><th>Plan</th><th>Trend</th><th>Balance (Plan)</th><th>Balance (Trend)</th>'
+        '<th style="text-align:left">Instructions/Notes</th></tr></thead>'
         '<tbody>' + rows + '</tbody>'
         '</table></div>'
-        + notes +
         '</div>\n'
     )
 
