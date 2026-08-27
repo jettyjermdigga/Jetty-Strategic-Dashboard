@@ -2050,16 +2050,18 @@ def build_cash_bridge(d):
     plan_final  = plan_bal2  - rem_paydown + rem_draw
     trend_final = trend_bal2 - rem_paydown + rem_draw
 
+    # Wholesale/DTC/INK sub-rows dropped -- their own channel breakdown
+    # already lives in "Cash In by Channel" further down the page, and
+    # repeating it here just to feed one aggregate number was noise, not
+    # signal. Cash In (Remaining Weeks) below still sums the same three
+    # figures (rem_whsl_/rem_dtc_/rem_ink_*), just doesn't itemize them.
     rows = bridge_row('Cash on Hand (Today)', '—', '—', fk(cash_on_hand), fk(cash_on_hand), bold=True)
-    rows += bridge_row('Wholesale', fk(rem_whsl_plan), fk(rem_whsl_trend), '', '', indent=True)
-    rows += bridge_row('DTC', fk(rem_dtc_plan), fk(rem_dtc_trend), '', '', indent=True)
-    rows += bridge_row('INK', fk(rem_ink_plan), fk(rem_ink_trend), '', '', indent=True)
-    rows += bridge_row('+ Expected Cash In (Remaining Weeks)', vk(rem_in_plan), vk(rem_in_trend),
+    rows += bridge_row('+ Cash In (Remaining Weeks)', vk(rem_in_plan), vk(rem_in_trend),
                         fk(plan_bal1), fk(trend_bal1), bold=True, plan_cls='pos', trend_cls='pos')
     rows += bridge_row('COGS', fk(rem_cogs_plan), fk(rem_cogs_trend), '', '', indent=True)
     rows += bridge_row('Labor', fk(rem_labor_plan), fk(rem_labor_trend), '', '', indent=True)
     rows += bridge_row('OpEx', fk(rem_opex_plan), fk(rem_opex_trend), '', '', indent=True)
-    rows += bridge_row('&minus; Expected Cash Out (Remaining Weeks)', vk(-rem_out_plan), vk(-rem_out_trend),
+    rows += bridge_row('&minus; Cash Out (Remaining Weeks)', vk(-rem_out_plan), vk(-rem_out_trend),
                         fk(plan_bal2), fk(trend_bal2), bold=True, plan_cls='neg', trend_cls='neg')
     rows += bridge_row('= Cash Before Credit Line Activity', '', '', fk(plan_bal2), fk(trend_bal2), bold=True)
     if rem_draw:
