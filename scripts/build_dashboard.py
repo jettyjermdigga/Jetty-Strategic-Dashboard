@@ -1923,14 +1923,18 @@ def build_bank_reconciliation_table(d):
         '</table></div>'
     )
 
-def bridge_row(label, plan_amt, trend_amt, plan_bal, trend_bal,
+def bridge_row(label, plan_amt, trend_amt, plan_bal, trend_bal, note='',
                bold=False, indent=False, plan_cls='', trend_cls=''):
     """One row of the Cash Bridge table. Amounts/balances are already-
     formatted strings (or '' to leave a cell blank) -- callers pass
     vk()/fk() output so the sign convention (running total vs. this line's
     delta) stays explicit at the call site instead of being inferred here.
     Plan and Trend run as two parallel columns throughout, converging into
-    a range at the final row rather than a single blended number."""
+    a range at the final row rather than a single blended number. `note`
+    is a plain-English sentence naming where this row's numbers come from
+    and/or what formula was applied -- rendered in the Notes column so the
+    numeric columns can stay narrow instead of the source living only in
+    the prose block below the table."""
     label_style = 'padding-left:20px;opacity:.7' if indent else ''
     weight = 'font-weight:700' if bold else ''
     top = 'border-top:1.5px solid var(--ink)' if bold else ''
@@ -1941,6 +1945,7 @@ def bridge_row(label, plan_amt, trend_amt, plan_bal, trend_bal,
         '<td class="' + trend_cls + '" style="' + weight + '">' + trend_amt + '</td>'
         '<td style="' + weight + '">' + plan_bal + '</td>'
         '<td style="' + weight + '">' + trend_bal + '</td>'
+        '<td style="text-align:left;font-family:var(--body);font-weight:400;opacity:.75">' + note + '</td>'
         '</tr>\n'
     )
 
@@ -2055,22 +2060,39 @@ def build_cash_bridge(d):
     # repeating it here just to feed one aggregate number was noise, not
     # signal. Cash In (Remaining Weeks) below still sums the same three
     # figures (rem_whsl_/rem_dtc_/rem_ink_*), just doesn't itemize them.
-    rows = bridge_row('Cash on Hand (Today)', '—', '—', fk(cash_on_hand), fk(cash_on_hand), bold=True)
+    rows = bridge_row('Cash on Hand (Today)', '—', '—', fk(cash_on_hand), fk(cash_on_hand),
+                       note="Latest week's Xero-derived running balance (Cash Flow - Weekly).", bold=True)
     rows += bridge_row('+ Cash In (Remaining Weeks)', vk(rem_in_plan), vk(rem_in_trend),
-                        fk(plan_bal1), fk(trend_bal1), bold=True, plan_cls='pos', trend_cls='pos')
-    rows += bridge_row('COGS', fk(rem_cogs_plan), fk(rem_cogs_trend), '', '', indent=True)
-    rows += bridge_row('Labor', fk(rem_labor_plan), fk(rem_labor_trend), '', '', indent=True)
-    rows += bridge_row('OpEx', fk(rem_opex_plan), fk(rem_opex_trend), '', '', indent=True)
+                        fk(plan_bal1), fk(trend_bal1),
+                        note="Plan: 2026 Budget's remaining Wholesale + DTC + INK. Trend: On Order + A/R "
+                             "(Wholesale), pace (DTC), pace + A/R (INK).",
+                        bold=True, plan_cls='pos', trend_cls='pos')
+    rows += bridge_row('COGS', fk(rem_cogs_plan), fk(rem_cogs_trend), '', '',
+                        note="Plan: 2026 Budget's remaining COGS. Trend: live A/P — CNS + Key Vendors — "
+                             "where available, else pace.", indent=True)
+    rows += bridge_row('Labor', fk(rem_labor_plan), fk(rem_labor_trend), '', '',
+                        note="Both tracks extrapolate current actual weekly pace forward.", indent=True)
+    rows += bridge_row('OpEx', fk(rem_opex_plan), fk(rem_opex_trend), '', '',
+                        note="Both tracks extrapolate current actual weekly pace forward.", indent=True)
     rows += bridge_row('&minus; Cash Out (Remaining Weeks)', vk(-rem_out_plan), vk(-rem_out_trend),
-                        fk(plan_bal2), fk(trend_bal2), bold=True, plan_cls='neg', trend_cls='neg')
-    rows += bridge_row('= Cash Before Credit Line Activity', '', '', fk(plan_bal2), fk(trend_bal2), bold=True)
+                        fk(plan_bal2), fk(trend_bal2),
+                        note="Sum of COGS + Labor + OpEx above.",
+                        bold=True, plan_cls='neg', trend_cls='neg')
+    rows += bridge_row('= Cash Before Credit Line Activity', '', '', fk(plan_bal2), fk(trend_bal2),
+                        note="Cash on Hand + Cash In − Cash Out.", bold=True)
     if rem_draw:
         rows += bridge_row('+ Planned Credit Line Draw (Remaining)', vk(rem_draw), vk(rem_draw),
                             fk(plan_bal2 + rem_draw), fk(trend_bal2 + rem_draw),
+                            note="Cash Flow - Plan's monthly draw schedule — a fixed commitment, same on "
+                                 "both tracks.",
                             bold=True, plan_cls='pos', trend_cls='pos')
     rows += bridge_row('&minus; Planned Credit Line Paydown (Remaining)', vk(-rem_paydown), vk(-rem_paydown),
-                        fk(plan_final), fk(trend_final), bold=True, plan_cls='neg', trend_cls='neg')
-    rows += bridge_row('= Projected Cash at Year-End', '', '', fk(plan_final), fk(trend_final), bold=True)
+                        fk(plan_final), fk(trend_final),
+                        note="Cash Flow - Plan's monthly paydown schedule — a fixed commitment, same on "
+                             "both tracks.",
+                        bold=True, plan_cls='neg', trend_cls='neg')
+    rows += bridge_row('= Projected Cash at Year-End', '', '', fk(plan_final), fk(trend_final),
+                        note="Cash Before Credit Line Activity + Draw − Paydown.", bold=True)
 
     notes = (
         '<div class="rc-desc" style="margin-top:10px">'
@@ -2119,9 +2141,10 @@ def build_cash_bridge(d):
         '<div class="rc-headrow"><div class="rc-name">Cash on Hand &rarr; Expected In/Out &rarr; Credit Line &rarr; Year-End</div></div>'
         '<div class="rc-subhead ' + cls + '">' + subhead + '</div>'
         '<div class="rc-hl"><table class="rc-hltable">'
-        '<colgroup><col style="width:36%"><col style="width:16%"><col style="width:16%">'
-        '<col style="width:16%"><col style="width:16%"></colgroup>'
-        '<thead><tr><th>Line</th><th>Plan</th><th>Trend</th><th>Bal. (Plan)</th><th>Bal. (Trend)</th></tr></thead>'
+        '<colgroup><col style="width:16%"><col style="width:9%"><col style="width:9%">'
+        '<col style="width:9%"><col style="width:9%"><col style="width:48%"></colgroup>'
+        '<thead><tr><th>Line</th><th>Plan</th><th>Trend</th><th>Bal. (Plan)</th><th>Bal. (Trend)</th>'
+        '<th style="text-align:left">Notes</th></tr></thead>'
         '<tbody>' + rows + '</tbody>'
         '</table></div>'
         + notes +
