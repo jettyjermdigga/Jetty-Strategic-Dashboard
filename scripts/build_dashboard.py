@@ -2051,7 +2051,16 @@ def build_cash_bridge(d):
     cl_draw_act    = bp_ytd['cl_draw']    if bp_ytd else 0.0
     cl_paydown_act = bp_ytd['cl_paydown'] if bp_ytd else 0.0
 
-    ap_carry = (ap['total'] if ap else 0.0) + ((kv['brand_total'] + kv['ink_total']) if kv else 0.0)
+    # A/P Carryforward is the end-all of every row above it: the two COGS -
+    # A/P rows above assume the *entire* live A/P balance gets paid within
+    # the remaining weeks, which is only realistic if there's actually cash
+    # (or credit line capacity, already reflected in Cash on Hand) to cover
+    # it. If Cash Surplus/Deficiency lands negative, that shortfall is the
+    # A/P that realistically doesn't get paid this year -- it rolls to next
+    # year instead of the company overdrawing. A positive balance means the
+    # model already has the cash to cover every open PO, so nothing carries.
+    ap_carry_plan  = max(0.0, -plan_bal2)
+    ap_carry_trend = max(0.0, -trend_bal2)
 
     rows = bridge_row('Cash on Hand', '—', '—', fk(cash_on_hand), fk(cash_on_hand),
                        note="Cash on hand via Master Budget XL sheet (Bank Balance).", bold=True)
@@ -2095,9 +2104,12 @@ def build_cash_bridge(d):
                         note="Equal to Cash Surplus/Deficiency above — Credit Line activity to date is "
                              "already reflected in Cash on Hand, so it isn't subtracted twice.", bold=True)
 
-    rows += bridge_row('A/P Carryforward', '—', fk(ap_carry) if (ap or kv) else '—', '', '',
-                        note="Estimated unpaid A/P carried to next year — the live A/P - CNS + A/P - Key "
-                             "Vendors balance as of today, a point-in-time snapshot, not further modeled.",
+    rows += bridge_row('A/P Carryforward', fk(ap_carry_plan), fk(ap_carry_trend), '', '',
+                        note="Estimated unpaid A/P carried to next year — the shortfall, if any, once Cash "
+                             "Surplus/Deficiency runs negative: if there isn't enough cash to cover every "
+                             "open A/P - CNS / A/P - Key Vendors PO above, that gap is what doesn't get "
+                             "paid this year. Doesn't yet account for Credit Line headroom beyond what's "
+                             "already drawn.",
                         indent=True)
 
     return (
