@@ -2030,17 +2030,20 @@ def build_cash_bridge(d):
 
     ap = d.get('ap_cns')
     kv = d.get('ap_key_vendors_open')
-    # Live-A/P swap, same convention as before: replace the pace estimate
-    # entirely when live data exists (summing pace + a live balance would
-    # double-count -- the pace already reflects historical payments to
-    # these same vendors), fall back to pace only when no live source is
-    # configured for that side at all.
-    cogs_brand_trend = ((ap['total'] if ap else 0.0) + (kv['brand_total'] if kv else 0.0)
-                         if (ap or kv) else pace('cout_b'))
-    cogs_ink_trend    = kv['ink_total'] if kv else pace('cout_i')
-    rem_cogs_trend  = cogs_brand_trend + cogs_ink_trend + pace('cout_o')
-    rem_labor_trend = pace('cout_l')
-    rem_opex_trend  = pace('cout_e')
+    # Remodeled: Labor and OpEx have held close to plan all year (unlike
+    # Cash In or COGS timing), so their Trend column is the plan figure
+    # itself now, not a pace extrapolation -- extrapolating pace for a
+    # category that isn't actually drifting just adds noise. COGS is split
+    # into its two live, vendor-specific sources -- A/P - CNS and A/P - Key
+    # Vendors -- instead of one blended Brand/INK estimate, so each is
+    # visible (and auditable) on its own line; each still falls back to a
+    # pace extrapolation if its own Airtable source isn't configured.
+    ap_cns_trend = ap['total'] if ap else pace('cout_b')
+    ap_kv_trend  = (kv['brand_total'] + kv['ink_total']) if kv else pace('cout_i')
+    rem_cogs_other_trend = pace('cout_o')
+    rem_cogs_trend  = ap_cns_trend + ap_kv_trend + rem_cogs_other_trend
+    rem_labor_trend = rem_labor_plan
+    rem_opex_trend  = rem_opex_plan
     rem_out_trend   = rem_cogs_trend + rem_labor_trend + rem_opex_trend
 
     plan_bal1  = cash_on_hand + rem_in_plan
@@ -2060,23 +2063,31 @@ def build_cash_bridge(d):
     # repeating it here just to feed one aggregate number was noise, not
     # signal. Cash In (Remaining Weeks) below still sums the same three
     # figures (rem_whsl_/rem_dtc_/rem_ink_*), just doesn't itemize them.
-    rows = bridge_row('Cash on Hand (Today)', '—', '—', fk(cash_on_hand), fk(cash_on_hand),
-                       note="Latest week's Xero-derived running balance (Cash Flow - Weekly).", bold=True)
+    rows = bridge_row('Cash on Hand (Wk ' + str(latest['wk']) + ')', '—', '—', fk(cash_on_hand), fk(cash_on_hand),
+                       note="As of the most recent closed week, from the Cash Flow - Weekly sheet "
+                            "(running Xero cash in/out).", bold=True)
     rows += bridge_row('+ Cash In (Remaining Weeks)', vk(rem_in_plan), vk(rem_in_trend),
                         fk(plan_bal1), fk(trend_bal1),
                         note="Plan: 2026 Budget's remaining Wholesale + DTC + INK. Trend: On Order + A/R "
                              "(Wholesale), pace (DTC), pace + A/R (INK).",
                         bold=True, plan_cls='pos', trend_cls='pos')
-    rows += bridge_row('COGS', fk(rem_cogs_plan), fk(rem_cogs_trend), '', '',
-                        note="Plan: 2026 Budget's remaining COGS. Trend: live A/P — CNS + Key Vendors — "
-                             "where available, else pace.", indent=True)
+    rows += bridge_row('A/P - CNS', '—', fk(ap_cns_trend), '', '',
+                        note="No separate plan line for CNS alone — Trend is the live A/P - CNS balance "
+                             "(overseas Cut & Sew), else a pace fallback.", indent=True)
+    rows += bridge_row('A/P - Key Vendors', '—', fk(ap_kv_trend), '', '',
+                        note="No separate plan line for Key Vendors alone — Trend is the live A/P - Key "
+                             "Vendors balance (Brand + INK open POs), else a pace fallback.", indent=True)
+    rows += bridge_row('Other COGS + Shipping', fk(rem_cogs_plan), fk(rem_cogs_other_trend), '', '',
+                        note="Plan here is the full remaining COGS budget — the 2026 Budget doesn't split "
+                             "it by CNS vs. Key Vendors. Trend is a pace extrapolation for everything not "
+                             "covered by the two A/P rows above.", indent=True)
     rows += bridge_row('Labor', fk(rem_labor_plan), fk(rem_labor_trend), '', '',
-                        note="Both tracks extrapolate current actual weekly pace forward.", indent=True)
+                        note="Trend = Plan — Labor has held close to budget, no separate extrapolation.", indent=True)
     rows += bridge_row('OpEx', fk(rem_opex_plan), fk(rem_opex_trend), '', '',
-                        note="Both tracks extrapolate current actual weekly pace forward.", indent=True)
+                        note="Trend = Plan — OpEx has held close to budget, no separate extrapolation.", indent=True)
     rows += bridge_row('&minus; Cash Out (Remaining Weeks)', vk(-rem_out_plan), vk(-rem_out_trend),
                         fk(plan_bal2), fk(trend_bal2),
-                        note="Sum of COGS + Labor + OpEx above.",
+                        note="Sum of A/P - CNS + A/P - Key Vendors + Other COGS/Shipping + Labor + OpEx above.",
                         bold=True, plan_cls='neg', trend_cls='neg')
     rows += bridge_row('= Cash Before Credit Line Activity', '', '', fk(plan_bal2), fk(trend_bal2),
                         note="Cash on Hand + Cash In − Cash Out.", bold=True)
@@ -2101,21 +2112,8 @@ def build_cash_bridge(d):
         ') &mdash; a conservative floor, not a forecast of new orders still to be booked and invoiced between '
         'now and Dec 31. The real number is likely higher; this deliberately doesn\'t guess by how much.</div>'
     )
-    if ap or kv:
-        notes += ('<div class="rc-desc" style="margin-top:6px">'
-                   '<strong>Trend COGS &mdash; Brand</strong> is the live combined A/P balance (' +
-                   fk(cogs_brand_trend) + ': ' + fk(ap['total'] if ap else 0.0) + ' A/P - CNS + ' +
-                   fk(kv['brand_total'] if kv else 0.0) + ' A/P - Key Vendors\' open Brand-side POs' +
-                   ('' if (ap and kv) else ', partial coverage only') +
-                   ') instead of a pace extrapolation.</div>')
-    else:
-        notes += ('<div class="rc-desc" style="margin-top:10px">'
-                   '<strong>Trend COGS &mdash; Brand</strong> is a pace extrapolation, not live A/P balances '
-                   '&mdash; no <code>AIRTABLE_API_KEY</code> configured for this build.</div>')
-    if kv:
-        notes += ('<div class="rc-desc" style="margin-top:6px">'
-                   '<strong>Trend COGS &mdash; INK</strong> is A/P - Key Vendors\' currently-open INK-side POs (' +
-                   fk(kv['ink_total']) + ', as of ' + kv['as_of'] + ') instead of a pace extrapolation.</div>')
+    # Trend COGS -- Brand/INK detail now lives in the A/P - CNS and A/P -
+    # Key Vendors rows' own Notes cells above, not duplicated here.
     if ar:
         notes += ('<div class="rc-desc" style="margin-top:6px">'
                    '<strong>Trend &mdash; INK</strong> adds INK A/R &lt;90 Days (' + fk(ar_ink_090) +
@@ -2130,8 +2128,9 @@ def build_cash_bridge(d):
 
     lo, hi = (plan_final, trend_final) if plan_final <= trend_final else (trend_final, plan_final)
     cls = 'pos' if lo >= 0 else ('neg' if hi < 0 else '')
-    subhead = ('Cash on hand today, plus everything still expected in and out through Dec 31, lands '
-               'somewhere between ' + fk(lo) + ' and ' + fk(hi) + ' after the planned credit-line paydown' +
+    subhead = ('Cash on hand as of Week ' + str(latest['wk']) + ', plus everything still expected in and '
+               'out through Dec 31, lands somewhere between ' + fk(lo) + ' and ' + fk(hi) +
+               ' after the planned credit-line paydown' +
                (' and draw' if rem_draw else '') + ', depending on whether the year plays out closer to plan '
                'or to current trend.')
 
