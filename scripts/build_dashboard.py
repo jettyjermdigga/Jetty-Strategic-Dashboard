@@ -1945,7 +1945,7 @@ def bridge_row(label, plan_amt, trend_amt, plan_bal, trend_bal, note='',
         '<td class="' + trend_cls + '" style="' + weight + '">' + trend_amt + '</td>'
         '<td style="' + weight + '">' + plan_bal + '</td>'
         '<td style="' + weight + '">' + trend_bal + '</td>'
-        '<td style="text-align:left;font-family:var(--body);font-weight:400;opacity:.75">' + note + '</td>'
+        '<td style="text-align:left;font-family:var(--body);font-weight:400;opacity:.75;padding-left:16px">' + note + '</td>'
         '</tr>\n'
     )
 
@@ -2016,23 +2016,25 @@ def build_cash_bridge(d):
 
     ap = d.get('ap_cns')
     kv = d.get('ap_key_vendors_open')
-    # Labor and OpEx have held close to plan all year (unlike Cash In or
-    # COGS timing), so their Trend column is the plan figure itself, not a
-    # pace extrapolation -- extrapolating pace for a category that isn't
-    # actually drifting just adds noise. COGS is split into its two live,
-    # vendor-specific sources -- A/P - CNS and A/P - Key Vendors -- each
-    # falling back to a pace extrapolation only if its own Airtable source
-    # isn't configured. The 2026 Budget doesn't split its COGS plan by
-    # vendor source, so the one Plan figure for both COGS rows combined
-    # lives on the CNS row; a small Other COGS + Shipping pace estimate
-    # (freight, etc. -- not tracked by vendor) is folded into that row's
-    # Trend too, so nothing is silently dropped from the total.
+    # Labor and OpEx have held close to plan all year, so their Trend column
+    # is the plan figure itself, not a pace extrapolation. COGS - A/P CNS
+    # and COGS - A/P - Key Vendors go further: the 2026 Budget's COGS plan
+    # (rem_cogs_plan below) was modeled off 2025 pace and doesn't split
+    # CNS vs. Key Vendors at all -- now that live, vendor-specific A/P data
+    # exists for both, it's a more reliable "plan" than the original budget
+    # guess, so it drives *both* columns for these two rows (mirroring the
+    # Labor/OpEx convention, just with live data standing in for the plan
+    # instead of the budget figure). rem_cogs_plan is kept only as the
+    # original combined-budget reference quoted in the CNS row's own Notes
+    # cell -- it no longer feeds the Cash Out total. A small Other COGS +
+    # Shipping pace estimate (freight, etc. -- not tracked by vendor) is
+    # folded into the CNS row so nothing is silently dropped from the total.
     other_cogs_trend = pace('cout_o')
     ap_cns_trend = (ap['total'] if ap else pace('cout_b')) + other_cogs_trend
     ap_kv_trend  = (kv['brand_total'] + kv['ink_total']) if kv else pace('cout_i')
     rem_labor_trend = rem_labor_plan
     rem_opex_trend  = rem_opex_plan
-    rem_out_plan  = rem_cogs_plan + rem_labor_plan + rem_opex_plan
+    rem_out_plan  = ap_cns_trend + ap_kv_trend + rem_labor_plan + rem_opex_plan
     rem_out_trend = ap_cns_trend + ap_kv_trend + rem_labor_trend + rem_opex_trend
 
     plan_bal1  = cash_on_hand + rem_in_plan
@@ -2075,14 +2077,17 @@ def build_cash_bridge(d):
                         '', '', note='', bold=True)
 
     rows += bridge_row('Cash OUT', '', '', '', '', note='', bold=True)
-    rows += bridge_row('COGS - A/P CNS', fk(rem_cogs_plan), fk(ap_cns_trend), '', '',
+    rows += bridge_row('COGS - A/P CNS', fk(ap_cns_trend), fk(ap_cns_trend), '', '',
                         note="A/P to overseas & 3rd-party vendors via Airtable, plus a pace estimate for "
-                             "Other COGS + Shipping. Plan is the full remaining COGS budget (not split by "
-                             "CNS vs. Key Vendors) — must adjust based on actual cash flow.", indent=True)
-    rows += bridge_row('COGS - A/P - Key Vendors', '—', fk(ap_kv_trend), '', '',
-                        note="A/P - Key Vendors are domestic-sourced blanks for both Brand & INK — must "
-                             "adjust based on vendor balances, terms, and leniency (leniency rules TBD, "
-                             "e.g. S&amp;S must be paid 90+ in any given week).", indent=True)
+                             "Other COGS + Shipping — used for both Plan and Trend, since it's more reliable "
+                             "than the 2026 Budget's " + fk(rem_cogs_plan) + " combined COGS assumption "
+                             "(which doesn't split CNS vs. Key Vendors). Must still adjust based on actual "
+                             "cash flow.", indent=True)
+    rows += bridge_row('COGS - A/P - Key Vendors', fk(ap_kv_trend), fk(ap_kv_trend), '', '',
+                        note="A/P - Key Vendors are domestic-sourced blanks for both Brand & INK — same live "
+                             "balance used for both Plan and Trend, for the same reason as A/P CNS above. "
+                             "Must still adjust based on vendor balances, terms, and leniency (leniency "
+                             "rules TBD, e.g. S&amp;S must be paid 90+ in any given week).", indent=True)
     rows += bridge_row('Labor', fk(rem_labor_plan), fk(rem_labor_trend), '', '',
                         note="Labor per plan.", indent=True)
     rows += bridge_row('OpEx', fk(rem_opex_plan), fk(rem_opex_trend), '', '',
@@ -2117,10 +2122,10 @@ def build_cash_bridge(d):
         + '<div class="rc-card" style="grid-column:1 / -1">'
         '<div class="rc-subhead pos">Updated as of Week ' + str(latest['wk']) + '</div>'
         '<div class="rc-hl"><table class="rc-hltable">'
-        '<colgroup><col style="width:16%"><col style="width:9%"><col style="width:9%">'
-        '<col style="width:9%"><col style="width:9%"><col style="width:48%"></colgroup>'
+        '<colgroup><col style="width:14%"><col style="width:8%"><col style="width:8%">'
+        '<col style="width:10%"><col style="width:10%"><col style="width:50%"></colgroup>'
         '<thead><tr><th>Line</th><th>Plan</th><th>Trend</th><th>Balance (Plan)</th><th>Balance (Trend)</th>'
-        '<th style="text-align:left">Instructions/Notes</th></tr></thead>'
+        '<th style="text-align:left;padding-left:16px">Instructions/Notes</th></tr></thead>'
         '<tbody>' + rows + '</tbody>'
         '</table></div>'
         '</div>\n'
