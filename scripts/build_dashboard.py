@@ -524,6 +524,16 @@ def read_all():
         return 0.0
     def proj(name): return get_a(name) + get_r(name)
 
+    # Cash Bridge's COGS - A/P CNS / A/P - Key Vendors Plan: the 2026
+    # Budget's remaining-weeks plan for the four line items those two
+    # live-A/P feeds actually cover -- Spring/Summer, Fall/Winter, Special,
+    # and Screen Printing Wholesale -- not Product Testing or any other
+    # 2026 Budget COGS line, and not the broader Summary-sheet COGS total
+    # used elsewhere on the dashboard.
+    COGS_AP_PLAN_LINES = ['COGS - Spring/Summer', 'COGS - Fall/Winter', 'COGS - Special',
+                           'COGS - Screen Printing Wholesale']
+    d['cogs_ap_remaining_plan'] = sum(get_r(name) for name in COGS_AP_PLAN_LINES)
+
     rev_map = [
         ('Jettylife.com (DTC)',   'DTC - Jettylife.com'),
         ('Wholesale',             'Wholesale Revenue'),
@@ -1957,10 +1967,10 @@ def build_cash_bridge(d):
     throughout -- Plan is the 2026 Budget's own remaining-plan figure,
     untouched; Actual is grounded in live, bottom-up signals (on-order
     backlog, A/R, live A/P balances, Xero-reported cash in) instead of the
-    budget's assumed pace -- genuinely a forecast only on the one row
-    ("Projected Cash IN") where no live number for the remaining weeks
-    exists yet; everywhere else it's real, already-known data. Rows that
-    are already-known facts on both sides at once (Cash on Hand, A/P
+    budget's assumed pace. Labor and OpEx are the exception -- both have
+    held close to plan all year, so their Actual column is just the plan
+    figure again rather than a separate extrapolation. Rows that are
+    already-known facts on both sides at once (Cash on Hand, A/P
     Carryforward) aren't a Plan-vs-Actual estimate at all -- Plan is left
     blank ('—') and only Actual carries the real figure. The Balance
     (Plan) / Balance (Trend) columns are the two predicted outcomes this
@@ -2016,31 +2026,34 @@ def build_cash_bridge(d):
     cash_in_ytd_act  = (bp_ytd['cash_in']  - bp_ytd['cl_draw'])    if bp_ytd else 0.0
     cash_in_ytd_plan = d['cash_in']['plan']
 
-    rem_cogs_plan  = d['cogs']['ann_plan']  - d['cogs']['plan']
+    # Plan for A/P CNS + A/P - Key Vendors combined: the 2026 Budget's own
+    # remaining-weeks plan for the four line items those two live-A/P feeds
+    # actually cover (Spring/Summer, Fall/Winter, Special, Screen Printing
+    # Wholesale) -- computed in read_all() since it needs direct access to
+    # the 2026 Budget sheet's per-week columns. No separate CNS-only vs.
+    # Key-Vendors-only split exists, so the combined figure sits on the CNS
+    # row; Key Vendors' own Plan cell stays '—'.
+    rem_cogs_plan  = d['cogs_ap_remaining_plan']
     rem_labor_plan = d['labor_total']['ann_plan'] - d['labor_total']['ytd_plan']
     rem_opex_plan  = d['opex']['ann_plan']  - d['opex']['plan']
 
     ap = d.get('ap_cns')
     kv = d.get('ap_key_vendors_open')
     # Labor and OpEx have held close to plan all year, so their Trend column
-    # is the plan figure itself, not a pace extrapolation. COGS - A/P CNS
-    # and COGS - A/P - Key Vendors go further: the 2026 Budget's COGS plan
-    # (rem_cogs_plan below) was modeled off 2025 pace and doesn't split
-    # CNS vs. Key Vendors at all -- now that live, vendor-specific A/P data
-    # exists for both, it's a more reliable "plan" than the original budget
-    # guess, so it drives *both* columns for these two rows (mirroring the
-    # Labor/OpEx convention, just with live data standing in for the plan
-    # instead of the budget figure). rem_cogs_plan is kept only as the
-    # original combined-budget reference quoted in the CNS row's own Notes
-    # cell -- it no longer feeds the Cash Out total. A small Other COGS +
-    # Shipping pace estimate (freight, etc. -- not tracked by vendor) is
-    # folded into the CNS row so nothing is silently dropped from the total.
+    # is the plan figure itself, not a pace extrapolation. COGS - A/P CNS /
+    # A/P - Key Vendors keep a genuine Plan-vs-Actual split, now that
+    # rem_cogs_plan above is a real, correctly-scoped plan figure rather
+    # than the old un-split Summary-sheet COGS total. Actual is the live
+    # A/P balance for each; a small Other COGS + Shipping pace estimate
+    # (freight, etc. -- not tracked by vendor, and not one of the four
+    # budget lines above either) is folded into the CNS row's Actual so
+    # nothing is silently dropped from the total.
     other_cogs_trend = pace('cout_o')
     ap_cns_trend = (ap['total'] if ap else pace('cout_b')) + other_cogs_trend
     ap_kv_trend  = (kv['brand_total'] + kv['ink_total']) if kv else pace('cout_i')
     rem_labor_trend = rem_labor_plan
     rem_opex_trend  = rem_opex_plan
-    rem_out_plan  = ap_cns_trend + ap_kv_trend + rem_labor_plan + rem_opex_plan
+    rem_out_plan  = rem_cogs_plan + rem_labor_plan + rem_opex_plan
     rem_out_trend = ap_cns_trend + ap_kv_trend + rem_labor_trend + rem_opex_trend
 
     plan_bal1  = cash_on_hand + rem_in_plan
@@ -2083,17 +2096,18 @@ def build_cash_bridge(d):
                         '', '', note='', bold=True)
 
     rows += bridge_row('Cash OUT', '', '', '', '', note='', bold=True)
-    rows += bridge_row('COGS - A/P CNS', fk(ap_cns_trend), fk(ap_cns_trend), '', '',
-                        note="A/P to overseas & 3rd-party vendors via Airtable, plus a pace estimate for "
-                             "Other COGS + Shipping — used for both Plan and Actual, since it's more reliable "
-                             "than the 2026 Budget's " + fk(rem_cogs_plan) + " combined COGS assumption "
-                             "(which doesn't split CNS vs. Key Vendors). Must still adjust based on actual "
-                             "cash flow.", indent=True)
-    rows += bridge_row('COGS - A/P - Key Vendors', fk(ap_kv_trend), fk(ap_kv_trend), '', '',
-                        note="A/P - Key Vendors are domestic-sourced blanks for both Brand & INK — same live "
-                             "balance used for both Plan and Actual, for the same reason as A/P CNS above. "
-                             "Must still adjust based on vendor balances, terms, and leniency (leniency "
-                             "rules TBD, e.g. S&amp;S must be paid 90+ in any given week).", indent=True)
+    rows += bridge_row('COGS - A/P CNS', fk(rem_cogs_plan), fk(ap_cns_trend), '', '',
+                        note="Plan: 2026 Budget's remaining-weeks COGS - Spring/Summer + Fall/Winter + "
+                             "Special + Screen Printing Wholesale (no separate CNS-only budget line exists, "
+                             "so Key Vendors' plan is combined here too). Actual: live A/P - CNS balance "
+                             "via Airtable, plus a pace estimate for Other COGS + Shipping. Must still "
+                             "adjust based on actual cash flow.", indent=True)
+    rows += bridge_row('COGS - A/P - Key Vendors', '—', fk(ap_kv_trend), '', '',
+                        note="No separate plan line for Key Vendors alone — its remaining-weeks budget is "
+                             "combined with A/P - CNS above. Actual: live A/P - Key Vendors balance, Brand "
+                             "+ INK open POs via Airtable. Must still adjust based on vendor balances, "
+                             "terms, and leniency (leniency rules TBD, e.g. S&amp;S must be paid 90+ in "
+                             "any given week).", indent=True)
     rows += bridge_row('Labor', fk(rem_labor_plan), fk(rem_labor_trend), '', '',
                         note="Labor per plan.", indent=True)
     rows += bridge_row('OpEx', fk(rem_opex_plan), fk(rem_opex_trend), '', '',
