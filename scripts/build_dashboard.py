@@ -1953,14 +1953,20 @@ def build_cash_bridge(d):
     """Card #1 on the Cash Flow tab, laid out to Jeremy's own Sept 2026
     sketch (a Cash_Flow.xlsx mockup): Cash on Hand -> Cash IN -> Cash OUT
     -> Cash Surplus/Deficiency -> Credit Line context -> Projected Cash at
-    Year-End -> A/P Carryforward. Two parallel columns, Plan and Trend, run
-    throughout for every row that represents a forward-looking estimate --
-    Plan is the 2026 Budget's own remaining-plan figure, untouched; Trend
-    is grounded in live, bottom-up signals (on-order backlog, A/R, live
-    A/P balances) instead of the budget's assumed pace. Rows that are
-    already-known facts (Cash on Hand, the Cash IN/Credit Line actuals,
-    A/P Carryforward) aren't a Plan-vs-Trend estimate at all -- Plan is
-    left blank ('—') and only Trend carries the real figure.
+    Year-End -> A/P Carryforward. Two parallel columns, Plan and Actual, run
+    throughout -- Plan is the 2026 Budget's own remaining-plan figure,
+    untouched; Actual is grounded in live, bottom-up signals (on-order
+    backlog, A/R, live A/P balances, Xero-reported cash in) instead of the
+    budget's assumed pace -- genuinely a forecast only on the one row
+    ("Projected Cash IN") where no live number for the remaining weeks
+    exists yet; everywhere else it's real, already-known data. Rows that
+    are already-known facts on both sides at once (Cash on Hand, A/P
+    Carryforward) aren't a Plan-vs-Actual estimate at all -- Plan is left
+    blank ('—') and only Actual carries the real figure. The Balance
+    (Plan) / Balance (Trend) columns are the two predicted outcomes this
+    card exists to answer: where cash lands if the year plays out exactly
+    to the original budget, vs. where it lands carrying today's live data
+    forward.
 
     Only two rows actually move the running Balance columns: "Projected
     Cash IN" and "Total Cash OUT (Projected)" -- both remaining-weeks
@@ -2079,13 +2085,13 @@ def build_cash_bridge(d):
     rows += bridge_row('Cash OUT', '', '', '', '', note='', bold=True)
     rows += bridge_row('COGS - A/P CNS', fk(ap_cns_trend), fk(ap_cns_trend), '', '',
                         note="A/P to overseas & 3rd-party vendors via Airtable, plus a pace estimate for "
-                             "Other COGS + Shipping — used for both Plan and Trend, since it's more reliable "
+                             "Other COGS + Shipping — used for both Plan and Actual, since it's more reliable "
                              "than the 2026 Budget's " + fk(rem_cogs_plan) + " combined COGS assumption "
                              "(which doesn't split CNS vs. Key Vendors). Must still adjust based on actual "
                              "cash flow.", indent=True)
     rows += bridge_row('COGS - A/P - Key Vendors', fk(ap_kv_trend), fk(ap_kv_trend), '', '',
                         note="A/P - Key Vendors are domestic-sourced blanks for both Brand & INK — same live "
-                             "balance used for both Plan and Trend, for the same reason as A/P CNS above. "
+                             "balance used for both Plan and Actual, for the same reason as A/P CNS above. "
                              "Must still adjust based on vendor balances, terms, and leniency (leniency "
                              "rules TBD, e.g. S&amp;S must be paid 90+ in any given week).", indent=True)
     rows += bridge_row('Labor', fk(rem_labor_plan), fk(rem_labor_trend), '', '',
@@ -2124,7 +2130,7 @@ def build_cash_bridge(d):
         '<div class="rc-hl"><table class="rc-hltable">'
         '<colgroup><col style="width:14%"><col style="width:8%"><col style="width:8%">'
         '<col style="width:10%"><col style="width:10%"><col style="width:50%"></colgroup>'
-        '<thead><tr><th>Line</th><th>Plan</th><th>Trend</th><th>Balance (Plan)</th><th>Balance (Trend)</th>'
+        '<thead><tr><th>Line</th><th>Plan</th><th>Actual</th><th>Balance (Plan)</th><th>Balance (Trend)</th>'
         '<th style="text-align:left;padding-left:16px">Instructions/Notes</th></tr></thead>'
         '<tbody>' + rows + '</tbody>'
         '</table></div>'
