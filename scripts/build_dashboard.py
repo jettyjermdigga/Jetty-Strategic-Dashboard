@@ -2074,7 +2074,7 @@ def build_cash_bridge(d):
                        note="Cash on hand via Master Budget XL sheet (Bank Balance).", bold=True)
 
     rows += bridge_row('Cash IN', '', '', '', '', note='', bold=True)
-    rows += bridge_row('Cash IN (Actual)', fk(cash_in_ytd_plan), fk(cash_in_ytd_act), '', '',
+    rows += bridge_row('Cash IN', fk(cash_in_ytd_plan), fk(cash_in_ytd_act), '', '',
                         note="Cash IN via Xero General Ledger (Weekly Cash IN/OUT) report.", indent=True)
     rows += bridge_row('Projected Cash IN', vk(rem_in_plan), vk(rem_in_trend), fk(plan_bal1), fk(trend_bal1),
                         note="Cash IN projected via plan and on order.",
