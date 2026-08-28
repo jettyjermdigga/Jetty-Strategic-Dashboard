@@ -2,7 +2,11 @@ name: Sync Accounting Emails
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    # Offset from the top of the hour/quarter-hour: GitHub's own docs warn that
+    # schedule triggers queued at round times (:00, :15, :30, :45) are the most
+    # congested slots and can be delayed for hours during high platform load.
+    # Runs were observed to lag by 8+ hours on the old '*/15 * * * *' schedule.
+    - cron: '3-58/5 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
