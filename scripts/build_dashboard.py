@@ -26,19 +26,29 @@ FP_JRF = "data/jrf_budget.xlsx"
 AIRTABLE_API = "https://api.airtable.com/v0"
 AIRTABLE_LEDGER_BASE = "appW8jAfERj3iBzqt"  # Ledger 💰
 AP_CNS_TABLE = "tblC9gQD9rrRbVtno"
+# "Payment Schedule ⌚" -- Jeremy's own view, scoped to A/P - CNS with a
+# confirmed due date. Querying it directly (via the `view` param) instead of
+# reconstructing an equivalent filterByFormula, since the two silently
+# diverged: the old NOT({Paid in Full}) + due-date-not-blank filter also
+# pulled in unpaid records that only look due-dated once you dig in (or
+# don't really belong on a payment schedule at all) -- ~$1.26M sitting in
+# records with no confirmed due date, entirely excluded from both old and
+# new totals, but no longer silently conflated with the confirmed-due set.
+AP_CNS_PAYMENT_SCHEDULE_VIEW = "viwPmOdLMRteANj8v"
 
 def fetch_ap_cns():
-    """Unpaid A/P - CNS balances with a due date, bucketed into overdue vs.
-    due by year-end. Returns None (rather than raising) if AIRTABLE_API_KEY
-    isn't configured or the request fails, so a local/offline build just
-    omits the Paydown Feasibility section instead of breaking."""
+    """Unpaid A/P - CNS balances with a confirmed due date (the "Payment
+    Schedule" view), bucketed into overdue vs. due by year-end. Returns None
+    (rather than raising) if AIRTABLE_API_KEY isn't configured or the
+    request fails, so a local/offline build just omits the Paydown
+    Feasibility section instead of breaking."""
     token = os.environ.get('AIRTABLE_API_KEY')
     if not token:
         return None
     url = f"{AIRTABLE_API}/{AIRTABLE_LEDGER_BASE}/{AP_CNS_TABLE}"
     headers = {"Authorization": f"Bearer {token}"}
     params = {
-        "filterByFormula": "AND(NOT({Paid in Full}), {⚠ Due Date} != '')",
+        "view": AP_CNS_PAYMENT_SCHEDULE_VIEW,
         "fields[]": ["⚠ Due Date", "Remaining Due"],
         "pageSize": 100,
     }
