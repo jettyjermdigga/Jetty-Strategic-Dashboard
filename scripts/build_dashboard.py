@@ -485,6 +485,59 @@ def read_categories():
         }
     return cats
 
+# ── Cash Flow tab rebuild (Sept 2026) ─────────────────────────────────────────
+# Cash Flow - Weekly's layout changed when Jeremy added full 2025 weekly
+# history alongside 2026: it's now Year-blocked (col 0 = Year, col 1 =
+# Account, cols 2-53 = weeks 1-52, cols 54-60 = Q1..ANNUAL rollups), each
+# year contributing 5 account rows. The old single-year cfw_row() lookup
+# (still used by bank_position et al. until those sections are rebuilt too)
+# just grabs the first row matching a label, which now silently picks up
+# 2025's row before 2026's -- the root cause of "something is messed up
+# now". This reader is self-contained and doesn't touch that old path.
+def read_cash_flow_weekly_history(fp):
+    """Returns {year: {'cash_in': [wk1..wk52], 'cash_out': [...],
+    'cl_draw': [...], 'cl_paydown': [...]}}, values None for weeks not
+    yet entered. Returns {} if the sheet is missing or empty."""
+    try:
+        df = pd.read_excel(fp, sheet_name='Cash Flow - Weekly', engine='pyxlsb', header=None)
+    except ValueError:
+        return {}
+    accounts = {'Total Cash IN': 'cash_in', 'Total Cash OUT': 'cash_out',
+                'Columbia CL Draw': 'cl_draw', 'Columbia CL Paydown': 'cl_paydown'}
+    by_year = {}
+    current_year = None
+    for _, row in df.iterrows():
+        yr, acct = row[0], row[1]
+        if pd.notna(yr):
+            try:
+                current_year = int(yr)
+            except (TypeError, ValueError):
+                current_year = None
+        key = accounts.get(str(acct).strip()) if pd.notna(acct) else None
+        if current_year and key:
+            weeks = [float(row[c]) if pd.notna(row[c]) else None for c in range(2, 54)]
+            by_year.setdefault(current_year, {})[key] = weeks
+    return by_year
+
+def cumsum_with_gaps(vals):
+    """Running total, stopping (None) at the first not-yet-entered week
+    rather than treating it as zero and continuing -- so a cumulative
+    line actually ends where the data does instead of flatlining."""
+    out, total, ended = [], 0.0, False
+    for v in vals:
+        if v is None:
+            ended = True
+        if ended:
+            out.append(None)
+        else:
+            total += v
+            out.append(round(total, 2))
+    return out
+
+def js_arr_n(lst):
+    """Like js_arr, but None -> JS null instead of the string 'None'."""
+    return '[' + ','.join('null' if v is None else str(v) for v in lst) + ']'
+
 def read_all():
     d = {}
     df_s  = pd.read_excel(FP, sheet_name='Summary',             engine='pyxlsb', header=None)
@@ -496,6 +549,8 @@ def read_all():
     df_oo = pd.read_excel(FP, sheet_name='On Order',            engine='pyxlsb', header=None)
     df_lb = pd.read_excel(FP, sheet_name='Labor',                engine='pyxlsb', header=None)
     df_pr = pd.read_excel(FP, sheet_name='Payroll',              engine='pyxlsb', header=None)
+
+    d['cfw_history'] = read_cash_flow_weekly_history(FP)
 
     def sc(row, col):
         r = row - 1
@@ -1593,6 +1648,7 @@ def build_chart_js(d):
         '{l:"F26",d:' + st_xy(d['st_f26'], d['inv_est']['st_f26']) + ',c:"#43575E"}]);\n'
         + build_labor_chart_js(d)
         + build_summary_trend_charts_js(d)
+        + build_cf_ty_ly_charts_js(d)
         + build_creditline_chart_js(d)
         + build_bp_gap_chart_js(d)
         + build_cl_activity_chart_js(d)
@@ -1709,6 +1765,124 @@ def build_ap_key_vendors_chart_js(d):
         ']};'
         'window.__chartData["chart-ap-kv-weekly"]=data;window.__chartOptsFn["chart-ap-kv-weekly"]=apKvOpts;'
         'window.__charts["chart-ap-kv-weekly"]=new Chart(el,{type:"line",data:data,options:apKvOpts()});})();\n'
+    )
+
+CF_TY_LY_COLORS = dict(
+    in_ty="#2F7A5C", in_ly="#A8D5C2",       # green: Cash In, TY solid / LY light
+    out_ty="#B4482F", out_ly="#E8B7A8",     # red: Cash Out, TY solid / LY light
+    draw_ty="#2B6CB0", draw_ly="#9DC3E6",   # blue: CL Draw, TY solid / LY light
+    pay_ty="#7B3F9E", pay_ly="#C9AEDB",     # purple: CL Paydown, TY solid / LY light
+)
+
+def build_cf_ty_ly_charts_js(d):
+    """Section #1 of the rebuilt Cash Flow tab: Cash In/Out by week, this
+    year vs. last, with Columbia CL Draw/Paydown called out separately
+    since they're baked into the raw Cash In/Out totals (a draw is a real
+    "Receive Money" transaction, a paydown a real debit) -- without the
+    callout, a big draw week reads as a strong revenue week. Two charts,
+    same 8 series and color convention throughout:
+    - Weekly (bars, this function's first chart): Cash In up, Cash Out
+      down: CL Draw/Paydown as thin overlay lines on the same axes rather
+      than stacked inside the bars, so the exact draw/paydown amount for
+      any given week is still readable on its own.
+    - Cumulative (lines, second chart): the same 8 series as running
+      totals, stopping (not flatlining at 0) once TY data runs out for
+      the year, via cumsum_with_gaps().
+    Both read from cfw_history (see read_cash_flow_weekly_history) --
+    returns '' if that's empty (sheet missing/unreadable)."""
+    hist = d.get('cfw_history') or {}
+    ty_year = max(hist.keys()) if hist else None
+    ly_year = ty_year - 1 if ty_year else None
+    ty = hist.get(ty_year, {})
+    ly = hist.get(ly_year, {})
+    if not ty:
+        return ''
+
+    def get(block, key):
+        return block.get(key) or [None] * 52
+
+    in_ty, out_ty = get(ty, 'cash_in'), [(-v if v is not None else None) for v in get(ty, 'cash_out')]
+    in_ly, out_ly = get(ly, 'cash_in'), [(-v if v is not None else None) for v in get(ly, 'cash_out')]
+    draw_ty, pay_ty = get(ty, 'cl_draw'), [(-v if v is not None else None) for v in get(ty, 'cl_paydown')]
+    draw_ly, pay_ly = get(ly, 'cl_draw'), [(-v if v is not None else None) for v in get(ly, 'cl_paydown')]
+
+    labels = '[' + ','.join('"Wk ' + str(i) + '"' for i in range(1, 53)) + ']'
+    c = CF_TY_LY_COLORS
+
+    def bar_ds(label, arr, color):
+        return ('{type:"bar",label:"' + label + '",data:' + js_arr_n(arr) +
+                ',backgroundColor:"' + color + '",borderRadius:2,order:2}')
+    def line_ds(label, arr, color, dashed):
+        dash = ',borderDash:[5,3]' if dashed else ''
+        return ('{type:"line",label:"' + label + '",data:' + js_arr_n(arr) +
+                ',borderColor:"' + color + '",backgroundColor:"transparent",'
+                'borderWidth:1.75,pointRadius:1.5,tension:0.2,order:1' + dash + '}')
+
+    weekly_datasets = ','.join([
+        bar_ds('Cash In (TY)', in_ty, c['in_ty']), bar_ds('Cash In (LY)', in_ly, c['in_ly']),
+        bar_ds('Cash Out (TY)', out_ty, c['out_ty']), bar_ds('Cash Out (LY)', out_ly, c['out_ly']),
+        line_ds('CL Draw (TY)', draw_ty, c['draw_ty'], False), line_ds('CL Draw (LY)', draw_ly, c['draw_ly'], True),
+        line_ds('CL Paydown (TY)', pay_ty, c['pay_ty'], False), line_ds('CL Paydown (LY)', pay_ly, c['pay_ly'], True),
+    ])
+
+    cum_datasets = ','.join([
+        line_ds('Cash In (TY)', cumsum_with_gaps(in_ty), c['in_ty'], False),
+        line_ds('Cash In (LY)', cumsum_with_gaps(in_ly), c['in_ly'], True),
+        line_ds('Cash Out (TY)', cumsum_with_gaps(out_ty), c['out_ty'], False),
+        line_ds('Cash Out (LY)', cumsum_with_gaps(out_ly), c['out_ly'], True),
+        line_ds('CL Draw (TY)', cumsum_with_gaps(draw_ty), c['draw_ty'], False),
+        line_ds('CL Draw (LY)', cumsum_with_gaps(draw_ly), c['draw_ly'], True),
+        line_ds('CL Paydown (TY)', cumsum_with_gaps(pay_ty), c['pay_ty'], False),
+        line_ds('CL Paydown (LY)', cumsum_with_gaps(pay_ly), c['pay_ly'], True),
+    ])
+
+    return (
+        'function cfTyLyOpts(){return {responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:true,position:"top",labels:{boxWidth:12,font:{size:9}}},'
+        'tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
+        'scales:{x:{type:"category",grid:{display:false},'
+        'ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},'
+        'y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};}\n'
+        'window.__chartData=window.__chartData||{};window.__chartOptsFn=window.__chartOptsFn||{};window.__charts=window.__charts||{};\n'
+        '(function(){const el=document.getElementById("chart-cf-ty-ly-weekly");if(!el)return;'
+        'const data={labels:' + labels + ',datasets:[' + weekly_datasets + ']};'
+        'window.__chartData["chart-cf-ty-ly-weekly"]=data;window.__chartOptsFn["chart-cf-ty-ly-weekly"]=cfTyLyOpts;'
+        'window.__charts["chart-cf-ty-ly-weekly"]=new Chart(el,{type:"bar",data:data,options:cfTyLyOpts()});})();\n'
+        '(function(){const el=document.getElementById("chart-cf-ty-ly-cumulative");if(!el)return;'
+        'const data={labels:' + labels + ',datasets:[' + cum_datasets + ']};'
+        'window.__chartData["chart-cf-ty-ly-cumulative"]=data;window.__chartOptsFn["chart-cf-ty-ly-cumulative"]=cfTyLyOpts;'
+        'window.__charts["chart-cf-ty-ly-cumulative"]=new Chart(el,{type:"line",data:data,options:cfTyLyOpts()});})();\n'
+    )
+
+def build_cf_ty_ly_section(d):
+    """HTML for Section #1 of the rebuilt Cash Flow tab -- see
+    build_cf_ty_ly_charts_js() for the data/series this renders.
+    Returns '' if cfw_history has no data for the current year."""
+    hist = d.get('cfw_history') or {}
+    ty_year = max(hist.keys()) if hist else None
+    if not ty_year or not hist.get(ty_year):
+        return ''
+    ly_year = ty_year - 1
+
+    def card(chart_id, title, desc):
+        return (
+            '<div class="rc-card" style="grid-column:1 / -1;position:relative">'
+            '<div class="rc-headrow"><div class="rc-name">' + title + '</div>'
+            '<div class="rc-desc">' + desc + '</div>'
+            '<button class="rc-expand-btn" data-chart-id="' + chart_id + '" data-chart-title="' + html_escape(title) + '">⤢ Expand</button>'
+            '</div>'
+            '<div style="height:320px;margin-top:10px"><canvas id="' + chart_id + '"></canvas></div>'
+            '</div>\n'
+        )
+
+    desc = ('Columbia CL Draw/Paydown are already included in Cash In/Cash Out above -- '
+            'called out separately (not stacked inside the bars) since a draw week can '
+            'otherwise read as unusually strong collections, or a paydown week as unusually '
+            'heavy spend.')
+    return (
+        rc_divider("Cash In / Cash Out — " + str(ty_year) + " vs. " + str(ly_year))
+        + card('chart-cf-ty-ly-weekly', 'Weekly', desc)
+        + card('chart-cf-ty-ly-cumulative', 'Cumulative', desc)
     )
 
 def build_creditline_chart_js(d):
@@ -2469,7 +2643,11 @@ def build_cashflow_panel(d):
     cf = d['cf']
     def p(k): return cf[k][-1] if cf[k] else 0
 
-    body = build_cash_bridge(d)
+    # Cash Flow tab rebuild, in progress -- Section #1 (Cash In/Out by week,
+    # TY vs. LY) goes first; everything below this line is the old tab,
+    # unchanged section by section until we get to it.
+    body = build_cf_ty_ly_section(d)
+    body += build_cash_bridge(d)
     body += build_bank_position_section(d)
 
     body += rc_divider("Cash Flow vs. Plan (Cash Flow - Tracker)")
