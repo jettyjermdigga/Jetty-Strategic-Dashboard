@@ -1776,19 +1776,18 @@ CF_TY_LY_COLORS = dict(
 
 def build_cf_ty_ly_charts_js(d):
     """Section #1 of the rebuilt Cash Flow tab: Cash In/Out by week, this
-    year vs. last, with Columbia CL Draw/Paydown called out separately
-    since they're baked into the raw Cash In/Out totals (a draw is a real
-    "Receive Money" transaction, a paydown a real debit) -- without the
-    callout, a big draw week reads as a strong revenue week. Two charts,
-    same 8 series and color convention throughout:
-    - Weekly (bars, this function's first chart): Cash In up, Cash Out
-      down: CL Draw/Paydown as thin overlay lines on the same axes rather
-      than stacked inside the bars, so the exact draw/paydown amount for
-      any given week is still readable on its own.
-    - Cumulative (lines, second chart): the same 8 series as running
-      totals, stopping (not flatlining at 0) once TY data runs out for
-      the year, via cumsum_with_gaps().
-    Both read from cfw_history (see read_cash_flow_weekly_history) --
+    year vs. last, with Columbia CL Draw/Paydown broken out into their own
+    chart since they're baked into the raw Cash In/Out totals (a draw is a
+    real "Receive Money" transaction, a paydown a real debit) -- left in
+    the Weekly chart, a big draw week reads as a strong revenue week.
+    Three charts, same color convention throughout:
+    - Weekly (bars): Cash In/Cash Out only, TY vs. LY.
+    - CL Draw / Paydown (bars, directly below Weekly): the two callout
+      series on their own axes so exact weekly amounts are readable.
+    - Cumulative (lines): all 8 series (Cash In/Out + CL Draw/Paydown) as
+      running totals, stopping (not flatlining at 0) once TY data runs out
+      for the year, via cumsum_with_gaps().
+    All three read from cfw_history (see read_cash_flow_weekly_history) --
     returns '' if that's empty (sheet missing/unreadable)."""
     hist = d.get('cfw_history') or {}
     ty_year = max(hist.keys()) if hist else None
@@ -1821,8 +1820,11 @@ def build_cf_ty_ly_charts_js(d):
     weekly_datasets = ','.join([
         bar_ds('Cash In (TY)', in_ty, c['in_ty']), bar_ds('Cash In (LY)', in_ly, c['in_ly']),
         bar_ds('Cash Out (TY)', out_ty, c['out_ty']), bar_ds('Cash Out (LY)', out_ly, c['out_ly']),
-        line_ds('CL Draw (TY)', draw_ty, c['draw_ty'], False), line_ds('CL Draw (LY)', draw_ly, c['draw_ly'], True),
-        line_ds('CL Paydown (TY)', pay_ty, c['pay_ty'], False), line_ds('CL Paydown (LY)', pay_ly, c['pay_ly'], True),
+    ])
+
+    cl_datasets = ','.join([
+        bar_ds('CL Draw (TY)', draw_ty, c['draw_ty']), bar_ds('CL Draw (LY)', draw_ly, c['draw_ly']),
+        bar_ds('CL Paydown (TY)', pay_ty, c['pay_ty']), bar_ds('CL Paydown (LY)', pay_ly, c['pay_ly']),
     ])
 
     cum_datasets = ','.join([
@@ -1848,6 +1850,10 @@ def build_cf_ty_ly_charts_js(d):
         'const data={labels:' + labels + ',datasets:[' + weekly_datasets + ']};'
         'window.__chartData["chart-cf-ty-ly-weekly"]=data;window.__chartOptsFn["chart-cf-ty-ly-weekly"]=cfTyLyOpts;'
         'window.__charts["chart-cf-ty-ly-weekly"]=new Chart(el,{type:"bar",data:data,options:cfTyLyOpts()});})();\n'
+        '(function(){const el=document.getElementById("chart-cf-ty-ly-cl-weekly");if(!el)return;'
+        'const data={labels:' + labels + ',datasets:[' + cl_datasets + ']};'
+        'window.__chartData["chart-cf-ty-ly-cl-weekly"]=data;window.__chartOptsFn["chart-cf-ty-ly-cl-weekly"]=cfTyLyOpts;'
+        'window.__charts["chart-cf-ty-ly-cl-weekly"]=new Chart(el,{type:"bar",data:data,options:cfTyLyOpts()});})();\n'
         '(function(){const el=document.getElementById("chart-cf-ty-ly-cumulative");if(!el)return;'
         'const data={labels:' + labels + ',datasets:[' + cum_datasets + ']};'
         'window.__chartData["chart-cf-ty-ly-cumulative"]=data;window.__chartOptsFn["chart-cf-ty-ly-cumulative"]=cfTyLyOpts;'
@@ -1875,14 +1881,17 @@ def build_cf_ty_ly_section(d):
             '</div>\n'
         )
 
-    desc = ('Columbia CL Draw/Paydown are already included in Cash In/Cash Out above -- '
-            'called out separately (not stacked inside the bars) since a draw week can '
-            'otherwise read as unusually strong collections, or a paydown week as unusually '
-            'heavy spend.')
+    weekly_desc = 'Cash In vs. Cash Out by week.'
+    cl_desc = ('Columbia CL Draw/Paydown, broken out on their own axes -- these are already '
+               'included in Cash In/Cash Out above, called out separately since a draw week can '
+               'otherwise read as unusually strong collections, or a paydown week as unusually '
+               'heavy spend.')
+    cum_desc = 'Running totals for all four series, including the CL Draw/Paydown callouts above.'
     return (
         rc_divider("Cash In / Cash Out — " + str(ty_year) + " vs. " + str(ly_year))
-        + card('chart-cf-ty-ly-weekly', 'Weekly', desc)
-        + card('chart-cf-ty-ly-cumulative', 'Cumulative', desc)
+        + card('chart-cf-ty-ly-weekly', 'Weekly', weekly_desc)
+        + card('chart-cf-ty-ly-cl-weekly', 'Columbia CL Draw / Paydown', cl_desc)
+        + card('chart-cf-ty-ly-cumulative', 'Cumulative', cum_desc)
     )
 
 def build_creditline_chart_js(d):
