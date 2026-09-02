@@ -26,19 +26,29 @@ FP_JRF = "data/jrf_budget.xlsx"
 AIRTABLE_API = "https://api.airtable.com/v0"
 AIRTABLE_LEDGER_BASE = "appW8jAfERj3iBzqt"  # Ledger 💰
 AP_CNS_TABLE = "tblC9gQD9rrRbVtno"
+# "Payment Schedule ⌚" -- Jeremy's own view, scoped to A/P - CNS with a
+# confirmed due date. Querying it directly (via the `view` param) instead of
+# reconstructing an equivalent filterByFormula, since the two silently
+# diverged: the old NOT({Paid in Full}) + due-date-not-blank filter also
+# pulled in unpaid records that only look due-dated once you dig in (or
+# don't really belong on a payment schedule at all) -- ~$1.26M sitting in
+# records with no confirmed due date, entirely excluded from both old and
+# new totals, but no longer silently conflated with the confirmed-due set.
+AP_CNS_PAYMENT_SCHEDULE_VIEW = "viwPmOdLMRteANj8v"
 
 def fetch_ap_cns():
-    """Unpaid A/P - CNS balances with a due date, bucketed into overdue vs.
-    due by year-end. Returns None (rather than raising) if AIRTABLE_API_KEY
-    isn't configured or the request fails, so a local/offline build just
-    omits the Paydown Feasibility section instead of breaking."""
+    """Unpaid A/P - CNS balances with a confirmed due date (the "Payment
+    Schedule" view), bucketed into overdue vs. due by year-end. Returns None
+    (rather than raising) if AIRTABLE_API_KEY isn't configured or the
+    request fails, so a local/offline build just omits the Paydown
+    Feasibility section instead of breaking."""
     token = os.environ.get('AIRTABLE_API_KEY')
     if not token:
         return None
     url = f"{AIRTABLE_API}/{AIRTABLE_LEDGER_BASE}/{AP_CNS_TABLE}"
     headers = {"Authorization": f"Bearer {token}"}
     params = {
-        "filterByFormula": "AND(NOT({Paid in Full}), {⚠ Due Date} != '')",
+        "view": AP_CNS_PAYMENT_SCHEDULE_VIEW,
         "fields[]": ["⚠ Due Date", "Remaining Due"],
         "pageSize": 100,
     }
@@ -475,6 +485,59 @@ def read_categories():
         }
     return cats
 
+# ── Cash Flow tab rebuild (Sept 2026) ─────────────────────────────────────────
+# Cash Flow - Weekly's layout changed when Jeremy added full 2025 weekly
+# history alongside 2026: it's now Year-blocked (col 0 = Year, col 1 =
+# Account, cols 2-53 = weeks 1-52, cols 54-60 = Q1..ANNUAL rollups), each
+# year contributing 5 account rows. The old single-year cfw_row() lookup
+# (still used by bank_position et al. until those sections are rebuilt too)
+# just grabs the first row matching a label, which now silently picks up
+# 2025's row before 2026's -- the root cause of "something is messed up
+# now". This reader is self-contained and doesn't touch that old path.
+def read_cash_flow_weekly_history(fp):
+    """Returns {year: {'cash_in': [wk1..wk52], 'cash_out': [...],
+    'cl_draw': [...], 'cl_paydown': [...]}}, values None for weeks not
+    yet entered. Returns {} if the sheet is missing or empty."""
+    try:
+        df = pd.read_excel(fp, sheet_name='Cash Flow - Weekly', engine='pyxlsb', header=None)
+    except ValueError:
+        return {}
+    accounts = {'Total Cash IN': 'cash_in', 'Total Cash OUT': 'cash_out',
+                'Columbia CL Draw': 'cl_draw', 'Columbia CL Paydown': 'cl_paydown'}
+    by_year = {}
+    current_year = None
+    for _, row in df.iterrows():
+        yr, acct = row[0], row[1]
+        if pd.notna(yr):
+            try:
+                current_year = int(yr)
+            except (TypeError, ValueError):
+                current_year = None
+        key = accounts.get(str(acct).strip()) if pd.notna(acct) else None
+        if current_year and key:
+            weeks = [float(row[c]) if pd.notna(row[c]) else None for c in range(2, 54)]
+            by_year.setdefault(current_year, {})[key] = weeks
+    return by_year
+
+def cumsum_with_gaps(vals):
+    """Running total, stopping (None) at the first not-yet-entered week
+    rather than treating it as zero and continuing -- so a cumulative
+    line actually ends where the data does instead of flatlining."""
+    out, total, ended = [], 0.0, False
+    for v in vals:
+        if v is None:
+            ended = True
+        if ended:
+            out.append(None)
+        else:
+            total += v
+            out.append(round(total, 2))
+    return out
+
+def js_arr_n(lst):
+    """Like js_arr, but None -> JS null instead of the string 'None'."""
+    return '[' + ','.join('null' if v is None else str(v) for v in lst) + ']'
+
 def read_all():
     d = {}
     df_s  = pd.read_excel(FP, sheet_name='Summary',             engine='pyxlsb', header=None)
@@ -486,6 +549,8 @@ def read_all():
     df_oo = pd.read_excel(FP, sheet_name='On Order',            engine='pyxlsb', header=None)
     df_lb = pd.read_excel(FP, sheet_name='Labor',                engine='pyxlsb', header=None)
     df_pr = pd.read_excel(FP, sheet_name='Payroll',              engine='pyxlsb', header=None)
+
+    d['cfw_history'] = read_cash_flow_weekly_history(FP)
 
     def sc(row, col):
         r = row - 1
@@ -523,6 +588,16 @@ def read_all():
             if str(row[0]).strip() == name: return float(row[59]) if pd.notna(row[59]) else 0.0
         return 0.0
     def proj(name): return get_a(name) + get_r(name)
+
+    # Cash Bridge's COGS - A/P CNS / A/P - Key Vendors Plan: the 2026
+    # Budget's remaining-weeks plan for the four line items those two
+    # live-A/P feeds actually cover -- Spring/Summer, Fall/Winter, Special,
+    # and Screen Printing Wholesale -- not Product Testing or any other
+    # 2026 Budget COGS line, and not the broader Summary-sheet COGS total
+    # used elsewhere on the dashboard.
+    COGS_AP_PLAN_LINES = ['COGS - Spring/Summer', 'COGS - Fall/Winter', 'COGS - Special',
+                           'COGS - Screen Printing Wholesale']
+    d['cogs_ap_remaining_plan'] = sum(get_r(name) for name in COGS_AP_PLAN_LINES)
 
     rev_map = [
         ('Jettylife.com (DTC)',   'DTC - Jettylife.com'),
@@ -1573,6 +1648,7 @@ def build_chart_js(d):
         '{l:"F26",d:' + st_xy(d['st_f26'], d['inv_est']['st_f26']) + ',c:"#43575E"}]);\n'
         + build_labor_chart_js(d)
         + build_summary_trend_charts_js(d)
+        + build_cf_ty_ly_charts_js(d)
         + build_creditline_chart_js(d)
         + build_bp_gap_chart_js(d)
         + build_cl_activity_chart_js(d)
@@ -1689,6 +1765,124 @@ def build_ap_key_vendors_chart_js(d):
         ']};'
         'window.__chartData["chart-ap-kv-weekly"]=data;window.__chartOptsFn["chart-ap-kv-weekly"]=apKvOpts;'
         'window.__charts["chart-ap-kv-weekly"]=new Chart(el,{type:"line",data:data,options:apKvOpts()});})();\n'
+    )
+
+CF_TY_LY_COLORS = dict(
+    in_ty="#2F7A5C", in_ly="#A8D5C2",       # green: Cash In, TY solid / LY light
+    out_ty="#B4482F", out_ly="#E8B7A8",     # red: Cash Out, TY solid / LY light
+    draw_ty="#2B6CB0", draw_ly="#9DC3E6",   # blue: CL Draw, TY solid / LY light
+    pay_ty="#7B3F9E", pay_ly="#C9AEDB",     # purple: CL Paydown, TY solid / LY light
+)
+
+def build_cf_ty_ly_charts_js(d):
+    """Section #1 of the rebuilt Cash Flow tab: Cash In/Out by week, this
+    year vs. last, with Columbia CL Draw/Paydown called out separately
+    since they're baked into the raw Cash In/Out totals (a draw is a real
+    "Receive Money" transaction, a paydown a real debit) -- without the
+    callout, a big draw week reads as a strong revenue week. Two charts,
+    same 8 series and color convention throughout:
+    - Weekly (bars, this function's first chart): Cash In up, Cash Out
+      down: CL Draw/Paydown as thin overlay lines on the same axes rather
+      than stacked inside the bars, so the exact draw/paydown amount for
+      any given week is still readable on its own.
+    - Cumulative (lines, second chart): the same 8 series as running
+      totals, stopping (not flatlining at 0) once TY data runs out for
+      the year, via cumsum_with_gaps().
+    Both read from cfw_history (see read_cash_flow_weekly_history) --
+    returns '' if that's empty (sheet missing/unreadable)."""
+    hist = d.get('cfw_history') or {}
+    ty_year = max(hist.keys()) if hist else None
+    ly_year = ty_year - 1 if ty_year else None
+    ty = hist.get(ty_year, {})
+    ly = hist.get(ly_year, {})
+    if not ty:
+        return ''
+
+    def get(block, key):
+        return block.get(key) or [None] * 52
+
+    in_ty, out_ty = get(ty, 'cash_in'), [(-v if v is not None else None) for v in get(ty, 'cash_out')]
+    in_ly, out_ly = get(ly, 'cash_in'), [(-v if v is not None else None) for v in get(ly, 'cash_out')]
+    draw_ty, pay_ty = get(ty, 'cl_draw'), [(-v if v is not None else None) for v in get(ty, 'cl_paydown')]
+    draw_ly, pay_ly = get(ly, 'cl_draw'), [(-v if v is not None else None) for v in get(ly, 'cl_paydown')]
+
+    labels = '[' + ','.join('"Wk ' + str(i) + '"' for i in range(1, 53)) + ']'
+    c = CF_TY_LY_COLORS
+
+    def bar_ds(label, arr, color):
+        return ('{type:"bar",label:"' + label + '",data:' + js_arr_n(arr) +
+                ',backgroundColor:"' + color + '",borderRadius:2,order:2}')
+    def line_ds(label, arr, color, dashed):
+        dash = ',borderDash:[5,3]' if dashed else ''
+        return ('{type:"line",label:"' + label + '",data:' + js_arr_n(arr) +
+                ',borderColor:"' + color + '",backgroundColor:"transparent",'
+                'borderWidth:1.75,pointRadius:1.5,tension:0.2,order:1' + dash + '}')
+
+    weekly_datasets = ','.join([
+        bar_ds('Cash In (TY)', in_ty, c['in_ty']), bar_ds('Cash In (LY)', in_ly, c['in_ly']),
+        bar_ds('Cash Out (TY)', out_ty, c['out_ty']), bar_ds('Cash Out (LY)', out_ly, c['out_ly']),
+        line_ds('CL Draw (TY)', draw_ty, c['draw_ty'], False), line_ds('CL Draw (LY)', draw_ly, c['draw_ly'], True),
+        line_ds('CL Paydown (TY)', pay_ty, c['pay_ty'], False), line_ds('CL Paydown (LY)', pay_ly, c['pay_ly'], True),
+    ])
+
+    cum_datasets = ','.join([
+        line_ds('Cash In (TY)', cumsum_with_gaps(in_ty), c['in_ty'], False),
+        line_ds('Cash In (LY)', cumsum_with_gaps(in_ly), c['in_ly'], True),
+        line_ds('Cash Out (TY)', cumsum_with_gaps(out_ty), c['out_ty'], False),
+        line_ds('Cash Out (LY)', cumsum_with_gaps(out_ly), c['out_ly'], True),
+        line_ds('CL Draw (TY)', cumsum_with_gaps(draw_ty), c['draw_ty'], False),
+        line_ds('CL Draw (LY)', cumsum_with_gaps(draw_ly), c['draw_ly'], True),
+        line_ds('CL Paydown (TY)', cumsum_with_gaps(pay_ty), c['pay_ty'], False),
+        line_ds('CL Paydown (LY)', cumsum_with_gaps(pay_ly), c['pay_ly'], True),
+    ])
+
+    return (
+        'function cfTyLyOpts(){return {responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:true,position:"top",labels:{boxWidth:12,font:{size:9}}},'
+        'tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
+        'scales:{x:{type:"category",grid:{display:false},'
+        'ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},'
+        'y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};}\n'
+        'window.__chartData=window.__chartData||{};window.__chartOptsFn=window.__chartOptsFn||{};window.__charts=window.__charts||{};\n'
+        '(function(){const el=document.getElementById("chart-cf-ty-ly-weekly");if(!el)return;'
+        'const data={labels:' + labels + ',datasets:[' + weekly_datasets + ']};'
+        'window.__chartData["chart-cf-ty-ly-weekly"]=data;window.__chartOptsFn["chart-cf-ty-ly-weekly"]=cfTyLyOpts;'
+        'window.__charts["chart-cf-ty-ly-weekly"]=new Chart(el,{type:"bar",data:data,options:cfTyLyOpts()});})();\n'
+        '(function(){const el=document.getElementById("chart-cf-ty-ly-cumulative");if(!el)return;'
+        'const data={labels:' + labels + ',datasets:[' + cum_datasets + ']};'
+        'window.__chartData["chart-cf-ty-ly-cumulative"]=data;window.__chartOptsFn["chart-cf-ty-ly-cumulative"]=cfTyLyOpts;'
+        'window.__charts["chart-cf-ty-ly-cumulative"]=new Chart(el,{type:"line",data:data,options:cfTyLyOpts()});})();\n'
+    )
+
+def build_cf_ty_ly_section(d):
+    """HTML for Section #1 of the rebuilt Cash Flow tab -- see
+    build_cf_ty_ly_charts_js() for the data/series this renders.
+    Returns '' if cfw_history has no data for the current year."""
+    hist = d.get('cfw_history') or {}
+    ty_year = max(hist.keys()) if hist else None
+    if not ty_year or not hist.get(ty_year):
+        return ''
+    ly_year = ty_year - 1
+
+    def card(chart_id, title, desc):
+        return (
+            '<div class="rc-card" style="grid-column:1 / -1;position:relative">'
+            '<div class="rc-headrow"><div class="rc-name">' + title + '</div>'
+            '<div class="rc-desc">' + desc + '</div>'
+            '<button class="rc-expand-btn" data-chart-id="' + chart_id + '" data-chart-title="' + html_escape(title) + '">⤢ Expand</button>'
+            '</div>'
+            '<div style="height:320px;margin-top:10px"><canvas id="' + chart_id + '"></canvas></div>'
+            '</div>\n'
+        )
+
+    desc = ('Columbia CL Draw/Paydown are already included in Cash In/Cash Out above -- '
+            'called out separately (not stacked inside the bars) since a draw week can '
+            'otherwise read as unusually strong collections, or a paydown week as unusually '
+            'heavy spend.')
+    return (
+        rc_divider("Cash In / Cash Out — " + str(ty_year) + " vs. " + str(ly_year))
+        + card('chart-cf-ty-ly-weekly', 'Weekly', desc)
+        + card('chart-cf-ty-ly-cumulative', 'Cumulative', desc)
     )
 
 def build_creditline_chart_js(d):
@@ -1957,10 +2151,10 @@ def build_cash_bridge(d):
     throughout -- Plan is the 2026 Budget's own remaining-plan figure,
     untouched; Actual is grounded in live, bottom-up signals (on-order
     backlog, A/R, live A/P balances, Xero-reported cash in) instead of the
-    budget's assumed pace -- genuinely a forecast only on the one row
-    ("Projected Cash IN") where no live number for the remaining weeks
-    exists yet; everywhere else it's real, already-known data. Rows that
-    are already-known facts on both sides at once (Cash on Hand, A/P
+    budget's assumed pace. Labor and OpEx are the exception -- both have
+    held close to plan all year, so their Actual column is just the plan
+    figure again rather than a separate extrapolation. Rows that are
+    already-known facts on both sides at once (Cash on Hand, A/P
     Carryforward) aren't a Plan-vs-Actual estimate at all -- Plan is left
     blank ('—') and only Actual carries the real figure. The Balance
     (Plan) / Balance (Trend) columns are the two predicted outcomes this
@@ -2016,31 +2210,34 @@ def build_cash_bridge(d):
     cash_in_ytd_act  = (bp_ytd['cash_in']  - bp_ytd['cl_draw'])    if bp_ytd else 0.0
     cash_in_ytd_plan = d['cash_in']['plan']
 
-    rem_cogs_plan  = d['cogs']['ann_plan']  - d['cogs']['plan']
+    # Plan for A/P CNS + A/P - Key Vendors combined: the 2026 Budget's own
+    # remaining-weeks plan for the four line items those two live-A/P feeds
+    # actually cover (Spring/Summer, Fall/Winter, Special, Screen Printing
+    # Wholesale) -- computed in read_all() since it needs direct access to
+    # the 2026 Budget sheet's per-week columns. No separate CNS-only vs.
+    # Key-Vendors-only split exists, so the combined figure sits on the CNS
+    # row; Key Vendors' own Plan cell stays '—'.
+    rem_cogs_plan  = d['cogs_ap_remaining_plan']
     rem_labor_plan = d['labor_total']['ann_plan'] - d['labor_total']['ytd_plan']
     rem_opex_plan  = d['opex']['ann_plan']  - d['opex']['plan']
 
     ap = d.get('ap_cns')
     kv = d.get('ap_key_vendors_open')
     # Labor and OpEx have held close to plan all year, so their Trend column
-    # is the plan figure itself, not a pace extrapolation. COGS - A/P CNS
-    # and COGS - A/P - Key Vendors go further: the 2026 Budget's COGS plan
-    # (rem_cogs_plan below) was modeled off 2025 pace and doesn't split
-    # CNS vs. Key Vendors at all -- now that live, vendor-specific A/P data
-    # exists for both, it's a more reliable "plan" than the original budget
-    # guess, so it drives *both* columns for these two rows (mirroring the
-    # Labor/OpEx convention, just with live data standing in for the plan
-    # instead of the budget figure). rem_cogs_plan is kept only as the
-    # original combined-budget reference quoted in the CNS row's own Notes
-    # cell -- it no longer feeds the Cash Out total. A small Other COGS +
-    # Shipping pace estimate (freight, etc. -- not tracked by vendor) is
-    # folded into the CNS row so nothing is silently dropped from the total.
+    # is the plan figure itself, not a pace extrapolation. COGS - A/P CNS /
+    # A/P - Key Vendors keep a genuine Plan-vs-Actual split, now that
+    # rem_cogs_plan above is a real, correctly-scoped plan figure rather
+    # than the old un-split Summary-sheet COGS total. Actual is the live
+    # A/P balance for each; a small Other COGS + Shipping pace estimate
+    # (freight, etc. -- not tracked by vendor, and not one of the four
+    # budget lines above either) is folded into the CNS row's Actual so
+    # nothing is silently dropped from the total.
     other_cogs_trend = pace('cout_o')
     ap_cns_trend = (ap['total'] if ap else pace('cout_b')) + other_cogs_trend
     ap_kv_trend  = (kv['brand_total'] + kv['ink_total']) if kv else pace('cout_i')
     rem_labor_trend = rem_labor_plan
     rem_opex_trend  = rem_opex_plan
-    rem_out_plan  = ap_cns_trend + ap_kv_trend + rem_labor_plan + rem_opex_plan
+    rem_out_plan  = rem_cogs_plan + rem_labor_plan + rem_opex_plan
     rem_out_trend = ap_cns_trend + ap_kv_trend + rem_labor_trend + rem_opex_trend
 
     plan_bal1  = cash_on_hand + rem_in_plan
@@ -2083,17 +2280,18 @@ def build_cash_bridge(d):
                         '', '', note='', bold=True)
 
     rows += bridge_row('Cash OUT', '', '', '', '', note='', bold=True)
-    rows += bridge_row('COGS - A/P CNS', fk(ap_cns_trend), fk(ap_cns_trend), '', '',
-                        note="A/P to overseas & 3rd-party vendors via Airtable, plus a pace estimate for "
-                             "Other COGS + Shipping — used for both Plan and Actual, since it's more reliable "
-                             "than the 2026 Budget's " + fk(rem_cogs_plan) + " combined COGS assumption "
-                             "(which doesn't split CNS vs. Key Vendors). Must still adjust based on actual "
-                             "cash flow.", indent=True)
-    rows += bridge_row('COGS - A/P - Key Vendors', fk(ap_kv_trend), fk(ap_kv_trend), '', '',
-                        note="A/P - Key Vendors are domestic-sourced blanks for both Brand & INK — same live "
-                             "balance used for both Plan and Actual, for the same reason as A/P CNS above. "
-                             "Must still adjust based on vendor balances, terms, and leniency (leniency "
-                             "rules TBD, e.g. S&amp;S must be paid 90+ in any given week).", indent=True)
+    rows += bridge_row('COGS - A/P CNS', fk(rem_cogs_plan), fk(ap_cns_trend), '', '',
+                        note="Plan: 2026 Budget's remaining-weeks COGS - Spring/Summer + Fall/Winter + "
+                             "Special + Screen Printing Wholesale (no separate CNS-only budget line exists, "
+                             "so Key Vendors' plan is combined here too). Actual: live A/P - CNS balance "
+                             "via Airtable, plus a pace estimate for Other COGS + Shipping. Must still "
+                             "adjust based on actual cash flow.", indent=True)
+    rows += bridge_row('COGS - A/P - Key Vendors', '—', fk(ap_kv_trend), '', '',
+                        note="No separate plan line for Key Vendors alone — its remaining-weeks budget is "
+                             "combined with A/P - CNS above. Actual: live A/P - Key Vendors balance, Brand "
+                             "+ INK open POs via Airtable. Must still adjust based on vendor balances, "
+                             "terms, and leniency (leniency rules TBD, e.g. S&amp;S must be paid 90+ in "
+                             "any given week).", indent=True)
     rows += bridge_row('Labor', fk(rem_labor_plan), fk(rem_labor_trend), '', '',
                         note="Labor per plan.", indent=True)
     rows += bridge_row('OpEx', fk(rem_opex_plan), fk(rem_opex_trend), '', '',
@@ -2445,7 +2643,11 @@ def build_cashflow_panel(d):
     cf = d['cf']
     def p(k): return cf[k][-1] if cf[k] else 0
 
-    body = build_cash_bridge(d)
+    # Cash Flow tab rebuild, in progress -- Section #1 (Cash In/Out by week,
+    # TY vs. LY) goes first; everything below this line is the old tab,
+    # unchanged section by section until we get to it.
+    body = build_cf_ty_ly_section(d)
+    body += build_cash_bridge(d)
     body += build_bank_position_section(d)
 
     body += rc_divider("Cash Flow vs. Plan (Cash Flow - Tracker)")
