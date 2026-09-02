@@ -1836,11 +1836,13 @@ def build_cf_ty_ly_charts_js(d):
     """Section #1 of the rebuilt Cash Flow tab, this year vs. last:
     - Total Bank Balance (lines): the week's starting balance, TY vs. LY.
     - Weekly (bars): Cash In/Cash Out only, TY vs. LY.
-    - CL Draw / Paydown (bars, directly below Weekly): Columbia CL Draw/
-      Paydown broken out into their own chart since they're baked into the
-      raw Cash In/Out totals above (a draw is a real "Receive Money"
-      transaction, a paydown a real debit) -- left in the Weekly chart, a
-      big draw week reads as a strong revenue week.
+    - CL Draw / Paydown (lines, directly below Weekly): net Columbia CL
+      activity per week (draw minus paydown), TY vs. LY -- one line per
+      year rather than 4 separate bars, since Draw/Paydown are baked into
+      the raw Cash In/Out totals above (a draw is a real "Receive Money"
+      transaction, a paydown a real debit) and this chart exists purely
+      as the callout, not a second full breakdown: up = net borrowing
+      that week, down = net paydown.
     All three read from cfw_history (see read_cash_flow_weekly_history) --
     returns '' if that's empty (sheet missing/unreadable)."""
     hist = d.get('cfw_history') or {}
@@ -1854,11 +1856,20 @@ def build_cf_ty_ly_charts_js(d):
     def get(block, key):
         return block.get(key) or [None] * 52
 
+    def net(draw, pay):
+        out = []
+        for dv, pv in zip(draw, pay):
+            if dv is None and pv is None:
+                out.append(None)
+            else:
+                out.append(round((dv or 0) - (pv or 0), 2))
+        return out
+
     bal_ty, bal_ly = get(ty, 'bank_balance'), get(ly, 'bank_balance')
     in_ty, out_ty = get(ty, 'cash_in'), [(-v if v is not None else None) for v in get(ty, 'cash_out')]
     in_ly, out_ly = get(ly, 'cash_in'), [(-v if v is not None else None) for v in get(ly, 'cash_out')]
-    draw_ty, pay_ty = get(ty, 'cl_draw'), [(-v if v is not None else None) for v in get(ty, 'cl_paydown')]
-    draw_ly, pay_ly = get(ly, 'cl_draw'), [(-v if v is not None else None) for v in get(ly, 'cl_paydown')]
+    cl_ty = net(get(ty, 'cl_draw'), get(ty, 'cl_paydown'))
+    cl_ly = net(get(ly, 'cl_draw'), get(ly, 'cl_paydown'))
 
     labels = '[' + ','.join('"Wk ' + str(i) + '"' for i in range(1, 53)) + ']'
     c = CF_TY_LY_COLORS
@@ -1883,8 +1894,8 @@ def build_cf_ty_ly_charts_js(d):
     ])
 
     cl_datasets = ','.join([
-        bar_ds('CL Draw (TY)', draw_ty, c['draw_ty']), bar_ds('CL Draw (LY)', draw_ly, c['draw_ly']),
-        bar_ds('CL Paydown (TY)', pay_ty, c['pay_ty']), bar_ds('CL Paydown (LY)', pay_ly, c['pay_ly']),
+        line_ds('Columbia CL (TY)', cl_ty, c['draw_ty'], False),
+        line_ds('Columbia CL (LY)', cl_ly, c['draw_ly'], True),
     ])
 
     return (
@@ -1906,7 +1917,7 @@ def build_cf_ty_ly_charts_js(d):
         '(function(){const el=document.getElementById("chart-cf-ty-ly-cl-weekly");if(!el)return;'
         'const data={labels:' + labels + ',datasets:[' + cl_datasets + ']};'
         'window.__chartData["chart-cf-ty-ly-cl-weekly"]=data;window.__chartOptsFn["chart-cf-ty-ly-cl-weekly"]=cfTyLyOpts;'
-        'window.__charts["chart-cf-ty-ly-cl-weekly"]=new Chart(el,{type:"bar",data:data,options:cfTyLyOpts()});})();\n'
+        'window.__charts["chart-cf-ty-ly-cl-weekly"]=new Chart(el,{type:"line",data:data,options:cfTyLyOpts()});})();\n'
     )
 
 def build_cf_ty_ly_section(d):
@@ -1932,10 +1943,9 @@ def build_cf_ty_ly_section(d):
 
     balance_desc = 'Starting bank balance by week.'
     weekly_desc = 'Cash In vs. Cash Out by week.'
-    cl_desc = ('Columbia CL Draw/Paydown, broken out on their own axes -- these are already '
-               'included in Cash In/Cash Out above, called out separately since a draw week can '
-               'otherwise read as unusually strong collections, or a paydown week as unusually '
-               'heavy spend.')
+    cl_desc = ('Net Columbia CL activity by week (draw minus paydown) -- already included in '
+               'Cash In/Cash Out above, called out separately since a draw week can otherwise '
+               'read as unusually strong collections, or a paydown week as unusually heavy spend.')
     return (
         rc_divider("Cash In / Cash Out — " + str(ty_year) + " vs. " + str(ly_year))
         + card('chart-cf-ty-ly-balance', 'Total Bank Balance', balance_desc)
