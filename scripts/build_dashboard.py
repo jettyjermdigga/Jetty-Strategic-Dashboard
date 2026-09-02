@@ -552,6 +552,41 @@ def read_bank_balance_history(fp):
                 break
     return by_year
 
+def read_ar_history(fp):
+    """Returns {year: {'brand_total': [wk1..wk52], 'ink_total': [...]}} of
+    weekly Total A/R (the 'Total' column of each block, not the '0-90
+    Days' subtotal -- includes 91+ Days), from the 'AR' sheet's Brand A/R
+    and INK A/R blocks, keyed by that sheet's own 'Week' number. Trailing
+    zeros (weeks not yet reached) are converted to None, same convention
+    as read_bank_balance_history(). Returns {} if the sheet is missing/
+    unreadable. Unlike Cash Flow/Bank Balance, this sheet only has a 2026
+    block -- no prior-year comparison is possible from this source."""
+    try:
+        df = pd.read_excel(fp, sheet_name='AR', engine='pyxlsb', header=None)
+    except ValueError:
+        return {}
+    by_year = {}
+    for _, row in df.iterrows():
+        yr, wk, brand_tot, ink_tot = row[0], row[2], row[9], row[16]
+        try:
+            yr, wk = int(yr), int(wk)
+        except (TypeError, ValueError):
+            continue
+        if not (1 <= wk <= 52):
+            continue
+        entry = by_year.setdefault(yr, {'brand_total': [None] * 52, 'ink_total': [None] * 52})
+        entry['brand_total'][wk - 1] = float(brand_tot) if pd.notna(brand_tot) else None
+        entry['ink_total'][wk - 1] = float(ink_tot) if pd.notna(ink_tot) else None
+    for entry in by_year.values():
+        for key in ('brand_total', 'ink_total'):
+            weeks = entry[key]
+            for i in range(len(weeks) - 1, -1, -1):
+                if weeks[i] == 0:
+                    weeks[i] = None
+                else:
+                    break
+    return by_year
+
 def js_arr_n(lst):
     """Like js_arr, but None -> JS null instead of the string 'None'."""
     return '[' + ','.join('null' if v is None else str(v) for v in lst) + ']'
@@ -571,6 +606,7 @@ def read_all():
     d['cfw_history'] = read_cash_flow_weekly_history(FP)
     for yr, weeks in read_bank_balance_history(FP).items():
         d['cfw_history'].setdefault(yr, {})['bank_balance'] = weeks
+    d['ar_history'] = read_ar_history(FP)
 
     def sc(row, col):
         r = row - 1
@@ -1669,6 +1705,7 @@ def build_chart_js(d):
         + build_labor_chart_js(d)
         + build_summary_trend_charts_js(d)
         + build_cf_ty_ly_charts_js(d)
+        + build_ar_chart_js(d)
         + build_creditline_chart_js(d)
         + build_bp_gap_chart_js(d)
         + build_cl_activity_chart_js(d)
@@ -1904,6 +1941,61 @@ def build_cf_ty_ly_section(d):
         + card('chart-cf-ty-ly-balance', 'Total Bank Balance', balance_desc)
         + card('chart-cf-ty-ly-weekly', 'Weekly', weekly_desc)
         + card('chart-cf-ty-ly-cl-weekly', 'Columbia CL Draw / Paydown', cl_desc)
+    )
+
+AR_COLORS = dict(brand="#2B6CB0", ink="#B4482F")  # blue: Brand A/R, red: INK A/R
+
+def build_ar_chart_js(d):
+    """Total A/R trend by week, split Brand vs. INK -- from the AR sheet
+    (see read_ar_history). 2026 only, no prior-year block exists on that
+    sheet to compare against. Returns '' if ar_history is empty."""
+    hist = d.get('ar_history') or {}
+    year = max(hist.keys()) if hist else None
+    if not year:
+        return ''
+    yr_data = hist[year]
+    brand = yr_data.get('brand_total') or [None] * 52
+    ink = yr_data.get('ink_total') or [None] * 52
+    labels = '[' + ','.join('"Wk ' + str(i) + '"' for i in range(1, 53)) + ']'
+    c = AR_COLORS
+
+    def line_ds(label, arr, color):
+        return ('{label:"' + label + '",data:' + js_arr_n(arr) +
+                ',borderColor:"' + color + '",backgroundColor:"transparent",'
+                'borderWidth:2,pointRadius:2,tension:0.25}')
+
+    datasets = ','.join([line_ds('Brand A/R', brand, c['brand']), line_ds('INK A/R', ink, c['ink'])])
+
+    return (
+        'function arChartOpts(){return {responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:true,position:"top",labels:{boxWidth:12,font:{size:9}}},'
+        'tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
+        'scales:{x:{type:"category",grid:{display:false},'
+        'ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},'
+        'y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};}\n'
+        'window.__chartData=window.__chartData||{};window.__chartOptsFn=window.__chartOptsFn||{};window.__charts=window.__charts||{};\n'
+        '(function(){const el=document.getElementById("chart-ar-weekly");if(!el)return;'
+        'const data={labels:' + labels + ',datasets:[' + datasets + ']};'
+        'window.__chartData["chart-ar-weekly"]=data;window.__chartOptsFn["chart-ar-weekly"]=arChartOpts;'
+        'window.__charts["chart-ar-weekly"]=new Chart(el,{type:"line",data:data,options:arChartOpts()});})();\n'
+    )
+
+def build_ar_section(d):
+    """HTML for the A/R trend chart -- see build_ar_chart_js() for the
+    data/series this renders. Returns '' if ar_history has no data."""
+    hist = d.get('ar_history') or {}
+    year = max(hist.keys()) if hist else None
+    if not year or not hist.get(year):
+        return ''
+    return (
+        rc_divider("Accounts Receivable — " + str(year))
+        + '<div class="rc-card" style="grid-column:1 / -1;position:relative">'
+        + '<div class="rc-headrow"><div class="rc-name">Total A/R Trend</div>'
+        + '<div class="rc-desc">Weekly Total A/R (Current through 91+ Days), Brand vs. INK.</div>'
+        + '<button class="rc-expand-btn" data-chart-id="chart-ar-weekly" data-chart-title="Total A/R Trend">⤢ Expand</button>'
+        + '</div>'
+        + '<div style="height:320px;margin-top:10px"><canvas id="chart-ar-weekly"></canvas></div>'
+        + '</div>\n'
     )
 
 def build_creditline_chart_js(d):
@@ -2665,9 +2757,10 @@ def build_cashflow_panel(d):
     def p(k): return cf[k][-1] if cf[k] else 0
 
     # Cash Flow tab rebuild, in progress -- Section #1 (Cash In/Out by week,
-    # TY vs. LY) goes first; everything below this line is the old tab,
-    # unchanged section by section until we get to it.
+    # TY vs. LY) goes first, then the A/R trend; everything below this
+    # line is the old tab, unchanged section by section until we get to it.
     body = build_cf_ty_ly_section(d)
+    body += build_ar_section(d)
     body += build_cash_bridge(d)
     body += build_bank_position_section(d)
 
