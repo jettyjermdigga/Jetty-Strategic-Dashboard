@@ -496,8 +496,12 @@ def read_categories():
 # now". This reader is self-contained and doesn't touch that old path.
 def read_cash_flow_weekly_history(fp):
     """Returns {year: {'cash_in': [wk1..wk52], 'cash_out': [...],
-    'cl_draw': [...], 'cl_paydown': [...]}}, values None for weeks not
-    yet entered. Returns {} if the sheet is missing or empty.
+    'cl_draw': [...], 'cl_paydown': [...], 'cl_balance': [...]}}, values
+    None for weeks not yet entered. Returns {} if the sheet is missing or
+    empty. 'cl_balance' (the sheet's own running Columbia CL balance row)
+    is fully populated through week 52 -- it holds flat at the last real
+    draw/paydown rather than going blank for future weeks, unlike the
+    other four series here.
     (Bank balance history lives on the separate 'Bank Balance' sheet --
     see read_bank_balance_history -- the 'Total Starting Bank Balance'
     row on this sheet is currently unpopulated.)"""
@@ -506,7 +510,8 @@ def read_cash_flow_weekly_history(fp):
     except ValueError:
         return {}
     accounts = {'Total Cash IN': 'cash_in', 'Total Cash OUT': 'cash_out',
-                'Columbia CL Draw': 'cl_draw', 'Columbia CL Paydown': 'cl_paydown'}
+                'Columbia CL Draw': 'cl_draw', 'Columbia CL Paydown': 'cl_paydown',
+                'Columbia CL Balance': 'cl_balance'}
     by_year = {}
     current_year = None
     for _, row in df.iterrows():
@@ -587,6 +592,65 @@ def read_ar_history(fp):
                     break
     return by_year
 
+def read_ap_vendor_total(fp, sheet_name):
+    """Returns {year: [wk1..52]} of the TOTAL row from the 'AP - Key' /
+    'AP - CNS' sheets -- Year/Type/Terms/Account header, one row per
+    vendor, weekly columns 1-52, a 'TOTAL A/P - ...' row at the bottom.
+    These are hand-entered cumulative snapshots (not backfilled week by
+    week), so unlike the other read_* helpers here this returns the raw
+    values as-is, zeros included -- callers should take the latest
+    non-zero week as "the current balance" rather than assuming a
+    contiguous run from week 1. Returns {} if the sheet is missing/
+    unreadable or doesn't match the expected layout."""
+    try:
+        df = pd.read_excel(fp, sheet_name=sheet_name, engine='pyxlsb', header=None)
+    except ValueError:
+        return {}
+    header_row = None
+    for i in range(min(6, len(df))):
+        if list(df.iloc[i, 0:4]) == ['Year', 'Type', 'Terms', 'Account']:
+            header_row = i
+            break
+    if header_row is None:
+        return {}
+    week_cols = {}
+    for col in range(4, df.shape[1]):
+        v = df.iloc[header_row, col]
+        try:
+            wk = int(v)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= wk <= 52:
+            week_cols[wk] = col
+    total_row = None
+    for i in range(header_row + 1, len(df)):
+        acct = df.iloc[i, 3]
+        if isinstance(acct, str) and acct.strip().upper().startswith('TOTAL'):
+            total_row = i
+            break
+    if total_row is None:
+        return {}
+    yr = df.iloc[header_row + 1, 0]
+    try:
+        yr = int(yr)
+    except (TypeError, ValueError):
+        return {}
+    weeks = [None] * 52
+    for wk, col in week_cols.items():
+        v = df.iloc[total_row, col]
+        weeks[wk - 1] = float(v) if pd.notna(v) else None
+    return {yr: weeks}
+
+def latest_nonzero(weeks):
+    """Scans a [wk1..52] array from the end and returns the last non-None,
+    non-zero value -- "the current balance" convention for the hand-entered
+    AP - Key / AP - CNS snapshots (see read_ap_vendor_total). Returns None
+    if every week is None/zero."""
+    for v in reversed(weeks or []):
+        if v not in (None, 0, 0.0):
+            return v
+    return None
+
 def js_arr_n(lst):
     """Like js_arr, but None -> JS null instead of the string 'None'."""
     return '[' + ','.join('null' if v is None else str(v) for v in lst) + ']'
@@ -607,6 +671,8 @@ def read_all():
     for yr, weeks in read_bank_balance_history(FP).items():
         d['cfw_history'].setdefault(yr, {})['bank_balance'] = weeks
     d['ar_history'] = read_ar_history(FP)
+    d['ap_key_xl'] = read_ap_vendor_total(FP, 'AP - Key')
+    d['ap_cns_xl'] = read_ap_vendor_total(FP, 'AP - CNS')
 
     def sc(row, col):
         r = row - 1
@@ -1836,11 +1902,13 @@ def build_cf_ty_ly_charts_js(d):
     """Section #1 of the rebuilt Cash Flow tab, this year vs. last:
     - Total Bank Balance (lines): the week's starting balance, TY vs. LY.
     - Weekly (bars): Cash In/Cash Out only, TY vs. LY.
-    - CL Draw / Paydown (bars, directly below Weekly): Columbia CL Draw/
-      Paydown broken out into their own chart since they're baked into the
-      raw Cash In/Out totals above (a draw is a real "Receive Money"
-      transaction, a paydown a real debit) -- left in the Weekly chart, a
-      big draw week reads as a strong revenue week.
+    - CL Draw / Paydown (lines, directly below Weekly): net Columbia CL
+      activity per week (draw minus paydown), TY vs. LY -- one line per
+      year rather than 4 separate bars, since Draw/Paydown are baked into
+      the raw Cash In/Out totals above (a draw is a real "Receive Money"
+      transaction, a paydown a real debit) and this chart exists purely
+      as the callout, not a second full breakdown: up = net borrowing
+      that week, down = net paydown.
     All three read from cfw_history (see read_cash_flow_weekly_history) --
     returns '' if that's empty (sheet missing/unreadable)."""
     hist = d.get('cfw_history') or {}
@@ -1854,11 +1922,20 @@ def build_cf_ty_ly_charts_js(d):
     def get(block, key):
         return block.get(key) or [None] * 52
 
+    def net(draw, pay):
+        out = []
+        for dv, pv in zip(draw, pay):
+            if dv is None and pv is None:
+                out.append(None)
+            else:
+                out.append(round((dv or 0) - (pv or 0), 2))
+        return out
+
     bal_ty, bal_ly = get(ty, 'bank_balance'), get(ly, 'bank_balance')
     in_ty, out_ty = get(ty, 'cash_in'), [(-v if v is not None else None) for v in get(ty, 'cash_out')]
     in_ly, out_ly = get(ly, 'cash_in'), [(-v if v is not None else None) for v in get(ly, 'cash_out')]
-    draw_ty, pay_ty = get(ty, 'cl_draw'), [(-v if v is not None else None) for v in get(ty, 'cl_paydown')]
-    draw_ly, pay_ly = get(ly, 'cl_draw'), [(-v if v is not None else None) for v in get(ly, 'cl_paydown')]
+    cl_ty = net(get(ty, 'cl_draw'), get(ty, 'cl_paydown'))
+    cl_ly = net(get(ly, 'cl_draw'), get(ly, 'cl_paydown'))
 
     labels = '[' + ','.join('"Wk ' + str(i) + '"' for i in range(1, 53)) + ']'
     c = CF_TY_LY_COLORS
@@ -1883,8 +1960,8 @@ def build_cf_ty_ly_charts_js(d):
     ])
 
     cl_datasets = ','.join([
-        bar_ds('CL Draw (TY)', draw_ty, c['draw_ty']), bar_ds('CL Draw (LY)', draw_ly, c['draw_ly']),
-        bar_ds('CL Paydown (TY)', pay_ty, c['pay_ty']), bar_ds('CL Paydown (LY)', pay_ly, c['pay_ly']),
+        line_ds('Columbia CL (TY)', cl_ty, c['draw_ty'], False),
+        line_ds('Columbia CL (LY)', cl_ly, c['draw_ly'], True),
     ])
 
     return (
@@ -1906,7 +1983,119 @@ def build_cf_ty_ly_charts_js(d):
         '(function(){const el=document.getElementById("chart-cf-ty-ly-cl-weekly");if(!el)return;'
         'const data={labels:' + labels + ',datasets:[' + cl_datasets + ']};'
         'window.__chartData["chart-cf-ty-ly-cl-weekly"]=data;window.__chartOptsFn["chart-cf-ty-ly-cl-weekly"]=cfTyLyOpts;'
-        'window.__charts["chart-cf-ty-ly-cl-weekly"]=new Chart(el,{type:"bar",data:data,options:cfTyLyOpts()});})();\n'
+        'window.__charts["chart-cf-ty-ly-cl-weekly"]=new Chart(el,{type:"line",data:data,options:cfTyLyOpts()});})();\n'
+    )
+
+def build_summary_panel(d):
+    """Top-of-page Summary panel, sitting above every other Cash Flow tab
+    section -- a compact EOY cash projection, built from Jeremy's own
+    Cash_Flow_V2 outline (2026-09-02). Returns '' if the current week's
+    Bank Balance isn't available yet (nothing to project from).
+
+    Cash In side: current Bank Balance + last year's actual Cash In for
+    the weeks remaining this year (a conservative, actuals-based
+    projection rather than the 2026 budget's assumed pace).
+
+    Cash Out side: 2026 Budget remaining-weeks Labor + OpEx (unchanged
+    from Cash Bridge's own formulas), 2026 Budget remaining-weeks COGS
+    *excluding* the four lines now tracked live via A/P (Spring/Summer,
+    Fall/Winter, Special, Screen Printing Wholesale -- same exclusion
+    Cash Bridge already applies), plus the live A/P - Key Vendors and
+    A/P - CNS balances themselves, taken whole -- no aging filter yet on
+    Key Vendors (Jeremy: "we can set some rules based on the aging in AT
+    later"), full outstanding balance on CNS by design (so he can weigh
+    paying vendors down vs. drawing the credit line with the complete
+    picture).
+
+    Both A/P figures come from the new 'AP - Key' / 'AP - CNS' sheets --
+    hand-entered cumulative snapshots, not backfilled week by week, so
+    latest_nonzero() takes the most recently entered week rather than
+    assuming the current week itself is populated.
+
+    Two rows from Jeremy's outline are intentionally omitted: Projected
+    Credit Line Paydown and A/P CNS Carryforward (2027) -- both still TBD
+    on his end, pending how he wants to model vendor-pay-vs-credit-line-
+    draw tradeoffs."""
+    hist = d.get('cfw_history') or {}
+    ty_year = max(hist.keys()) if hist else None
+    ly_year = ty_year - 1 if ty_year else None
+    if not ty_year:
+        return ''
+    WK = d['week']
+
+    def get(yr, key):
+        return (hist.get(yr) or {}).get(key) or [None] * 52
+
+    bank_bal_arr = get(ty_year, 'bank_balance')
+    starting_bank_balance = bank_bal_arr[WK - 1] if WK <= len(bank_bal_arr) else None
+    if starting_bank_balance is None:
+        return ''
+
+    ly_cash_in = get(ly_year, 'cash_in')
+    cash_in_projected = sum(v for v in ly_cash_in[WK:] if v is not None)
+    cash_in_eoy = starting_bank_balance + cash_in_projected
+
+    rem_labor_plan = d['labor_total']['ann_plan'] - d['labor_total']['ytd_plan']
+    rem_opex_plan  = d['opex']['ann_plan'] - d['opex']['plan']
+    other_cogs_out = (d['cogs']['ann_plan'] - d['cogs']['plan']) - d['cogs_ap_remaining_plan']
+
+    ap_key_total = latest_nonzero((d.get('ap_key_xl') or {}).get(ty_year)) or 0.0
+    ap_cns_total = latest_nonzero((d.get('ap_cns_xl') or {}).get(ty_year)) or 0.0
+
+    cash_out_eoy = rem_labor_plan + other_cogs_out + ap_key_total + ap_cns_total + rem_opex_plan
+    available_cash = cash_in_eoy - cash_out_eoy
+
+    cl_balance_arr = get(ty_year, 'cl_balance')
+    cl_balance = cl_balance_arr[WK - 1] if WK <= len(cl_balance_arr) else None
+
+    def row(label, value, note='', bold=False, top=False):
+        weight = 'font-weight:700' if bold else ''
+        topb = 'border-top:1.5px solid var(--ink)' if top else ''
+        return (
+            '<tr style="' + topb + '">'
+            '<td style="' + weight + '">' + label + '</td>'
+            '<td style="' + weight + '">' + value + '</td>'
+            '<td style="text-align:left;font-family:var(--body);font-weight:400;opacity:.75;padding-left:16px">' + note + '</td>'
+            '</tr>\n'
+        )
+
+    rows = row('Week', str(WK))
+    rows += row('Starting Bank Balance', fk(starting_bank_balance),
+                'Bank Balance sheet, week ' + str(WK) + ' Total.')
+    rows += row('Total Cash IN (projected)', fk(cash_in_projected),
+                str(ly_year) + "'s actual Cash In for weeks " + str(WK + 1) + '-52 '
+                '(a conservative estimate for the rest of the year).')
+    rows += row('Total Cash IN Projection (EOY)', fk(cash_in_eoy),
+                'Starting Bank Balance + Total Cash IN (projected).', bold=True, top=True)
+
+    rows += row('Labor Out', fk(rem_labor_plan), '2026 Budget remaining weeks.')
+    rows += row('Other COGS Out', fk(other_cogs_out),
+                '2026 Budget remaining weeks, excluding Spring/Summer, Fall/Winter, Special, and Screen '
+                'Printing Wholesale -- those are covered by A/P below.')
+    rows += row('A/P - Key Vendors', fk(ap_key_total),
+                'AP - Key tab, latest entered week TOTAL -- full balance, no aging filter yet.')
+    rows += row('A/P - CNS', fk(ap_cns_total),
+                'AP - CNS tab, latest entered week TOTAL -- full balance.')
+    rows += row('OpEx', fk(rem_opex_plan), '2026 Budget remaining weeks.')
+    rows += row('Total Cash OUT Projection (EOY)', fk(cash_out_eoy),
+                'Labor Out + Other COGS Out + A/P - Key Vendors + A/P - CNS + OpEx.', bold=True, top=True)
+
+    rows += row('Available Cash', fk(available_cash),
+                'Total Cash IN Projection (EOY) − Total Cash OUT Projection (EOY).', bold=True, top=True)
+
+    if cl_balance is not None:
+        rows += row('Columbia Credit Line Balance', fk(cl_balance),
+                     'Cash Flow - Weekly, week ' + str(WK) + ' Columbia CL Balance.', top=True)
+
+    return (
+        rc_divider('Summary — Week ' + str(WK))
+        + '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-hl"><table class="rc-hltable">'
+        '<colgroup><col style="width:32%"><col style="width:18%"><col style="width:50%"></colgroup>'
+        '<thead><tr><th>Line</th><th>Value</th><th style="text-align:left;padding-left:16px">Notes</th></tr></thead>'
+        '<tbody>' + rows + '</tbody>'
+        '</table></div>'
+        '</div>\n'
     )
 
 def build_cf_ty_ly_section(d):
@@ -1932,10 +2121,9 @@ def build_cf_ty_ly_section(d):
 
     balance_desc = 'Starting bank balance by week.'
     weekly_desc = 'Cash In vs. Cash Out by week.'
-    cl_desc = ('Columbia CL Draw/Paydown, broken out on their own axes -- these are already '
-               'included in Cash In/Cash Out above, called out separately since a draw week can '
-               'otherwise read as unusually strong collections, or a paydown week as unusually '
-               'heavy spend.')
+    cl_desc = ('Net Columbia CL activity by week (draw minus paydown) -- already included in '
+               'Cash In/Cash Out above, called out separately since a draw week can otherwise '
+               'read as unusually strong collections, or a paydown week as unusually heavy spend.')
     return (
         rc_divider("Cash In / Cash Out — " + str(ty_year) + " vs. " + str(ly_year))
         + card('chart-cf-ty-ly-balance', 'Total Bank Balance', balance_desc)
@@ -2756,10 +2944,12 @@ def build_cashflow_panel(d):
     cf = d['cf']
     def p(k): return cf[k][-1] if cf[k] else 0
 
-    # Cash Flow tab rebuild, in progress -- Section #1 (Cash In/Out by week,
-    # TY vs. LY) goes first, then the A/R trend; everything below this
-    # line is the old tab, unchanged section by section until we get to it.
-    body = build_cf_ty_ly_section(d)
+    # Cash Flow tab rebuild, in progress -- the Summary panel sits at the
+    # very top, then Section #1 (Cash In/Out by week, TY vs. LY), then the
+    # A/R trend; everything below this line is the old tab, unchanged
+    # section by section until we get to it.
+    body = build_summary_panel(d)
+    body += build_cf_ty_ly_section(d)
     body += build_ar_section(d)
     body += build_cash_bridge(d)
     body += build_bank_position_section(d)
