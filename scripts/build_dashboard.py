@@ -2022,6 +2022,14 @@ def build_summary_panel(d):
     Tracker due dates vs. today), independent of the AP - Key XL tab's
     hand-entered total used above.
 
+    Last two rows (2026-09-03): a static Columbia Bank Credit Line (EOY
+    Goal) of $1.7M, and A/P - CNS (Carryover debt to 2027) -- the
+    shortfall, floored at 0, between what it'd take to pay the credit
+    line down to that goal (Current CL Balance − EOY Goal) and Available
+    Cash (Adjusted). The idea: if there isn't enough cash to both fund
+    that paydown and pay CNS in full, the unpaid CNS balance is what
+    rolls to next year rather than drawing the credit line further.
+
     Two rows from Jeremy's outline are intentionally omitted: Projected
     Credit Line Paydown and A/P CNS Carryforward (2027) -- both still TBD
     on his end, pending how he wants to model vendor-pay-vs-credit-line-
@@ -2068,6 +2076,8 @@ def build_summary_panel(d):
             '<td style="text-align:left;font-family:var(--body);font-weight:400;opacity:.75;padding-left:16px">' + note + '</td>'
             '</tr>\n'
         )
+    def spacer_row():
+        return '<tr><td colspan="3" style="height:14px;border:none"></td></tr>\n'
 
     rows = row('Week', str(WK))
     rows += row('Starting Bank Balance', fk(starting_bank_balance),
@@ -2078,6 +2088,7 @@ def build_summary_panel(d):
     rows += row('Total Cash IN Projection (EOY)', fk(cash_in_eoy),
                 'Starting Bank Balance + Total Cash IN (projected).', bold=True, top=True)
 
+    rows += spacer_row()
     rows += row('Labor Out', fk(rem_labor_plan), '2026 Budget remaining weeks.')
     rows += row('Other COGS Out', fk(other_cogs_out),
                 '2026 Budget remaining weeks, excluding Spring/Summer, Fall/Winter, Special, and Screen '
@@ -2090,6 +2101,7 @@ def build_summary_panel(d):
     rows += row('Total Cash OUT Projection (EOY)', fk(cash_out_eoy),
                 'Labor Out + Other COGS Out + A/P - Key Vendors + A/P - CNS + OpEx.', bold=True, top=True)
 
+    rows += spacer_row()
     rows += row('Available Cash', fk(available_cash),
                 'Total Cash IN Projection (EOY) − Total Cash OUT Projection (EOY).', bold=True, top=True)
 
@@ -2120,11 +2132,26 @@ def build_summary_panel(d):
                      '90+ Days bucket paid, so its Current/1-30/31-60/61-90 buckets all count here. From '
                      'WHSL PMT Tracker’s live per-PO due dates.')
         rows += row('Available Cash (Adjusted)', fk(available_cash_adj),
-                     'Available Cash + A/P - Key Vendors (Not Yet Due).', bold=True, top=True)
+                     'Available Cash + A/P - Key Vendors (Not Yet Due) -- S&S Activewear excluded up to '
+                     '90 days overdue (only its 90+ Days bucket is a must-pay); every other Key Vendor '
+                     'excluded up to 30 days overdue (only 31+ days is a must-pay).', bold=True, top=True)
 
     if cl_balance is not None:
-        rows += row('Columbia Credit Line Balance', fk(cl_balance),
+        rows += row('Columbia Credit Line Balance (Current)', fk(cl_balance),
                      'Cash Flow - Weekly, week ' + str(WK) + ' Columbia CL Balance.', top=True)
+
+        cl_eoy_goal = 1_700_000.0
+        rows += row('Columbia Bank Credit Line (EOY Goal)', fk(cl_eoy_goal),
+                     'Target Columbia CL balance by year-end.')
+
+        base_cash = available_cash_adj if kv else available_cash
+        cl_paydown_needed = max(0.0, cl_balance - cl_eoy_goal)
+        cns_carryover = max(0.0, cl_paydown_needed - base_cash)
+        rows += row('A/P - CNS (Carryover debt to 2027)', fk(cns_carryover),
+                     'Columbia CL paydown needed to reach the EOY Goal (Current − EOY Goal) minus '
+                     + ('Available Cash (Adjusted)' if kv else 'Available Cash') + ' -- the shortfall, if '
+                     'any, once that paydown is funded is A/P - CNS left unpaid this year, carried to 2027.',
+                     top=True)
 
     return (
         rc_divider('Summary — Week ' + str(WK))
