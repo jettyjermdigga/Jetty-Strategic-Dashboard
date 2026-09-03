@@ -980,24 +980,23 @@ def read_all():
     # entirely to an unsaved-sheet mishap) -- a missing sheet should degrade
     # this section to empty, not take down the whole build.
     try:
-        df_cfw = pd.read_excel(FP, sheet_name='Cash Flow - Weekly', engine='pyxlsb', header=None)
         df_bb  = pd.read_excel(FP, sheet_name='Bank Balance',      engine='pyxlsb', header=None)
     except ValueError as e:
         print("Bank Position skipped, sheet not found:", e)
-        df_cfw = df_bb = None
+        df_bb = None
 
-    def cfw_row(label):
-        # Case-insensitive: the sheet's row label has drifted between "Total
-        # Cash Out" and "Total Cash OUT" before, which silently zeroed out
-        # this whole section (r_cout came back None) without erroring.
-        if df_cfw is None:
-            return None
-        for _, row in df_cfw.iterrows():
-            if str(row[0]).strip().lower() == label.lower():
-                return row
-        return None
-    r_cin, r_cout, r_draw, r_pay = (cfw_row(l) for l in
-        ('Total Cash IN', 'Total Cash Out', 'Columbia CL Draw', 'Columbia CL Paydown'))
+    # Cash Flow - Weekly's own Year-blocked layout (Year/Account/wk1..wk52)
+    # is already parsed correctly by read_cash_flow_weekly_history() into
+    # d['cfw_history'] -- the old cfw_row() here predated that layout (it
+    # matched row[0] against the label directly, with weeks starting at
+    # column 1), so it silently matched nothing once the sheet gained a
+    # separate Year column, and this whole section went quietly empty.
+    # Pulling from cfw_history for the latest year sidesteps that bug
+    # entirely instead of patching the old row-scan.
+    cfw_hist = d.get('cfw_history') or {}
+    cfw_year = max(cfw_hist.keys()) if cfw_hist else None
+    cfw_cur = cfw_hist.get(cfw_year) if cfw_year else {}
+    r_cin, r_cout, r_draw, r_pay = (cfw_cur.get(k) for k in ('cash_in', 'cash_out', 'cl_draw', 'cl_paydown'))
 
     if df_bb is not None:
         bb_2026 = df_bb[df_bb[0] == 2026]
@@ -1015,12 +1014,12 @@ def read_all():
     prev_end = bb_prior_year_end
     if r_cin is not None and r_cout is not None and prev_end is not None:
         for wk in range(1, 53):
-            cin  = float(r_cin[wk])  if pd.notna(r_cin[wk])  else None
-            cout = float(r_cout[wk]) if pd.notna(r_cout[wk]) else None
+            cin  = r_cin[wk - 1]
+            cout = r_cout[wk - 1]
             if cin is None or cout is None:
                 break  # no further weeks entered yet
-            draw = float(r_draw[wk]) if r_draw is not None and pd.notna(r_draw[wk]) else 0.0
-            pay  = float(r_pay[wk])  if r_pay  is not None and pd.notna(r_pay[wk])  else 0.0
+            draw = r_draw[wk - 1] if r_draw is not None and r_draw[wk - 1] is not None else 0.0
+            pay  = r_pay[wk - 1]  if r_pay  is not None and r_pay[wk - 1]  is not None else 0.0
             computed_end = prev_end + cin - cout
             actual_end = bb_total_by_wk.get(wk)
             gap = (actual_end - computed_end) if actual_end is not None else None
@@ -2263,29 +2262,44 @@ def build_ar_section(d):
     )
 
 def build_creditline_chart_js(d):
-    """Monthly Line-of-Credit balance: 2025 Actual (certified monthly,
-    prior-year reference), 2026 Plan (the original static full-year plan,
-    never revised), 2026 Actual (certified through the latest month,
-    solid), and 2026 Trend (dashed continuation using the plan's remaining
-    months, anchored at the last certified balance) -- same convention as
-    the Summary tab's 52-week trend charts, just monthly instead of weekly."""
-    labels_py = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-    labels_js = '[' + ','.join('"' + l + '"' for l in labels_py) + ']'
-    def mxy(arr):
-        return '[' + ','.join('{x:"' + labels_py[i] + '",y:' + repr(round(float(v), 2)) + '}'
-                               for i, v in enumerate(arr) if v is not None) + ']'
+    """Weekly Columbia Credit Line balance, one line per year, all 52
+    weeks strung out -- replaces the old monthly Plan/Actual/Trend chart
+    (Jeremy: "confusing"), which only had a data point per month and
+    curve-interpolated between them, so a long flat stretch (the balance
+    not changing for weeks at a time) could look like it was moving.
+    From cfw_history's 'cl_balance' series (see
+    read_cash_flow_weekly_history) -- straight (tension:0) segments so a
+    flat run of identical weekly values actually renders flat, not
+    smoothed. Both years are fully populated through week 52 (2025 as
+    real history; 2026 holds flat at the last real draw/paydown for
+    weeks not yet reached), so every week gets a real plotted value
+    instead of a sparse handful of points. Returns '' if cfw_history has
+    no years at all."""
+    hist = d.get('cfw_history') or {}
+    years = sorted(hist.keys())
+    if not years:
+        return ''
+    labels = '[' + ','.join('"Wk ' + str(i) + '"' for i in range(1, 53)) + ']'
+    palette = ["#43575E", "#B0B4B8", "#2B6CB0", "#9DC3E6"]  # newest year first, oldest last
+
+    def line_ds(label, arr, color):
+        return ('{label:"' + label + '",data:' + js_arr_n(arr) +
+                ',borderColor:"' + color + '",backgroundColor:"transparent",'
+                'borderWidth:2,pointRadius:0,tension:0}')
+
+    datasets = ','.join(
+        line_ds(str(yr), (hist.get(yr) or {}).get('cl_balance') or [None] * 52, palette[i % len(palette)])
+        for i, yr in enumerate(reversed(years))
+    )
     return (
         'function locChartOpts(){return {responsive:true,maintainAspectRatio:false,'
         'plugins:{legend:{display:true,position:"top"},tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtK(c.parsed.y)}}},'
-        'scales:{x:{type:"category",grid:{color:"#EDECED"}},y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};}\n'
+        'scales:{x:{type:"category",grid:{display:false},'
+        'ticks:{maxRotation:45,callback:function(v,i){return i%4===0?this.getLabelForValue(v):"";}}},'
+        'y:{grid:{color:"#EDECED"},ticks:{callback:v=>fmtK(v)}}}};}\n'
         'window.__chartData=window.__chartData||{};window.__chartOptsFn=window.__chartOptsFn||{};window.__charts=window.__charts||{};\n'
         '(function(){const el=document.getElementById("chart-loc-balance");if(!el)return;'
-        'const data={labels:' + labels_js + ',datasets:['
-        '{label:"2025 Actual",data:' + mxy(d['loc_2025'])       + ',borderColor:"#B0B4B8",backgroundColor:"transparent",borderWidth:2,pointRadius:2,tension:0.3,parsing:false},'
-        '{label:"2026 Plan",data:'   + mxy(d['loc_plan_bom'])   + ',borderColor:"#586D72",backgroundColor:"transparent",borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:0.3,parsing:false},'
-        '{label:"2026 Actual",data:' + mxy(d['loc_2026_act'])   + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,pointRadius:2,tension:0.3,parsing:false},'
-        '{label:"2026 Trend",data:'  + mxy(d['loc_2026_trend']) + ',borderColor:"#43575E",backgroundColor:"transparent",borderWidth:2.5,borderDash:[6,4],pointRadius:0,tension:0.3,parsing:false},'
-        ']};'
+        'const data={labels:' + labels + ',datasets:[' + datasets + ']};'
         'window.__chartData["chart-loc-balance"]=data;window.__chartOptsFn["chart-loc-balance"]=locChartOpts;'
         'window.__charts["chart-loc-balance"]=new Chart(el,{type:"line",data:data,options:locChartOpts()});})();\n'
     )
@@ -2435,22 +2449,6 @@ def build_cf_weekly_table(d):
         + '</tbody>\n'
         '</table></div>'
     )
-
-def remaining_plan_totals(d):
-    """Total remaining-weeks plan for cash in (Wholesale+DTC+INK) and cash
-    out (COGS-Brand+COGS-INK+Other+Labor+OpEx), from Cash Flow - Tracker's
-    own category columns -- the same 'actual + what's still budgeted'
-    convention used everywhere else, just summed across categories rather
-    than kept separate (see build_cash_bridge for the per-category version).
-    Shared so the Cash Flow vs. Plan KPI cards and the Cash Bridge agree on
-    what's still expected before Dec 31."""
-    cf = d['cf']
-    def p(k): return cf[k][-1] if cf[k] else 0
-    ann_plan = d['cf_ann_plan']
-    rem_in  = (ann_plan['w']  - p('proj_w'))  + (ann_plan['d'] - p('proj_d')) + (ann_plan['i'] - p('proj_i'))
-    rem_out = (ann_plan['b']  - p('proj_b'))  + (ann_plan['i2'] - p('proj_i2')) + (ann_plan['o'] - p('proj_o')) \
-            + (ann_plan['l']  - p('proj_l'))  + (ann_plan['e']  - p('proj_e'))
-    return rem_in, rem_out
 
 def bp_gap_cell(gap, watch):
     """Colors a reconciliation gap: quiet (near-zero, normal rounding/timing
@@ -3030,23 +3028,16 @@ def build_cashflow_panel(d):
     body += build_cash_bridge(d)
     body += build_bank_position_section(d)
 
-    body += rc_divider("Cash Flow vs. Plan (Cash Flow - Tracker)")
-    body += (
-        '<div class="rc-desc" style="grid-column:1 / -1;margin-bottom:2px">'
-        'Actual-to-date Cash In/Out below are the true bank-ledger totals (same source as Cash Position above), '
-        'not Cash Flow - Tracker\'s own category actuals -- a bank statement has no channel/category breakdown, '
-        'so those categories are used only to build the remaining-weeks plan/trend forecast (same figures the '
-        'Cash Bridge above uses).'
-        '</div>\n'
-    )
-
+    # Cash Flow vs. Plan (Cash Flow - Tracker) section removed per Jeremy
+    # (2026-09-03) -- Cumulative Trend/Credit Line/Paydown Feasibility/A/P
+    # Key Vendors below still need bp_ytd and a few of its derived figures,
+    # so that guard and the operating cash in/out math stay.
     bp_ytd = d.get('bp_ytd')
     if not bp_ytd:
         body += ('<div class="rc-desc" style="grid-column:1 / -1">Bank ledger not populated for this build -- '
                   'see Cash Position above.</div>\n')
         return body
 
-    rem_in_plan, rem_out_plan = remaining_plan_totals(d)
     # Bank-ledger totals include Credit Line draws/paydowns as ordinary
     # credits/debits (a draw is a real "Receive Money" transaction) -- back
     # those out to get pure operating collections/spend, so "Cash In"/"Cash
@@ -3054,58 +3045,7 @@ def build_cashflow_panel(d):
     # by financing activity.
     op_cash_in  = bp_ytd['cash_in']  - bp_ytd['cl_draw']
     op_cash_out = bp_ytd['cash_out'] - bp_ytd['cl_paydown']
-    cash_in_ann_proj  = op_cash_in  + rem_in_plan
-    cash_out_ann_proj = op_cash_out + rem_out_plan
-
-    before_act      = op_cash_in - op_cash_out
-    before_ann_proj = cash_in_ann_proj - cash_out_ann_proj
-
-    n_elapsed = d['loc_n_elapsed']
-    elapsed_months   = d['loc_plan_monthly'][:n_elapsed]
-    remaining_months = d['loc_plan_monthly'][n_elapsed:]
-    rem_draw_plan    = sum(m['draw']    for m in remaining_months)
-    rem_paydown_plan = sum(m['paydown'] for m in remaining_months)
-    # d['credit_line']['plan'] (Summary row 79) turns out to be circular --
-    # B79 == C79 exactly (975,000 == 975,000), i.e. it's just echoing the
-    # actual, not an independent plan -- so pull a genuine plan-to-date from
-    # Cash Flow - Plan's own monthly draw/paydown schedule instead, same
-    # source the 2026 Paydown Plan table below already uses.
-    cl_plan_to_date = sum(m['draw'] - m['paydown'] for m in elapsed_months)
-    cl_full_year_plan = sum(m['draw'] - m['paydown'] for m in d['loc_plan_monthly'])
-    cl_net_act      = bp_ytd['cl_draw'] - bp_ytd['cl_paydown']
-    cl_net_ann_proj = cl_net_act + (rem_draw_plan - rem_paydown_plan)
-
-    # After Borrowing adds the draws back in and subtracts paydowns -- which
-    # nets out to exactly the raw bank-ledger movement (true cash in - true
-    # cash out), computed directly rather than via the roundabout algebra so
-    # it can't silently drift from Cash Position above if the pieces change.
-    after_act      = bp_ytd['cash_in'] - bp_ytd['cash_out']
-    after_ann_proj = before_ann_proj + cl_net_ann_proj
-
-    body += rc_card_kpi("Total Cash In",
-        (d['cash_in']['plan'], op_cash_in, op_cash_in - d['cash_in']['plan']),
-        (d['cash_in']['ann_plan'], cash_in_ann_proj, cash_in_ann_proj - d['cash_in']['ann_plan']),
-        desc="Operating collections only — Credit Line draws are broken out below, not counted as revenue.")
-    body += rc_card_kpi("Total Cash Out",
-        (d['cash_out']['plan'], op_cash_out, op_cash_out - d['cash_out']['plan']),
-        (d['cash_out']['ann_plan'], cash_out_ann_proj, cash_out_ann_proj - d['cash_out']['ann_plan']),
-        desc="Operating spend only — Credit Line paydowns are broken out below.")
-    body += rc_card_kpi("Net Cash Flow (Before Borrowing)",
-        (d['cf_var_pre']['plan'], before_act, before_act - d['cf_var_pre']['plan']),
-        (d['cf_var_pre']['ann_plan'], before_ann_proj, before_ann_proj - d['cf_var_pre']['ann_plan']),
-        desc=("The shortage that made borrowing necessary." if before_act < 0 else
-              "Cash In minus Cash Out, operating only — no shortage YTD."))
-    body += rc_card_kpi("Credit Line Activity",
-        (cl_plan_to_date, cl_net_act, cl_net_act - cl_plan_to_date),
-        (cl_full_year_plan, cl_net_ann_proj, cl_net_ann_proj - cl_full_year_plan),
-        desc=("Why we had to borrow: " + fk(bp_ytd['cl_draw']) + " drawn" +
-              (", " + fk(bp_ytd['cl_paydown']) + " paid down" if bp_ytd['cl_paydown'] else ", $0 paid down so far") +
-              " YTD, against the shortage above. Plan/Ann. Plan from Cash Flow - Plan's monthly schedule, "
-              "not the Summary tab's Credit Line row — that cell just echoes the actual, not an independent plan."))
-    body += rc_card_kpi("Net Cash Flow (After Borrowing)",
-        (d['cf_var_post']['plan'], after_act, after_act - d['cf_var_post']['plan']),
-        (d['cf_var_post']['ann_plan'], after_ann_proj, after_ann_proj - d['cf_var_post']['ann_plan']),
-        desc="Before Borrowing, plus draws, minus paydowns — matches Cash Position's true net movement above.")
+    before_act  = op_cash_in - op_cash_out
 
     cf_surplus = before_act
     cf_cls = 'pos' if cf_surplus >= 0 else 'neg'
@@ -3129,7 +3069,7 @@ def build_cashflow_panel(d):
                     + fk(loc_status['balance']) + ' outstanding. ' + loc_status['status'])
     else:
         loc_desc = None
-    body += rc_trend_chart('chart-loc-balance', 'Line of Credit Balance — Monthly', desc=loc_desc)
+    body += rc_trend_chart('chart-loc-balance', 'Line of Credit Balance — Weekly', desc=loc_desc)
 
     # Weekly draw/paydown activity, from the same bank-ledger data as the
     # Weekly Bank Reconciliation above -- makes the timing of each draw (and
