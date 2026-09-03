@@ -2022,13 +2022,17 @@ def build_summary_panel(d):
     Tracker due dates vs. today), independent of the AP - Key XL tab's
     hand-entered total used above.
 
-    Last two rows (2026-09-03): a static Columbia Bank Credit Line (EOY
-    Goal) of $1.7M, and A/P - CNS (Carryover debt to 2027) -- the
-    shortfall, floored at 0, between what it'd take to pay the credit
-    line down to that goal (Current CL Balance − EOY Goal) and Available
-    Cash (Adjusted). The idea: if there isn't enough cash to both fund
-    that paydown and pay CNS in full, the unpaid CNS balance is what
-    rolls to next year rather than drawing the credit line further.
+    Last three rows (2026-09-03): a static Columbia Bank Credit Line (EOY
+    Goal) of $1.7M; A/P - CNS (Carryover debt to 2027) -- the shortfall,
+    floored at 0, between what it'd take to pay the credit line down to
+    that goal (Current CL Balance − EOY Goal) and Available Cash
+    (Adjusted); and Cash Surplus (2027 BOY) -- the complementary
+    leftover, also floored at 0, once that paydown is fully funded.
+    Exactly one of the two is normally nonzero. The idea: if there isn't
+    enough cash to both fund the paydown and pay CNS in full, the unpaid
+    CNS balance is what rolls to next year rather than drawing the
+    credit line further; if there's more than enough, what's left over
+    is real cash carried into 2027.
 
     Two rows from Jeremy's outline are intentionally omitted: Projected
     Credit Line Paydown and A/P CNS Carryforward (2027) -- both still TBD
@@ -2081,7 +2085,7 @@ def build_summary_panel(d):
 
     rows = row('Week', str(WK))
     rows += row('Starting Bank Balance', fk(starting_bank_balance),
-                'Bank Balance sheet, week ' + str(WK) + ' Total.')
+                'Bank Balance sheet, week ' + str(WK) + ' Total.', top=True)
     rows += row('Total Cash IN (projected)', fk(cash_in_projected),
                 str(ly_year) + "'s actual Cash In for weeks " + str(WK + 1) + '-52 '
                 '(a conservative estimate for the rest of the year).')
@@ -2089,7 +2093,7 @@ def build_summary_panel(d):
                 'Starting Bank Balance + Total Cash IN (projected).', bold=True, top=True)
 
     rows += spacer_row()
-    rows += row('Labor Out', fk(rem_labor_plan), '2026 Budget remaining weeks.')
+    rows += row('Labor Out', fk(rem_labor_plan), '2026 Budget remaining weeks.', top=True)
     rows += row('Other COGS Out', fk(other_cogs_out),
                 '2026 Budget remaining weeks, excluding Spring/Summer, Fall/Winter, Special, and Screen '
                 'Printing Wholesale -- those are covered by A/P below.')
@@ -2145,13 +2149,19 @@ def build_summary_panel(d):
                      'Target Columbia CL balance by year-end.')
 
         base_cash = available_cash_adj if kv else available_cash
+        base_cash_label = 'Available Cash (Adjusted)' if kv else 'Available Cash'
         cl_paydown_needed = max(0.0, cl_balance - cl_eoy_goal)
         cns_carryover = max(0.0, cl_paydown_needed - base_cash)
         rows += row('A/P - CNS (Carryover debt to 2027)', fk(cns_carryover),
                      'Columbia CL paydown needed to reach the EOY Goal (Current − EOY Goal) minus '
-                     + ('Available Cash (Adjusted)' if kv else 'Available Cash') + ' -- the shortfall, if '
-                     'any, once that paydown is funded is A/P - CNS left unpaid this year, carried to 2027.',
-                     top=True)
+                     + base_cash_label + ' -- the shortfall, if any, once that paydown is funded is A/P - '
+                     'CNS left unpaid this year, carried to 2027.', top=True)
+
+        cash_surplus_2027 = max(0.0, base_cash - cl_paydown_needed)
+        rows += row('Cash Surplus (2027 BOY)', fk(cash_surplus_2027),
+                     base_cash_label + ' left over after fully funding the Columbia CL paydown to the EOY '
+                     'Goal -- $0 whenever there isn\'t enough to fully fund it (see A/P - CNS Carryover '
+                     'above instead). The cash actually sitting in the bank at the start of 2027.')
 
     return (
         rc_divider('Summary — Week ' + str(WK))
