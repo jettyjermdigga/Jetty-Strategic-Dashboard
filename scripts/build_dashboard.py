@@ -2012,6 +2012,14 @@ def build_summary_panel(d):
     latest_nonzero() takes the most recently entered week rather than
     assuming the current week itself is populated.
 
+    Below Available Cash: an 'A/P - Key Vendors (< 30 days overdue)'
+    provision, added back per Jeremy's aging rule (2026-09-03) -- he only
+    actually needs to pay what's 31+ days late, so the Current + 1-30
+    Days portion of the full balance above is cash that doesn't really
+    need to go out yet. Sourced live from ap_key_vendors_open() (WHSL PMT
+    Tracker due dates vs. today), independent of the AP - Key XL tab's
+    hand-entered total used above.
+
     Two rows from Jeremy's outline are intentionally omitted: Projected
     Credit Line Paydown and A/P CNS Carryforward (2027) -- both still TBD
     on his end, pending how he wants to model vendor-pay-vs-credit-line-
@@ -2082,6 +2090,25 @@ def build_summary_panel(d):
 
     rows += row('Available Cash', fk(available_cash),
                 'Total Cash IN Projection (EOY) − Total Cash OUT Projection (EOY).', bold=True, top=True)
+
+    # A/P - Key Vendors above is the full outstanding balance -- in practice
+    # Jeremy only needs to pay down what's actually 30+ days overdue, so the
+    # Current + 1-30 Days portion (still within/just past terms) is cash
+    # that doesn't really need to go out yet. Added back here as its own
+    # line per his instruction, rather than silently trimming the A/P - Key
+    # Vendors Cash Out line above. Sourced from live per-PO aging (WHSL PMT
+    # Tracker due dates vs. today), not the AP - Key XL tab's hand-entered
+    # total -- the two run close (within ~1% as of this build) but aren't
+    # the same figure.
+    kv = d.get('ap_key_vendors_open')
+    if kv:
+        kv_under_30 = sum(v['current'] + v['d1_30'] for v in kv['vendors'])
+        available_cash_adj = available_cash + kv_under_30
+        rows += row('A/P - Key Vendors (< 30 days overdue)', vk(kv_under_30),
+                     'Current + 1-30 Days buckets, from WHSL PMT Tracker’s live per-PO due dates -- only '
+                     '31+ days overdue actually needs to be paid, so this portion is added back.')
+        rows += row('Available Cash (Adjusted)', fk(available_cash_adj),
+                     'Available Cash + A/P - Key Vendors (< 30 days overdue).', bold=True, top=True)
 
     if cl_balance is not None:
         rows += row('Columbia Credit Line Balance', fk(cl_balance),
