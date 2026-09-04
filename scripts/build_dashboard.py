@@ -1840,13 +1840,12 @@ def build_cf_ty_ly_charts_js(d):
     """Section #1 of the rebuilt Cash Flow tab, this year vs. last:
     - Total Bank Balance (lines): the week's starting balance, TY vs. LY.
     - Weekly (bars): Cash In/Cash Out only, TY vs. LY.
-    - CL Draw / Paydown (lines, directly below Weekly): net Columbia CL
-      activity per week (draw minus paydown), TY vs. LY -- one line per
-      year rather than 4 separate bars, since Draw/Paydown are baked into
-      the raw Cash In/Out totals above (a draw is a real "Receive Money"
-      transaction, a paydown a real debit) and this chart exists purely
-      as the callout, not a second full breakdown: up = net borrowing
-      that week, down = net paydown.
+    - Columbia Credit Line Balance (lines, directly below Weekly): the
+      outstanding CL balance itself, week by week, TY vs. LY -- where the
+      line starts and finishes each year, not the per-week draw/paydown
+      activity that moves it. Straight from the sheet's own Columbia CL
+      Balance row, which carries a real figure for all 52 weeks (holding
+      flat at the last draw/paydown through weeks not yet reached).
     All three read from cfw_history (see read_cash_flow_weekly_history) --
     returns '' if that's empty (sheet missing/unreadable)."""
     hist = d.get('cfw_history') or {}
@@ -1860,21 +1859,10 @@ def build_cf_ty_ly_charts_js(d):
     def get(block, key):
         return block.get(key) or [None] * 52
 
-    def net(draw, pay):
-        """Net CL activity per week (draw minus paydown), zero-filled across
-        all 52 weeks. The sheet only carries a figure in weeks where a draw
-        or paydown actually happened -- 19 of 52 weeks in 2025, 3 in 2026 --
-        so treating the blanks as gaps left the chart as disconnected dots
-        and stray fragments. A blank week here genuinely means "no draw, no
-        paydown," i.e. zero activity, not unknown, so both years plot as one
-        continuous line across the full year."""
-        return [round((dv or 0) - (pv or 0), 2) for dv, pv in zip(draw, pay)]
-
     bal_ty, bal_ly = get(ty, 'bank_balance'), get(ly, 'bank_balance')
     in_ty, out_ty = get(ty, 'cash_in'), [(-v if v is not None else None) for v in get(ty, 'cash_out')]
     in_ly, out_ly = get(ly, 'cash_in'), [(-v if v is not None else None) for v in get(ly, 'cash_out')]
-    cl_ty = net(get(ty, 'cl_draw'), get(ty, 'cl_paydown'))
-    cl_ly = net(get(ly, 'cl_draw'), get(ly, 'cl_paydown'))
+    cl_ty, cl_ly = get(ty, 'cl_balance'), get(ly, 'cl_balance')
 
     labels = '[' + ','.join('"Wk ' + str(i) + '"' for i in range(1, 53)) + ']'
     c = CF_TY_LY_COLORS
@@ -1899,8 +1887,8 @@ def build_cf_ty_ly_charts_js(d):
     ])
 
     cl_datasets = ','.join([
-        line_ds('Columbia CL (TY)', cl_ty, c['draw_ty'], False),
-        line_ds('Columbia CL (LY)', cl_ly, c['draw_ly'], False),
+        line_ds('CL Balance (TY)', cl_ty, c['draw_ty'], False),
+        line_ds('CL Balance (LY)', cl_ly, c['draw_ly'], False),
     ])
 
     return (
@@ -2138,14 +2126,12 @@ def build_cf_ty_ly_section(d):
 
     balance_desc = 'Starting bank balance by week.'
     weekly_desc = 'Cash In vs. Cash Out by week.'
-    cl_desc = ('Net Columbia CL activity by week (draw minus paydown) -- already included in '
-               'Cash In/Cash Out above, called out separately since a draw week can otherwise '
-               'read as unusually strong collections, or a paydown week as unusually heavy spend.')
+    cl_desc = 'Outstanding Columbia Credit Line balance by week — where the line starts and finishes each year.'
     return (
         rc_divider("Cash In / Cash Out — " + str(ty_year) + " vs. " + str(ly_year))
         + card('chart-cf-ty-ly-balance', 'Total Bank Balance', balance_desc)
         + card('chart-cf-ty-ly-weekly', 'Weekly', weekly_desc)
-        + card('chart-cf-ty-ly-cl-weekly', 'Columbia CL Draw / Paydown', cl_desc)
+        + card('chart-cf-ty-ly-cl-weekly', 'Columbia Credit Line Balance', cl_desc)
     )
 
 AR_COLORS = dict(brand="#2B6CB0", ink="#B4482F")  # blue: Brand A/R, red: INK A/R
