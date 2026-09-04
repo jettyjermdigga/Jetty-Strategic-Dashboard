@@ -1861,13 +1861,14 @@ def build_cf_ty_ly_charts_js(d):
         return block.get(key) or [None] * 52
 
     def net(draw, pay):
-        out = []
-        for dv, pv in zip(draw, pay):
-            if dv is None and pv is None:
-                out.append(None)
-            else:
-                out.append(round((dv or 0) - (pv or 0), 2))
-        return out
+        """Net CL activity per week (draw minus paydown), zero-filled across
+        all 52 weeks. The sheet only carries a figure in weeks where a draw
+        or paydown actually happened -- 19 of 52 weeks in 2025, 3 in 2026 --
+        so treating the blanks as gaps left the chart as disconnected dots
+        and stray fragments. A blank week here genuinely means "no draw, no
+        paydown," i.e. zero activity, not unknown, so both years plot as one
+        continuous line across the full year."""
+        return [round((dv or 0) - (pv or 0), 2) for dv, pv in zip(draw, pay)]
 
     bal_ty, bal_ly = get(ty, 'bank_balance'), get(ly, 'bank_balance')
     in_ty, out_ty = get(ty, 'cash_in'), [(-v if v is not None else None) for v in get(ty, 'cash_out')]
