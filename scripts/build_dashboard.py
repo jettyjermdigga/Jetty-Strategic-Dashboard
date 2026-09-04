@@ -121,6 +121,23 @@ def kv_must_pay_buckets(vendor):
     """Which aging buckets this vendor actually has to pay right now."""
     return KV_MUST_PAY_BUCKETS_SS if vendor == SS_VENDOR_NAME else KV_MUST_PAY_BUCKETS
 
+def kv_currently_due_bucket(vendor):
+    """The single bucket where this vendor's balance first becomes payable
+    -- 31-60 on the standard 30-day rule, 90+ for S&S. The earliest of the
+    must-pay buckets, so it stays tied to kv_must_pay_buckets rather than
+    restating the thresholds. This is what the Open PO's table shades as
+    "Payable - Currently Due": the tranche just coming due, as opposed to
+    the older buckets beyond it. Note the cash math in build_summary_panel
+    still uses the full must-pay set -- something 90 days late is no less
+    owed for sitting past the trigger."""
+    return kv_must_pay_buckets(vendor)[0]
+
+# Shading for that bucket, shared by the table cells and the key above it so
+# the two can't drift. --surface-alt tracks the theme (light grey / dark
+# slate), so the box stays subtle either way.
+KV_DUE_SHADE = 'var(--surface-alt)'
+KV_DUE_BORDER = '1px solid var(--ink)'
+
 def _airtable_get_all(base, table, token, params):
     """Paginate through every record for a table/filter, return the raw list."""
     url = f"{AIRTABLE_API}/{base}/{table}"
@@ -2277,40 +2294,34 @@ def build_opex_panel(d):
 def build_ap_key_vendors_table(d):
     """Current open (unpaid) A/P - Key Vendors POs, by vendor -- terms,
     aging bucket, and the most-overdue PO on file for that vendor, from
-    WHSL PMT Tracker's live per-PO detail. Each vendor's must-pay buckets
-    (see kv_must_pay_buckets) are boxed rather than colored, so the block
-    of money actually due for that vendor is what stands out."""
+    WHSL PMT Tracker's live per-PO detail. Each vendor's currently-due
+    bucket (see kv_currently_due_bucket) gets a shaded box, keyed above
+    the table as "Payable - Currently Due," so the money coming due is
+    what stands out."""
     kv = d['ap_key_vendors_open']
     terms = d.get('ap_key_vendors_terms') or {}
     vendors = kv['vendors']
-    # The aging columns get a box drawn around each vendor's must-pay
-    # buckets, so what Jeremy is actually up against week to week reads
-    # straight off the table -- one box around 90+ for S&S, one around
-    # 31-60 through 90+ for everyone else. .rc-hltable td has no
-    # horizontal padding, so every aging cell (header, vendor rows and
-    # the totals row alike) gets AGE_PAD whether or not it's boxed --
-    # otherwise the boxed cells' contents would inset and the
-    # right-aligned figures would stop lining up down the column.
+    # Each vendor's currently-due bucket gets a shaded box -- 90+ for S&S,
+    # 31-60 for everyone else (see kv_currently_due_bucket). Since S&S sorts
+    # first and the rest share the same bucket, their shaded cells stack into
+    # one continuous block down the 31-60 column, which is the "here's what's
+    # coming due" read. .rc-hltable td has no horizontal padding, so every
+    # aging cell (header, vendor rows and the totals row alike) gets AGE_PAD
+    # whether or not it's shaded -- otherwise the shaded cells' contents would
+    # inset and the right-aligned figures would stop lining up down the column.
     BUCKETS = ('current', 'd1_30', 'd31_60', 'd61_90', 'd90_plus')
     AGE_PAD = 'padding:6px 7px'
-    BOX = '1.5px solid var(--ink)'
     rows = ''
     for v in vendors:
         t = terms.get(v['vendor']) or '—'
         worst = v['worst_days']
         worst_lbl = (str(worst) + 'd overdue') if worst > 0 else 'not yet due'
-        must_pay = set(kv_must_pay_buckets(v['vendor']))
-        boxed = [i for i, b in enumerate(BUCKETS) if b in must_pay]
-        first_boxed, last_boxed = (min(boxed), max(boxed)) if boxed else (None, None)
+        due_bucket = kv_currently_due_bucket(v['vendor'])
         def aging_cell(i, bucket):
             style = [AGE_PAD]
-            if bucket in must_pay:
-                style.append('border-top:' + BOX)
-                style.append('border-bottom:' + BOX)
-                if i == first_boxed:
-                    style.append('border-left:' + BOX)
-                if i == last_boxed:
-                    style.append('border-right:' + BOX)
+            if bucket == due_bucket:
+                style.append('background:' + KV_DUE_SHADE)
+                style.append('border:' + KV_DUE_BORDER)
             return '<td style="' + ';'.join(style) + '">' + fk(v[bucket]) + '</td>'
         rows += (
             '<tr>'
@@ -2332,7 +2343,15 @@ def build_ap_key_vendors_table(d):
         + '<td style="border-bottom:none"></td>'
         '</tr>\n'
     )
+    key = (
+        '<div class="rc-desc" style="display:flex;align-items:center;gap:7px;margin-bottom:10px">'
+        '<span style="display:inline-block;width:22px;height:12px;background:' + KV_DUE_SHADE + ';'
+        'border:' + KV_DUE_BORDER + '"></span>'
+        'Payable &mdash; Currently Due'
+        '</div>'
+    )
     return (
+        key +
         '<div class="rc-hl">'
         '<table class="rc-hltable">'
         '<colgroup><col class="rc-hl-col-name"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat">'
