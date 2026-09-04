@@ -2277,42 +2277,58 @@ def build_opex_panel(d):
 def build_ap_key_vendors_table(d):
     """Current open (unpaid) A/P - Key Vendors POs, by vendor -- terms,
     aging bucket, and the most-overdue PO on file for that vendor, from
-    WHSL PMT Tracker's live per-PO detail."""
+    WHSL PMT Tracker's live per-PO detail. Each vendor's must-pay buckets
+    (see kv_must_pay_buckets) are boxed rather than colored, so the block
+    of money actually due for that vendor is what stands out."""
     kv = d['ap_key_vendors_open']
     terms = d.get('ap_key_vendors_terms') or {}
     vendors = kv['vendors']
+    # The aging columns get a box drawn around each vendor's must-pay
+    # buckets, so what Jeremy is actually up against week to week reads
+    # straight off the table -- one box around 90+ for S&S, one around
+    # 31-60 through 90+ for everyone else. .rc-hltable td has no
+    # horizontal padding, so every aging cell (header, vendor rows and
+    # the totals row alike) gets AGE_PAD whether or not it's boxed --
+    # otherwise the boxed cells' contents would inset and the
+    # right-aligned figures would stop lining up down the column.
+    BUCKETS = ('current', 'd1_30', 'd31_60', 'd61_90', 'd90_plus')
+    AGE_PAD = 'padding:6px 7px'
+    BOX = '1.5px solid var(--ink)'
     rows = ''
     for v in vendors:
         t = terms.get(v['vendor']) or '—'
         worst = v['worst_days']
         worst_lbl = (str(worst) + 'd overdue') if worst > 0 else 'not yet due'
-        # Red marks what this vendor actually has to pay right now, so the
-        # S&S exception (90+ only) reads straight off the table instead of
-        # every vendor's 61-90 looking equally urgent.
-        must_pay = kv_must_pay_buckets(v['vendor'])
-        def aging_cell(bucket):
-            style = 'color:var(--watch);font-weight:700' if bucket in must_pay else ''
-            return '<td style="' + style + '">' + fk(v[bucket]) + '</td>'
+        must_pay = set(kv_must_pay_buckets(v['vendor']))
+        boxed = [i for i, b in enumerate(BUCKETS) if b in must_pay]
+        first_boxed, last_boxed = (min(boxed), max(boxed)) if boxed else (None, None)
+        def aging_cell(i, bucket):
+            style = [AGE_PAD]
+            if bucket in must_pay:
+                style.append('border-top:' + BOX)
+                style.append('border-bottom:' + BOX)
+                if i == first_boxed:
+                    style.append('border-left:' + BOX)
+                if i == last_boxed:
+                    style.append('border-right:' + BOX)
+            return '<td style="' + ';'.join(style) + '">' + fk(v[bucket]) + '</td>'
         rows += (
             '<tr>'
             '<td style="text-align:left;font-family:var(--body)">' + html_escape(v['vendor']) + '</td>'
             '<td style="font-family:var(--body)">' + html_escape(t) + '</td>'
-            + aging_cell('current')
-            + aging_cell('d1_30')
-            + aging_cell('d31_60')
-            + aging_cell('d61_90')
-            + aging_cell('d90_plus')
+            + ''.join(aging_cell(i, b) for i, b in enumerate(BUCKETS))
             + '<td style="font-weight:700">' + fk(v['total']) + '</td>'
             '<td style="font-family:var(--body);opacity:.75">' + worst_lbl + '</td>'
             '</tr>\n'
         )
-    sums = {k: sum(v[k] for v in vendors) for k in ('current','d1_30','d31_60','d61_90','d90_plus','total')}
+    sums = {k: sum(v[k] for v in vendors) for k in BUCKETS + ('total',)}
     rows += (
         '<tr style="border-top:1.5px solid var(--ink)">'
         '<td style="text-align:left;font-family:var(--body);font-weight:700;border-bottom:none">All Vendors</td>'
         '<td style="border-bottom:none"></td>'
-        + ''.join('<td style="font-weight:700;border-bottom:none">' + fk(sums[k]) + '</td>'
-                  for k in ('current','d1_30','d31_60','d61_90','d90_plus','total'))
+        + ''.join('<td style="font-weight:700;border-bottom:none;' + AGE_PAD + '">' + fk(sums[k]) + '</td>'
+                  for k in BUCKETS)
+        + '<td style="font-weight:700;border-bottom:none">' + fk(sums['total']) + '</td>'
         + '<td style="border-bottom:none"></td>'
         '</tr>\n'
     )
@@ -2322,8 +2338,10 @@ def build_ap_key_vendors_table(d):
         '<colgroup><col class="rc-hl-col-name"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat">'
         '<col class="rc-hl-col-stat"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat">'
         '<col class="rc-hl-col-stat"><col class="rc-hl-col-stat"><col class="rc-hl-col-stat"></colgroup>'
-        '<thead><tr><th>Vendor</th><th>Terms</th><th>Current</th><th>1-30</th><th>31-60</th>'
-        '<th>61-90</th><th>90+</th><th>Total</th><th>Worst PO</th></tr></thead>\n'
+        '<thead><tr><th>Vendor</th><th>Terms</th>'
+        + ''.join('<th style="' + AGE_PAD + '">' + h + '</th>'
+                  for h in ('Current', '1-30', '31-60', '61-90', '90+'))
+        + '<th>Total</th><th>Worst PO</th></tr></thead>\n'
         '<tbody>\n' + rows + '</tbody>\n'
         '</table></div>'
     )
@@ -2342,7 +2360,7 @@ def build_cashflow_panel(d):
 
     kv_open = d.get('ap_key_vendors_open')
     if kv_open:
-        body += rc_divider("Open POs by Vendor")
+        body += rc_divider("Open PO's by Vendor")
         body += ('<div class="rc-card" style="grid-column:1 / -1">' + build_ap_key_vendors_table(d) + '</div>\n')
 
     return body
