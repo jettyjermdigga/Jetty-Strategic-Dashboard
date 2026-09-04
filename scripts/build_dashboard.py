@@ -308,21 +308,28 @@ document.querySelectorAll(".tab").forEach(function(t){
 });
 '''
 
-# A single reusable full-screen modal: any chart registered into
-# window.__charts[chartId] (see build_summary_trend_charts_js) can be
-# blown up full-screen with a PNG download, via the card's Expand button
-# (see rc_trend_chart).
+# A single reusable full-screen modal, in two modes:
+#   * chart mode -- any chart registered into window.__charts[chartId]
+#     (see build_summary_trend_charts_js) blown up full-screen, rebuilt
+#     into #chart-modal-canvas, PNG via canvas.toDataURL. Triggered by a
+#     card's Expand button carrying data-chart-id (see rc_trend_chart).
+#   * DOM mode -- any element on the page cloned full-screen into
+#     #chart-modal-dom-wrap, PNG via html2canvas. Triggered by an Expand
+#     button carrying data-dom-id (see rc_expand_dom_bar), which is how
+#     the Cash Flow Summary panel -- an HTML table, not a canvas -- gets
+#     the same expand/download treatment as the charts.
 CHART_MODAL_HTML = '''
 <div class="chart-modal-overlay" id="chart-modal">
   <div class="chart-modal-content">
     <div class="chart-modal-header">
       <div class="chart-modal-title" id="chart-modal-title"></div>
       <div class="chart-modal-actions">
-        <button onclick="downloadChartModal()">⬇ Download PNG</button>
+        <button id="chart-modal-dl" onclick="downloadChartModal()">⬇ Download PNG</button>
         <button class="chart-modal-close" onclick="closeChartModal()">✕</button>
       </div>
     </div>
     <div class="chart-modal-canvas-wrap"><canvas id="chart-modal-canvas"></canvas></div>
+    <div class="chart-modal-dom-wrap" id="chart-modal-dom-wrap"></div>
   </div>
 </div>
 '''
@@ -336,7 +343,11 @@ function openChartModal(chartId, title){
   var optsFn = window.__chartOptsFn[chartId];
   if(!src || !data) return;
   document.getElementById("chart-modal-title").textContent = title;
-  document.getElementById("chart-modal").classList.add("open");
+  var overlay = document.getElementById("chart-modal");
+  overlay.classList.remove("dom-mode");
+  overlay.classList.add("open");
+  document.getElementById("chart-modal-dom-wrap").innerHTML = "";
+  window.__modalMode = "chart";
   if(window.__modalChart){ window.__modalChart.destroy(); window.__modalChart = null; }
   var ctx = document.getElementById("chart-modal-canvas");
   window.__modalChart = new Chart(ctx, {
@@ -346,11 +357,94 @@ function openChartModal(chartId, title){
   });
   window.__modalTitle = title;
 }
+// DOM mode: clone an arbitrary element (the Summary table, say) into the
+// modal rather than rebuilding a chart. The clone -- not the live node --
+// is what gets shown and exported, so the page underneath is untouched and
+// html2canvas can lay the copy out at its natural full size regardless of
+// how the original was scrolled or clipped.
+function openDomModal(domId, title){
+  var src = document.getElementById(domId);
+  if(!src) return;
+  if(window.__modalChart){ window.__modalChart.destroy(); window.__modalChart = null; }
+  var wrap = document.getElementById("chart-modal-dom-wrap");
+  wrap.innerHTML = "";
+  var clone = src.cloneNode(true);
+  clone.removeAttribute("id");
+  // Strip the Expand bar itself -- it's chrome, not content, and it has no
+  // job inside the modal or in a printed PNG.
+  var bars = clone.querySelectorAll(".rc-expand-bar");
+  for(var i = 0; i < bars.length; i++){ bars[i].parentNode.removeChild(bars[i]); }
+  wrap.appendChild(clone);
+  document.getElementById("chart-modal-title").textContent = title;
+  var overlay = document.getElementById("chart-modal");
+  overlay.classList.add("dom-mode");
+  overlay.classList.add("open");
+  window.__modalTitle = title;
+  window.__modalMode = "dom";
+}
 function closeChartModal(){
-  document.getElementById("chart-modal").classList.remove("open");
+  var overlay = document.getElementById("chart-modal");
+  overlay.classList.remove("open");
+  overlay.classList.remove("dom-mode");
+  document.getElementById("chart-modal-dom-wrap").innerHTML = "";
+  window.__modalMode = null;
   if(window.__modalChart){ window.__modalChart.destroy(); window.__modalChart = null; }
 }
+function savePng(dataUrl){
+  var link = document.createElement("a");
+  link.download = (window.__modalTitle || "chart").replace(/[^a-z0-9]+/gi,"_") + ".png";
+  link.href = dataUrl;
+  link.click();
+}
+function downloadDomModal(){
+  var node = document.getElementById("chart-modal-dom-wrap").firstElementChild;
+  if(!node) return;
+  if(typeof html2canvas === "undefined"){
+    alert("PNG download is unavailable \u2014 the html2canvas library didn't load.");
+    return;
+  }
+  var btn = document.getElementById("chart-modal-dl");
+  var label = btn ? btn.textContent : null;
+  if(btn){ btn.textContent = "Rendering\u2026"; btn.disabled = true; }
+  // On screen the title lives in the modal header, which isn't part of what
+  // gets captured -- so a standalone PNG would arrive unlabeled. Put the
+  // title inside the captured node just for the render, then take it back
+  // out so the modal doesn't end up showing it twice.
+  var heading = document.createElement("div");
+  heading.className = "chart-modal-export-title";
+  heading.textContent = window.__modalTitle || "";
+  node.insertBefore(heading, node.firstChild);
+  function restore(){
+    if(heading.parentNode) heading.parentNode.removeChild(heading);
+    if(btn){ btn.textContent = label; btn.disabled = false; }
+  }
+  // The full natural size, not the on-screen box: the modal scrolls the
+  // clone when it's taller than the viewport, and .rc-card scrolls it
+  // horizontally when it's wider -- the export wants the whole thing.
+  // Ceil plus a pixel of slack, because scrollHeight truncates the
+  // fractional height a text-heavy table almost always has, which
+  // otherwise shaves the last row's descenders off the bottom.
+  var box = node.getBoundingClientRect();
+  var w = Math.ceil(Math.max(node.scrollWidth, box.width)) + 1;
+  var h = Math.ceil(Math.max(node.scrollHeight, box.height)) + 1;
+  html2canvas(node, {
+    backgroundColor: "#ffffff",
+    scale: 2,
+    width: w,
+    height: h,
+    windowWidth: w,
+    logging: false
+  }).then(function(canvas){
+    savePng(canvas.toDataURL("image/png", 1));
+    restore();
+  }).catch(function(err){
+    console.error("html2canvas failed", err);
+    alert("PNG download failed \u2014 see the browser console for details.");
+    restore();
+  });
+}
 function downloadChartModal(){
+  if(window.__modalMode === "dom") return downloadDomModal();
   if(!window.__modalChart) return;
   // toBase64Image()'s canvas is transparent -- fine on a white page, but
   // most image viewers (and dark-mode ones especially) render transparency
@@ -366,17 +460,16 @@ function downloadChartModal(){
   var url = canvas.toDataURL("image/png", 1);
   ctx.restore();
   window.__modalChart.draw();
-  var link = document.createElement("a");
-  link.download = (window.__modalTitle || "chart").replace(/[^a-z0-9]+/gi,"_") + ".png";
-  link.href = url;
-  link.click();
+  savePng(url);
 }
 document.getElementById("chart-modal").addEventListener("click", function(e){
   if(e.target.id === "chart-modal") closeChartModal();
 });
 document.addEventListener("click", function(e){
   var btn = e.target.closest(".rc-expand-btn");
-  if(btn) openChartModal(btn.dataset.chartId, btn.dataset.chartTitle);
+  if(!btn) return;
+  if(btn.dataset.domId) openDomModal(btn.dataset.domId, btn.dataset.domTitle);
+  else openChartModal(btn.dataset.chartId, btn.dataset.chartTitle);
 });
 document.addEventListener("keydown", function(e){
   if(e.key === "Escape") closeChartModal();
@@ -1590,6 +1683,19 @@ EXTRA_CSS = '''
 .chart-modal-actions button:hover{background:var(--surface)}
 .chart-modal-close{font-size:16px;line-height:1;padding:6px 10px !important}
 .chart-modal-canvas-wrap{flex:1;position:relative;min-height:0}
+.chart-modal-dom-wrap{display:none;flex:1;min-height:0;overflow:auto}
+.chart-modal-overlay.dom-mode .chart-modal-canvas-wrap{display:none}
+.chart-modal-overlay.dom-mode .chart-modal-dom-wrap{display:block}
+/* A table sizes to its content -- let the shell shrink to fit rather
+   than leaving 820px of empty white below a short panel. */
+.chart-modal-overlay.dom-mode .chart-modal-content{height:auto;max-height:90vh}
+/* The card border is redundant chrome inside the modal (which is already
+   a panel), but its padding is what keeps the exported PNG's content off
+   the image edge, so that stays. */
+.chart-modal-dom-wrap .rc-card{border:none;margin:0}
+.chart-modal-export-title{font-family:var(--display);font-weight:700;font-size:17px;color:var(--ink);margin:0 0 14px}
+.rc-expand-bar{display:flex;justify-content:flex-end;margin-bottom:8px}
+.rc-expand-bar .rc-expand-btn{position:static}
 '''
 
 # ── rc- component helpers ────────────────────────────────────────────────────
@@ -1653,6 +1759,18 @@ def rc_trend_chart(chart_id, title, desc=None):
         '<div style="height:220px"><canvas id="' + chart_id + '"></canvas></div>'
         '</div>\n'
     )
+
+def rc_expand_dom_bar(dom_id, title):
+    """A right-aligned Expand button for a plain-HTML card (as opposed to
+    rc_trend_chart's canvas cards). Carries data-dom-id, which the
+    delegated .rc-expand-btn listener routes to openDomModal() -- clone
+    the element full-screen, PNG via html2canvas. The bar itself is
+    stripped from the clone (see .rc-expand-bar in CHART_MODAL_JS), so it
+    never shows up in the modal or the downloaded image."""
+    return ('<div class="rc-expand-bar">'
+            '<button class="rc-expand-btn" data-dom-id="' + dom_id + '" '
+            'data-dom-title="' + html_escape(title) + '">⤢ Expand</button>'
+            '</div>')
 
 def rc_divider(title):
     return '<div class="rc-divider"><div class="rc-divider-title">' + title + '</div></div>\n'
@@ -2109,10 +2227,12 @@ def build_summary_panel(d):
                      'Goal -- $0 whenever there isn\'t enough to fully fund it (see A/P - CNS Carryover '
                      'above instead). The cash actually sitting in the bank at the start of 2027.')
 
+    title = 'Summary — Week ' + str(WK)
     return (
-        rc_divider('Summary — Week ' + str(WK))
-        + '<div class="rc-card" style="grid-column:1 / -1">'
-        '<div class="rc-hl"><table class="rc-hltable">'
+        rc_divider(title)
+        + '<div class="rc-card" id="cf-summary-panel" style="grid-column:1 / -1">'
+        + rc_expand_dom_bar('cf-summary-panel', title)
+        + '<div class="rc-hl"><table class="rc-hltable">'
         '<colgroup><col style="width:32%"><col style="width:18%"><col style="width:50%"></colgroup>'
         '<thead><tr><th>Line</th><th>Value</th><th style="text-align:left;padding-left:16px">Notes</th></tr></thead>'
         '<tbody>' + rows + '</tbody>'
@@ -2876,6 +2996,7 @@ def build_html(d):
         '</div>\n'
         + CHART_MODAL_HTML +
         '<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>\n'
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>\n'
         '<script>\n'
         + build_chart_js(d)
         + '</script>\n'
