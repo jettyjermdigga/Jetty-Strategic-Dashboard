@@ -108,6 +108,19 @@ AIRTABLE_BRAND_PROD_BASE = "applvN4vFAPqnDwK2"  # Brand Production
 VENDOR_LIST_TABLE = "tblOk4r79oc9Hsv4L"
 WHSL_PMT_TABLE = "tblIIvVAkqGOSeKrR"
 
+# How overdue a Key Vendor's balance has to be before it's a real must-pay.
+# Jeremy pays most vendors once they're 31+ days late, but has a standing
+# arrangement with S&S Activewear where only 90+ has to go out. Drives both
+# the Summary panel's "not yet due" provision and which aging columns are
+# flagged red in the Open POs by Vendor table -- one rule, one place.
+SS_VENDOR_NAME = 'S&S Activewear'
+KV_MUST_PAY_BUCKETS = ('d31_60', 'd61_90', 'd90_plus')
+KV_MUST_PAY_BUCKETS_SS = ('d90_plus',)
+
+def kv_must_pay_buckets(vendor):
+    """Which aging buckets this vendor actually has to pay right now."""
+    return KV_MUST_PAY_BUCKETS_SS if vendor == SS_VENDOR_NAME else KV_MUST_PAY_BUCKETS
+
 def _airtable_get_all(base, table, token, params):
     """Paginate through every record for a table/filter, return the raw list."""
     url = f"{AIRTABLE_API}/{base}/{table}"
@@ -1886,7 +1899,7 @@ def build_cf_ty_ly_charts_js(d):
 
     cl_datasets = ','.join([
         line_ds('Columbia CL (TY)', cl_ty, c['draw_ty'], False),
-        line_ds('Columbia CL (LY)', cl_ly, c['draw_ly'], True),
+        line_ds('Columbia CL (LY)', cl_ly, c['draw_ly'], False),
     ])
 
     return (
@@ -2047,11 +2060,13 @@ def build_summary_panel(d):
     # S&S Activewear is a standing exception: Jeremy only needs to pay S&S
     # what's 90+ days overdue, not 30+ like every other Key Vendor -- so
     # S&S's 31-60 and 61-90 buckets count as "not yet due" too, on top of
-    # Current + 1-30.
-    SS_VENDOR_NAME = 'S&S Activewear'
+    # Current + 1-30. Not-yet-due is just everything that isn't a must-pay
+    # bucket for that vendor (see kv_must_pay_buckets), so this and the
+    # Open POs by Vendor table's red columns can't drift apart.
+    ALL_BUCKETS = ('current', 'd1_30', 'd31_60', 'd61_90', 'd90_plus')
     def kv_not_yet_due(v):
-        base = v['current'] + v['d1_30']
-        return base + v['d31_60'] + v['d61_90'] if v['vendor'] == SS_VENDOR_NAME else base
+        must_pay = kv_must_pay_buckets(v['vendor'])
+        return sum(v[b] for b in ALL_BUCKETS if b not in must_pay)
     kv = d.get('ap_key_vendors_open')
     if kv:
         kv_under_30 = sum(kv_not_yet_due(v) for v in kv['vendors'])
@@ -2284,16 +2299,23 @@ def build_ap_key_vendors_table(d):
         t = terms.get(v['vendor']) or '—'
         worst = v['worst_days']
         worst_lbl = (str(worst) + 'd overdue') if worst > 0 else 'not yet due'
+        # Red marks what this vendor actually has to pay right now, so the
+        # S&S exception (90+ only) reads straight off the table instead of
+        # every vendor's 61-90 looking equally urgent.
+        must_pay = kv_must_pay_buckets(v['vendor'])
+        def aging_cell(bucket):
+            style = 'color:var(--watch);font-weight:700' if bucket in must_pay else ''
+            return '<td style="' + style + '">' + fk(v[bucket]) + '</td>'
         rows += (
             '<tr>'
             '<td style="text-align:left;font-family:var(--body)">' + html_escape(v['vendor']) + '</td>'
             '<td style="font-family:var(--body)">' + html_escape(t) + '</td>'
-            '<td>' + fk(v['current']) + '</td>'
-            '<td>' + fk(v['d1_30']) + '</td>'
-            '<td>' + fk(v['d31_60']) + '</td>'
-            '<td style="color:var(--watch)">' + fk(v['d61_90']) + '</td>'
-            '<td style="color:var(--watch);font-weight:700">' + fk(v['d90_plus']) + '</td>'
-            '<td style="font-weight:700">' + fk(v['total']) + '</td>'
+            + aging_cell('current')
+            + aging_cell('d1_30')
+            + aging_cell('d31_60')
+            + aging_cell('d61_90')
+            + aging_cell('d90_plus')
+            + '<td style="font-weight:700">' + fk(v['total']) + '</td>'
             '<td style="font-family:var(--body);opacity:.75">' + worst_lbl + '</td>'
             '</tr>\n'
         )
