@@ -370,10 +370,26 @@ function openDomModal(domId, title){
   wrap.innerHTML = "";
   var clone = src.cloneNode(true);
   clone.removeAttribute("id");
-  // Strip the Expand bar itself -- it's chrome, not content, and it has no
-  // job inside the modal or in a printed PNG.
-  var bars = clone.querySelectorAll(".rc-expand-bar");
-  for(var i = 0; i < bars.length; i++){ bars[i].parentNode.removeChild(bars[i]); }
+  // Strip the Expand affordance itself -- chrome, not content, and it has
+  // no job inside the modal or in a printed PNG. Both placements: the bar
+  // above a plain card, and the button floated into a card's headrow.
+  var chrome = clone.querySelectorAll(".rc-expand-bar, .rc-expand-btn");
+  for(var i = 0; i < chrome.length; i++){ chrome[i].parentNode.removeChild(chrome[i]); }
+  // cloneNode() copies a <canvas> element but NOT its pixels, so a cloned
+  // chart card would arrive blank. Swap each cloned canvas for an <img> of
+  // the live one, sized to what it occupies on screen -- html2canvas
+  // handles an image far more predictably than a canvas anyway.
+  var srcCv = src.querySelectorAll("canvas");
+  var cloneCv = clone.querySelectorAll("canvas");
+  for(var j = 0; j < cloneCv.length && j < srcCv.length; j++){
+    var box = srcCv[j].getBoundingClientRect();
+    if(!box.width || !box.height) continue;
+    var img = document.createElement("img");
+    try { img.src = srcCv[j].toDataURL("image/png"); } catch(e){ continue; }
+    img.style.width = box.width + "px";
+    img.style.height = box.height + "px";
+    cloneCv[j].parentNode.replaceChild(img, cloneCv[j]);
+  }
   wrap.appendChild(clone);
   document.getElementById("chart-modal-title").textContent = title;
   var overlay = document.getElementById("chart-modal");
@@ -392,7 +408,11 @@ function closeChartModal(){
 }
 function savePng(dataUrl){
   var link = document.createElement("a");
-  link.download = (window.__modalTitle || "chart").replace(/[^a-z0-9]+/gi,"_") + ".png";
+  // Trim the separators the slug leaves at the ends, so a title that ends
+  // in punctuation ("Total Revenue (Summary)") doesn't become
+  // "Total_Revenue_Summary_.png".
+  var slug = (window.__modalTitle || "chart").replace(/[^a-z0-9]+/gi,"_").replace(/^_+|_+$/g,"");
+  link.download = (slug || "chart") + ".png";
   link.href = dataUrl;
   link.click();
 }
@@ -462,6 +482,92 @@ function downloadChartModal(){
   window.__modalChart.draw();
   savePng(url);
 }
+// Every full-width card on the page gets an Expand button, so anything can
+// be blown up, downloaded as a PNG, printed or shared -- not just the
+// handful wired up by hand in Python. Narrow KPI tiles are skipped; a
+// single figure isn't worth a full-screen render.
+//
+// Titles are read off the page rather than restated here, so they can't
+// drift from what's rendered: a card that's the only one under a section
+// divider takes that divider's title (the better name -- "Total Inventory
+// COG - Week by Week" beats the stat headline inside the card), otherwise
+// it takes its own .rc-name. Titles are deduped across the whole page,
+// appending the tab name and then a counter, since the title is also the
+// downloaded file's name and two tabs both have a "Total Revenue" card.
+function autoWireExpandButtons(){
+  var used = {};
+  function tabLabel(card){
+    var panel = card.closest(".tab-panel");
+    if(!panel) return "";
+    var tab = document.querySelector('.tab[data-panel="' + panel.id.replace(/^panel-/, "") + '"]');
+    return tab ? tab.textContent.trim() : "";
+  }
+  function sectionOf(card){
+    var div = null, n = card.previousElementSibling;
+    while(n){ if(n.classList.contains("rc-divider")){ div = n; break; } n = n.previousElementSibling; }
+    if(!div) return null;
+    var count = 0, m = div.nextElementSibling;
+    while(m && !m.classList.contains("rc-divider")){
+      if(m.classList.contains("rc-card")) count++;
+      m = m.nextElementSibling;
+    }
+    return { title: div.textContent.trim(), count: count };
+  }
+  var cards = document.querySelectorAll(".rc-card");
+  var pending = [], i, card, btn;
+  // Pass 1: reserve the hand-wired titles, so an auto title can never
+  // shadow one of them, and collect the cards still needing a button.
+  for(i = 0; i < cards.length; i++){
+    card = cards[i];
+    btn = card.querySelector(".rc-expand-btn");
+    if(btn){ used[btn.dataset.chartTitle || btn.dataset.domTitle || ""] = true; continue; }
+    if((card.getAttribute("style") || "").indexOf("grid-column:1 / -1") < 0) continue;
+    var sec = sectionOf(card);
+    var nameEl = card.querySelector(".rc-name");
+    var name = nameEl ? nameEl.textContent.trim() : "";
+    var raw = (sec && sec.count === 1) ? sec.title : (name || (sec ? sec.title : ""));
+    if(!raw) raw = tabLabel(card) || ("Card " + (i + 1));
+    pending.push({card: card, idx: i, raw: raw});
+  }
+  // Pass 2: qualify every card in a colliding set, not just the runners-up
+  // -- "Total Revenue (Summary)" and "Total Revenue (Revenue)" beat leaving
+  // whichever card happened to come first holding the bare name.
+  var counts = {};
+  for(i = 0; i < pending.length; i++){
+    counts[pending[i].raw] = (counts[pending[i].raw] || 0) + 1;
+  }
+  for(i = 0; i < pending.length; i++){
+    var p = pending[i], t = p.raw, lab = tabLabel(p.card);
+    if((counts[t] > 1 || used[t]) && lab) t = t + " (" + lab + ")";
+    var k = 2;
+    while(used[t]){ t = p.raw + " (" + (lab ? lab + " " : "") + k + ")"; k++; }
+    used[t] = true;
+    p.title = t;
+  }
+  for(i = 0; i < pending.length; i++){
+    card = pending[i].card;
+    var title = pending[i].title;
+    if(!card.id) card.id = "auto-card-" + (pending[i].idx + 1);
+    btn = document.createElement("button");
+    btn.className = "rc-expand-btn";
+    btn.textContent = "\u2922 Expand";
+    btn.setAttribute("data-dom-id", card.id);
+    btn.setAttribute("data-dom-title", title);
+    var head = card.querySelector(".rc-headrow");
+    if(head){
+      // Match the hand-wired chart cards: floated into the card's top-right
+      // corner rather than pushing the content down a row.
+      card.style.position = "relative";
+      head.appendChild(btn);
+    } else {
+      var bar = document.createElement("div");
+      bar.className = "rc-expand-bar";
+      bar.appendChild(btn);
+      card.insertBefore(bar, card.firstChild);
+    }
+  }
+}
+autoWireExpandButtons();
 document.getElementById("chart-modal").addEventListener("click", function(e){
   if(e.target.id === "chart-modal") closeChartModal();
 });
