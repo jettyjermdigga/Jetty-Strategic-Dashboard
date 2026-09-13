@@ -373,7 +373,7 @@ function openDomModal(domId, title){
   // Strip the Expand affordance itself -- chrome, not content, and it has
   // no job inside the modal or in a printed PNG. Both placements: the bar
   // above a plain card, and the button floated into a card's headrow.
-  var chrome = clone.querySelectorAll(".rc-expand-bar, .rc-expand-btn");
+  // .rc-noexport is the general opt-out: interactive controls (the\n  // checklist's week selector, say) that mean nothing in a still image.\n  var chrome = clone.querySelectorAll(".rc-expand-bar, .rc-expand-btn, .rc-noexport");
   for(var i = 0; i < chrome.length; i++){ chrome[i].parentNode.removeChild(chrome[i]); }
   // cloneNode() copies a <canvas> element but NOT its pixels, so a cloned
   // chart card would arrive blank. Swap each cloned canvas for an <img> of
@@ -430,12 +430,21 @@ function downloadDomModal(){
   // gets captured -- so a standalone PNG would arrive unlabeled. Put the
   // title inside the captured node just for the render, then take it back
   // out so the modal doesn't end up showing it twice.
-  var heading = document.createElement("div");
-  heading.className = "chart-modal-export-title";
-  heading.textContent = window.__modalTitle || "";
-  node.insertBefore(heading, node.firstChild);
+  //
+  // Unless the card already says it: a card titled from its own .rc-name
+  // would otherwise print that name twice, once as the injected heading and
+  // again as the card's headline a line below.
+  var title = window.__modalTitle || "";
+  var own = node.querySelector(".rc-name");
+  var heading = null;
+  if(!own || own.textContent.trim() !== title.trim()){
+    heading = document.createElement("div");
+    heading.className = "chart-modal-export-title";
+    heading.textContent = title;
+    node.insertBefore(heading, node.firstChild);
+  }
   function restore(){
-    if(heading.parentNode) heading.parentNode.removeChild(heading);
+    if(heading && heading.parentNode) heading.parentNode.removeChild(heading);
     if(btn){ btn.textContent = label; btn.disabled = false; }
   }
   // The full natural size, not the on-screen box: the modal scrolls the
@@ -1567,6 +1576,9 @@ def read_all():
     d['payroll']        = payroll
     d['payroll_latest'] = payroll[-1] if payroll else None
 
+    # Last, so every series it inspects is already on d.
+    d['update_status'] = build_update_status(d, df_a)
+
     return d
 
 # Two known source-sheet labeling inconsistencies for the OpEx "Program
@@ -1802,6 +1814,30 @@ EXTRA_CSS = '''
 .chart-modal-export-title{font-family:var(--display);font-weight:700;font-size:17px;color:var(--ink);margin:0 0 14px}
 .rc-expand-bar{display:flex;justify-content:flex-end;margin-bottom:8px}
 .rc-expand-bar .rc-expand-btn{position:static}
+.chk-weekbar{display:flex;align-items:center;gap:8px;margin:14px 0 10px;flex-wrap:wrap}
+.chk-weekbar select,.chk-step{
+  border:1px solid var(--surface-alt);border-radius:4px;background:var(--surface);cursor:pointer;
+  padding:5px 11px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink);
+}
+.chk-weekbar select{padding:5px 8px;min-width:104px}
+.chk-step:hover{background:var(--surface-alt)}
+.chk-now{margin-left:6px}
+.chk-tally{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink);opacity:.75;margin-bottom:12px}
+.chk-tally-done{color:var(--good);opacity:1}
+.chk-tally-miss{color:var(--watch);opacity:1}
+.chk-table{width:100%}
+/* .rc-hltable right-aligns its cells (it's built for figures) -- this table
+   is prose, so every column reads left except the week stamp. */
+.chk-table .chk-cell{padding:8px 10px;vertical-align:top;text-align:left}
+.chk-table .chk-last{text-align:right}
+.chk-status{font-family:'IBM Plex Mono',monospace;font-size:11px;white-space:nowrap}
+.chk-done{color:var(--good)}
+.chk-miss{color:var(--watch);font-weight:700}
+.chk-na{opacity:.5}
+.chk-item{font-family:var(--display);font-weight:700;font-size:13px;color:var(--ink)}
+.chk-note{font-family:var(--body);font-size:12px;color:var(--ink);opacity:.72;line-height:1.45;margin-top:3px}
+.chk-where,.chk-last{font-family:'IBM Plex Mono',monospace;font-size:11px;opacity:.8}
+.chk-row-miss{background:var(--surface)}
 '''
 
 # ── rc- component helpers ────────────────────────────────────────────────────
@@ -2026,6 +2062,7 @@ def build_chart_js(d):
         + build_cf_ty_ly_charts_js(d)
         + build_ar_chart_js(d)
         + (build_jrf_chart_js(d['jrf']) if d.get('jrf') else '')
+        + build_update_checklist_js(d)
     )
 
 def build_summary_trend_charts_js(d):
@@ -2854,75 +2891,354 @@ def build_jrf_chart_js(jrf):
         '}});})();\n'
     )
 
+# ── Update checklist ────────────────────────────────────────────────────────
+
+# Per-item status, one character per week, packed into a 52-char string the
+# Instructions tab reads client-side when you toggle the week:
+#   d  entered for that week
+#   m  due that week and not there
+#   n  not due that week -- off-cadence (payroll on an odd week), or a
+#      snapshot week that a later snapshot has superseded
+#   e  event-driven: it only exists when something actually happened, so a
+#      blank week is normal rather than a gap
+ST_DONE, ST_MISS, ST_NA, ST_EVENT = 'd', 'm', 'n', 'e'
+
+
+def _cadence_weeks(observed):
+    """The weeks an item is *due*, derived from the weeks it has actually
+    been filled in rather than hardcoded -- so the bi-weekly payroll rhythm
+    comes from the Payroll tab itself and stays right if the cycle shifts.
+    Falls back to 'only the weeks we've seen' when the spacing is irregular
+    enough that guessing a pattern would invent due dates."""
+    obs = sorted(observed)
+    if len(obs) < 3:
+        return set(obs)
+    diffs = [b - a for a, b in zip(obs, obs[1:])]
+    step = max(set(diffs), key=diffs.count)
+    if step < 1 or diffs.count(step) < len(diffs) * 0.6:
+        return set(obs)
+    return {wk for wk in range(obs[0], 53) if (wk - obs[0]) % step == 0}
+
+
+def status_weekly(done):
+    """Due every week."""
+    return ''.join(ST_DONE if wk in done else ST_MISS for wk in range(1, 53))
+
+
+def status_cadence(done):
+    """Due on the item's own observed rhythm; off-rhythm weeks aren't gaps."""
+    due = _cadence_weeks(done)
+    return ''.join(
+        (ST_DONE if wk in done else ST_MISS) if wk in due else ST_NA
+        for wk in range(1, 53)
+    )
+
+
+def status_snapshot(done):
+    """A running cumulative balance entered once, at the week it's taken --
+    earlier weeks are superseded by design, not missing."""
+    latest = max(done) if done else 0
+    return ''.join(
+        ST_DONE if wk == latest else (ST_NA if wk < latest else ST_MISS)
+        for wk in range(1, 53)
+    )
+
+
+def status_event(done):
+    """Only exists when the thing happened. A blank week means nothing to
+    record, so it never reads as overdue."""
+    return ''.join(ST_DONE if wk in done else ST_EVENT for wk in range(1, 53))
+
+
+def weeks_present(series):
+    """Weeks whose value is actually filled in. A sheet SUM formula over
+    blank rows evaluates to 0 rather than blank, so a bare not-null test
+    reports all 52 weeks as populated on every formula-backed row -- the
+    same trailing-zero trap read_cash_flow_weekly_history() already works
+    around. Zero counts as absent throughout."""
+    return {i + 1 for i, v in enumerate(series) if v}
+
+
+def build_update_status(d, df_a):
+    """What's been entered for each week, read off the workbook itself.
+
+    This is the Instructions tab's checklist. Every 'updated / not updated'
+    mark is derived from whether the source cells for that week actually
+    hold a value -- nothing here is a hand-maintained list that can drift
+    out of step with the sheet. The prose (what prompts each entry, what to
+    reconcile it against) is still Jeremy's process as best we understand
+    it, and is meant to be corrected.
+
+    Each item declares how it behaves over time, because 'blank' means
+    different things for different rows:
+      weekly    -- a figure per week; blank is a gap
+      cadence   -- a figure on its own rhythm (payroll's fortnight), derived
+                   from the tab; blank off-rhythm isn't a gap
+      snapshot  -- a cumulative balance entered at the week it's taken; only
+                   the latest week holds it, and that's correct
+      event     -- only present when something happened; blank is normal
+    """
+    yr = max(d['cfw_history']) if d.get('cfw_history') else None
+
+    def cfw(key):
+        return weeks_present(((d.get('cfw_history') or {}).get(yr) or {}).get(key) or [])
+
+    def pl_row(row):
+        # The 2026 Actual P&L rows are formulas, so every week reads non-null;
+        # an unreached week comes back as a literal 0 (see weeks_present).
+        return weeks_present([df_a.iloc[row, wk] for wk in range(1, 53)])
+
+    ar = (d.get('ar_history') or {}).get(yr) or {}
+    ar_weeks = weeks_present(ar.get('brand_total') or [])
+    # Inventory carries the prior week forward when a week isn't taken, so a
+    # carried value is not an entry -- inv_est records exactly those weeks.
+    inv_weeks = set(d.get('inv_wks') or ()) - set((d.get('inv_est') or {}).get('cog_2026') or ())
+    st_weeks = set(d.get('st_s26') or ()) - set((d.get('inv_est') or {}).get('st_s26') or ())
+    pay_weeks = {p['wk'] for p in (d.get('payroll') or [])}
+    cl_weeks = cfw('cl_draw') | cfw('cl_paydown')
+
+    items = [
+        dict(key='week', name='Week marker', kind='weekly',
+             where='Summary tab, cell B3',
+             note='Set this to the week you are closing. Every YTD figure on the dashboard, '
+                  'and the week shown in the header, reads through this number -- so it gates '
+                  'everything else here.',
+             weeks={wk for wk in range(1, d['week'] + 1)}),
+        dict(key='revenue', name='Revenue by channel', kind='weekly',
+             where='2026 Actual tab, Total Income',
+             note='Enter the week\u2019s actual revenue by channel (DTC, Wholesale, Screen '
+                  'Printing/INK). Reconcile the week\u2019s total against Shopify/QuickBooks '
+                  'before saving.',
+             weeks=pl_row(18)),
+        dict(key='cogs', name='COGS &amp; Shipping', kind='weekly',
+             where='2026 Actual tab, Total COGS',
+             note='Book the week\u2019s COGS by season (Spring/Summer, Fall/Winter, Special) '
+                  'and the Brand/Ink shipping actuals.',
+             weeks=pl_row(32)),
+        dict(key='opex', name='OpEx', kind='weekly',
+             where='2026 Actual tab, Total Operating Expenses',
+             note='Enter actual spend per OpEx line as bills are booked. Any new line needs a '
+                  'row on the Categories tab or it lands in Uncategorized.',
+             weeks=pl_row(96)),
+        dict(key='inventory', name='Inventory \u2014 COG &amp; units', kind='weekly',
+             where='Inventory tab',
+             note='Take the on-hand COG and unit snapshot for the week. A week left blank is '
+                  'carried forward from the prior week on the charts, and is counted as missing '
+                  'here rather than as an entry.',
+             weeks=inv_weeks),
+        dict(key='sellthru', name='Sell-through %', kind='weekly',
+             where='Inventory tab',
+             note='Refresh the Spring/Summer and Fall/Winter sell-through figures for the week.',
+             weeks=st_weeks),
+        dict(key='payroll', name='Payroll &amp; headcount', kind='cadence',
+             where='Payroll and Labor tabs',
+             note='Enter headcount, hours and payroll cost for the pay period that just closed. '
+                  'Due on the pay cycle, not weekly \u2014 the cadence below is read off the '
+                  'Payroll tab itself.',
+             weeks=pay_weeks),
+        dict(key='cash', name='Cash in / cash out', kind='weekly',
+             where='Cash Flow - Weekly tab',
+             note='Enter the week\u2019s actual cash in and cash out.',
+             weeks=cfw('cash_in') & cfw('cash_out')),
+        dict(key='bank', name='Bank balance', kind='weekly',
+             where='Bank Balance tab',
+             note='Enter the week\u2019s closing balance per account (Columbia, BOA, Ramp). '
+                  'The Total column is what the dashboard reads.',
+             weeks=cfw('bank_balance')),
+        dict(key='ar', name='A/R aging', kind='weekly',
+             where='AR tab',
+             note='Update Brand and INK receivables for the week.',
+             weeks=ar_weeks),
+        dict(key='ap_key', name='A/P \u2014 Key Vendors', kind='snapshot',
+             where='AP - Key tab',
+             note='A running cumulative balance, entered in the current week\u2019s column. '
+                  'Earlier weeks intentionally stay blank \u2014 only the latest snapshot counts.',
+             weeks=weeks_present((d.get('ap_key_xl') or {}).get(yr) or [])),
+        dict(key='ap_cns', name='A/P \u2014 CNS', kind='snapshot',
+             where='AP - CNS tab',
+             note='Same as Key Vendors: one cumulative balance, entered at the week it is taken.',
+             weeks=weeks_present((d.get('ap_cns_xl') or {}).get(yr) or [])),
+        dict(key='cl', name='Columbia CL draw / paydown', kind='event',
+             where='Cash Flow - Weekly tab',
+             note='Only filled in on weeks you actually draw on or pay down the line. A blank '
+                  'week means nothing moved, so it never counts as overdue.',
+             weeks=cl_weeks),
+        dict(key='on_order', name='Open POs (On Order)', kind='event',
+             where='On Order tab',
+             note='Add or update POs as they are placed and received. The tab carries no week '
+                  'stamp, so freshness can\u2019t be checked automatically \u2014 this row is '
+                  'here as a reminder, not a status.',
+             weeks=set()),
+    ]
+
+    builder = {'weekly': status_weekly, 'cadence': status_cadence,
+               'snapshot': status_snapshot, 'event': status_event}
+    for it in items:
+        it['status'] = builder[it['kind']](it['weeks'])
+        it['last'] = max(it['weeks']) if it['weeks'] else None
+        if it['kind'] == 'cadence':
+            due = sorted(_cadence_weeks(it['weeks']))
+            step = (due[1] - due[0]) if len(due) > 1 else None
+            it['cadence'] = ('Every ' + str(step) + ' weeks') if step else 'As observed'
+        else:
+            it['cadence'] = {'weekly': 'Weekly', 'snapshot': 'Snapshot',
+                             'event': 'As needed'}[it['kind']]
+        del it['weeks']
+    return items
+
 # ── HTML assembly ─────────────────────────────────────────────────────────────
 
 def sec_label(txt):
     return rc_divider(txt)
 
-def instr_badge(cadence):
-    """cadence: 'Weekly' | 'Bi-Weekly' | 'Monthly' -- colored pill matching
-    the badge's own cadence so the eye can scan for "what's due this week"
-    across sections."""
-    cls = {'Weekly': 'weekly', 'Bi-Weekly': 'biweekly', 'Monthly': 'monthly'}[cadence]
-    return '<span class="instr-badge instr-badge-' + cls + '">' + cadence + '</span>'
+CHK_LABELS = {
+    'd': ('Updated',     'chk-done'),
+    'm': ('Not updated', 'chk-miss'),
+    'n': ('Not due',     'chk-na'),
+    'e': ('As needed',   'chk-na'),
+}
 
-def instr_section(tab_label, cadence, sheet_note, items):
-    lis = ''.join('<li>' + it + '</li>' for it in items)
-    return (
-        rc_divider(tab_label)
-        + '<div class="rc-card" style="grid-column:1 / -1">'
-        + '<div class="rc-headrow" style="display:flex;align-items:center;gap:10px">'
-        + instr_badge(cadence)
-        + ('<div class="rc-desc" style="margin:0">' + sheet_note + '</div>' if sheet_note else '')
-        + '</div>'
-        + '<ul class="instr-list">' + lis + '</ul>'
-        + '</div>\n'
-    )
 
 def build_instructions_panel(d):
-    """First-pass draft, inferred from which workbook tab feeds each
-    dashboard section (see read_all()) -- cadences and exact steps are
-    guesses about Jeremy's actual process and are meant to be corrected,
-    not treated as settled fact."""
-    intro = (
-        '<div class="rc-card" style="grid-column:1 / -1">'
-        '<div class="rc-headrow"><div class="rc-name">Keeping This Dashboard Current</div>'
-        '<div class="rc-desc">This is a first-draft checklist, not a confirmed process — the cadence tags '
-        '(Weekly / Bi-Weekly / Monthly) and specific steps below are guesses based on which tab in the budget '
-        'workbook feeds each dashboard section. Correct anything that’s wrong or missing. One thing that is '
-        'confirmed: once you save an edit to the workbook, the site checks for changes every 5 minutes and '
-        'rebuilds automatically — there’s no separate publish step.</div></div>'
+    """The Instructions tab: a week-by-week update checklist.
+
+    Every "updated / not updated" mark is derived from the workbook (see
+    build_update_status) rather than hand-maintained, so it can't drift out
+    of step with the sheet. The week selector re-reads each item's packed
+    52-week status string client-side, which is how you can point it at the
+    week you're closing -- or at one you already closed -- and see exactly
+    what's in and what isn't.
+
+    The prose in each row (what prompts the entry, what to reconcile it
+    against) is still our best understanding of Jeremy's process, not
+    confirmed fact, and is meant to be corrected."""
+    items = d.get('update_status') or []
+    WK = d['week']
+
+    rows = ''
+    for it in items:
+        rows += (
+            '<tr data-chk-status="' + it['status'] + '">'
+            '<td class="chk-cell chk-status"></td>'
+            '<td class="chk-cell">'
+            '<div class="chk-item">' + it['name'] + '</div>'
+            '<div class="chk-note">' + it['note'] + '</div>'
+            '</td>'
+            '<td class="chk-cell chk-where">' + it['where'] + '</td>'
+            '<td class="chk-cell chk-where">' + it['cadence'] + '</td>'
+            '<td class="chk-cell chk-last">'
+            + ('Wk ' + str(it['last']) if it['last'] else '&mdash;') +
+            '</td>'
+            '</tr>\n'
+        )
+
+    weeks = ''.join(
+        '<option value="' + str(w) + '"' + (' selected' if w == WK else '') + '>Week ' + str(w) + '</option>'
+        for w in range(1, 53)
+    )
+
+    checklist = (
+        '<div class="rc-card" id="update-checklist" style="grid-column:1 / -1">'
+        '<div class="rc-headrow">'
+        '<div class="rc-name" id="chk-title">Update Checklist &mdash; Week ' + str(WK) + '</div>'
+        '<div class="rc-desc">Every status below is read out of the workbook itself &mdash; an item '
+        'counts as updated only when the cells behind it actually hold a value for that week. Toggle '
+        'the week to see where any week stands. The notes are our understanding of the process, not '
+        'confirmed fact; correct anything that&rsquo;s wrong.</div>'
+        '</div>'
+        '<div class="chk-weekbar rc-noexport">'
+        '<button type="button" class="chk-step" data-chk-step="-1" aria-label="Previous week">&#9664;</button>'
+        '<select id="chk-week">' + weeks + '</select>'
+        '<button type="button" class="chk-step" data-chk-step="1" aria-label="Next week">&#9654;</button>'
+        '<button type="button" class="chk-step chk-now" id="chk-now">Current &mdash; Week ' + str(WK) + '</button>'
+        '</div>'
+        '<div class="chk-tally" id="chk-tally"></div>'
+        '<table class="rc-hltable chk-table">'
+        '<colgroup><col style="width:12%"><col style="width:44%"><col style="width:19%">'
+        '<col style="width:13%"><col style="width:12%"></colgroup>'
+        '<thead><tr><th class="chk-cell">Status</th><th class="chk-cell">Item</th>'
+        '<th class="chk-cell">Where it lives</th><th class="chk-cell">Cadence</th>'
+        '<th class="chk-cell">Last entered</th></tr></thead>'
+        '<tbody>' + rows + '</tbody>'
+        '</table>'
         '</div>\n'
     )
-    sections = (
-        instr_section('Revenue', 'Weekly',
-            'Feeds the &ldquo;2026 Actual&rdquo; tab.',
-            ['Enter this week’s actual revenue by channel (DTC, Wholesale, Screen Printing/INK, etc.).',
-             'Reconcile the week’s total against Shopify/QuickBooks (or your source system) before saving.'])
-        + instr_section('COGS &amp; Shipping', 'Weekly',
-            'Also on the &ldquo;2026 Actual&rdquo; tab — Spring/Summer, Fall/Winter, and Special COGS, plus Brand/Ink Shipping.',
-            ['Book this week’s COGS by season (Spring/Summer, Fall/Winter, Special).',
-             'Enter Shipping actuals (Brand, Ink) for the week.'])
-        + instr_section('Inventory', 'Weekly',
-            'Feeds the &ldquo;Inventory&rdquo; and &ldquo;On Order&rdquo; tabs.',
-            ['Update the on-hand COG/units snapshot for the week.',
-             'Refresh sell-through % figures for the current season.',
-             'Add or update any new POs on the &ldquo;On Order&rdquo; tab.'])
-        + instr_section('Labor', 'Bi-Weekly',
-            'Feeds the &ldquo;Labor&rdquo; and &ldquo;Payroll&rdquo; tabs, aligned to the pay cycle.',
-            ['Enter headcount/hours by department for the completed pay period.',
-             'Enter payroll cost actuals for the same period.'])
-        + instr_section('OpEx', 'Monthly',
-            'Feeds the OpEx line items on the &ldquo;2026 Actual&rdquo; tab (plus the optional &ldquo;Categories&rdquo; '
-            'tab — see docs/opex-categories-setup.md).',
-            ['Enter the month’s actual spend per OpEx line item as bills/invoices are booked.',
-             'Add any new line item to the &ldquo;Categories&rdquo; tab so it doesn’t fall into Uncategorized.'])
-        + instr_section('Cash Flow', 'Weekly',
-            'Feeds the &ldquo;Cash Flow - Tracker&rdquo; tab.',
-            ['Enter the week’s actual cash in/out.',
-             'Confirm the forward schedule/forecast rows are still current.'])
+
+    publishing = (
+        rc_divider('What Triggers a Rebuild')
+        + '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Saving the workbook is the only step</div>'
+        '<div class="rc-desc">There is no separate publish action. Once an edit is saved to the '
+        'budget workbook in Drive, the site picks it up on its own.</div></div>'
+        '<ol class="instr-list">'
+        '<li>You save the workbook. Drive stamps the file with a new modified time.</li>'
+        '<li>A job runs every 5 minutes and compares that stamp against the last published build. '
+        'If it hasn&rsquo;t moved, the run stops there and nothing is rebuilt.</li>'
+        '<li>If it has moved, the workbook is downloaded, the dashboard is rebuilt, and the new '
+        'version deploys &mdash; about a minute end to end.</li>'
+        '<li>Live A/P and vendor figures are pulled from Airtable at that same moment, so they '
+        'refresh on every rebuild rather than on their own schedule.</li>'
+        '</ol>'
+        '<div class="rc-desc" style="margin-top:12px">So the slowest part is the 5-minute poll: '
+        'worst case, an edit is live roughly six minutes after you save. Setting the week marker on '
+        'the Summary tab counts as an edit like any other &mdash; it will trigger a rebuild on its '
+        'own even if nothing else changed.</div>'
+        '</div>\n'
     )
-    return intro + sections
+
+    return checklist + publishing
+
+
+def build_update_checklist_js(d):
+    """Drives the Instructions tab's week selector. Each row carries its own
+    packed 52-week status string, so switching weeks is a re-read rather
+    than a rebuild, and the page holds every week's state at once."""
+    return (
+        '(function(){\n'
+        'var sel=document.getElementById("chk-week");if(!sel)return;\n'
+        'var CUR=' + str(d['week']) + ';\n'
+        'var LABELS={d:["Updated","chk-done"],m:["Not updated","chk-miss"],'
+        'n:["Not due","chk-na"],e:["As needed","chk-na"]};\n'
+        'var card=document.getElementById("update-checklist");\n'
+        'var rows=card.querySelectorAll("tbody tr[data-chk-status]");\n'
+        'function render(){\n'
+        '  var wk=parseInt(sel.value,10);\n'
+        '  var done=0,due=0;\n'
+        '  for(var i=0;i<rows.length;i++){\n'
+        '    var code=rows[i].dataset.chkStatus.charAt(wk-1);\n'
+        '    var info=LABELS[code]||LABELS.n;\n'
+        '    var cell=rows[i].querySelector(".chk-status");\n'
+        '    cell.textContent=info[0];\n'
+        '    cell.className="chk-cell chk-status "+info[1];\n'
+        '    rows[i].className=(code==="m")?"chk-row-miss":"";\n'
+        '    if(code==="d"||code==="m"){due++;if(code==="d")done++;}\n'
+        '  }\n'
+        '  var title="Update Checklist \u2014 Week "+wk;\n'
+        '  document.getElementById("chk-title").textContent=title;\n'
+        '  // Keep the Expand/PNG title in step, so an exported checklist says\n'
+        '  // which week it is a checklist for.\n'
+        '  var btn=card.querySelector(".rc-expand-btn");\n'
+        '  if(btn) btn.setAttribute("data-dom-title",title);\n'
+        '  var t=document.getElementById("chk-tally");\n'
+        '  if(due===0){ t.textContent="Nothing due for week "+wk+"."; t.className="chk-tally"; }\n'
+        '  else { t.textContent=done+" of "+due+" due items updated for week "+wk+"."\n'
+        '         +(done<due?" "+(due-done)+" outstanding.":""); \n'
+        '    t.className="chk-tally "+(done===due?"chk-tally-done":"chk-tally-miss"); }\n'
+        '}\n'
+        'sel.addEventListener("change",render);\n'
+        'card.querySelectorAll("[data-chk-step]").forEach(function(b){\n'
+        '  b.addEventListener("click",function(){\n'
+        '    var wk=parseInt(sel.value,10)+parseInt(b.dataset.chkStep,10);\n'
+        '    if(wk>=1&&wk<=52){sel.value=String(wk);render();}\n'
+        '  });\n'
+        '});\n'
+        'document.getElementById("chk-now").addEventListener("click",function(){\n'
+        '  sel.value=String(CUR);render();\n'
+        '});\n'
+        'render();\n'
+        '})();\n'
+    )
+
 
 def build_html(d):
     WK  = d['week']
