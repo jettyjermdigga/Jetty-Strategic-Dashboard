@@ -274,6 +274,149 @@ def fetch_ap_key_vendors_open():
                 ink_total=sum(v["ink_total"] for v in vendors),
                 brand_total=sum(v["brand_total"] for v in vendors))
 
+# ── Events ──────────────────────────────────────────────────────────────────
+
+JETTY_HUB_BASE = 'appJbKBr1gHkPtd8a'
+EVENTS_TABLE = 'tbly10cgK3QL9drFX'
+
+# Field IDs rather than names: several carry emoji ("Event 🚀") and one has a
+# trailing-space twin, both of which make name-based lookup fragile.
+EV_NAME, EV_DATE = 'flda4uuorys9shzjS', 'fldtEKnJOupsUdfQg'
+EV_REVENUE, EV_ORDERS = 'fldEXjIaxuaSBYpAs', 'fld7AEFWlgH9eS0aG'
+EV_FEE, EV_VENUE = 'fldY3ymv7FehiF5n9', 'fld2sj9hbJTNDGXgt'
+
+
+def fetch_events():
+    """Every event with recorded revenue, from JETTY HUB's Calendar & Events
+    table -- the canonical source for event results. The Box Truck Event
+    Tracker workbook carries the same fees/labor detail, but Airtable is
+    live and already in this build's credentials, so it wins.
+
+    One record is one day of selling: a multi-day event (Atlantic City Boat
+    Show, Clamfest) is several records sharing a name on consecutive dates.
+    They're stitched into runs by group_event_runs(), not here -- this stays
+    a faithful read of the table. Returns None on failure."""
+    token = os.environ.get('AIRTABLE_API_KEY')
+    if not token:
+        return None
+    params = {
+        "filterByFormula": "AND({Event Revenue} != BLANK(), {Event \U0001F680} != BLANK())",
+        "fields[]": ["Name", "Event \U0001F680", "Event Revenue", "Orders",
+                      "Event Fee ($)", "Name (from Venue)"],
+        "pageSize": 100,
+    }
+    try:
+        records = _airtable_get_all(JETTY_HUB_BASE, EVENTS_TABLE, token, params)
+    except requests.RequestException as e:
+        print("Calendar & Events fetch failed, skipping Events tab:", e)
+        return None
+
+    out = []
+    for rec in records:
+        f = rec.get("fields", {})
+        name = (f.get("Name") or "").strip()
+        date = f.get("Event \U0001F680")
+        if not name or not date:
+            continue
+        venue = f.get("Name (from Venue)") or []
+        out.append(dict(
+            name=name,
+            date=date,
+            revenue=float(f.get("Event Revenue") or 0),
+            orders=int(f.get("Orders") or 0),
+            fee=f.get("Event Fee ($)"),
+            venue=(venue[0] if isinstance(venue, list) and venue else None),
+        ))
+    return out
+
+
+def event_key(name):
+    """What counts as 'the same event' across runs. The table is typed by
+    hand, so the same event shows up as 'Rocking the Docks' and 'Rocking The
+    Docks', and 'Art of Surfing' picked up a trailing space -- case and
+    surrounding whitespace can't be part of the identity or the comparison
+    Jeremy actually wants silently splits in two."""
+    return ' '.join(name.split()).lower()
+
+
+def group_event_runs(events):
+    """Collapse consecutive days of the same event into one run.
+
+    A four-day boat show is one outing to compare against last year's, not
+    four. Days are consecutive if they're within a day of each other under
+    the same event key; any longer gap starts a new run, which is what keeps
+    Sun Harbor's monthly repeats (and Rocking the Docks' fortnightly ones)
+    as separate entries rather than one giant blob.
+
+    Each run carries its own days so the detail is never lost -- a run of
+    one is just a single-day event."""
+    by_key = {}
+    for ev in events:
+        by_key.setdefault(event_key(ev['name']), []).append(ev)
+
+    runs = []
+    for key, evs in by_key.items():
+        evs.sort(key=lambda e: e['date'])
+        cur = []
+        for ev in evs:
+            if cur and (_date_of(ev['date']) - _date_of(cur[-1]['date'])).days > 1:
+                runs.append(_make_run(key, cur))
+                cur = []
+            cur.append(ev)
+        if cur:
+            runs.append(_make_run(key, cur))
+    runs.sort(key=lambda r: r['end'], reverse=True)
+    return runs
+
+
+def _date_of(s):
+    return datetime.date.fromisoformat(s)
+
+
+def _make_run(key, days):
+    revenue = sum(d['revenue'] for d in days)
+    orders = sum(d['orders'] for d in days)
+    # Fee is recorded per day and repeated across a multi-day run's rows (all
+    # five Atlantic City days read $798), so it's the per-run figure already
+    # -- summing it would quintuple the cost of the show.
+    fees = [d['fee'] for d in days if d['fee'] is not None]
+    return dict(
+        key=key,
+        # The most recent spelling wins as the display name, since that's the
+        # one Jeremy is typing now.
+        name=days[-1]['name'].strip(),
+        start=days[0]['date'],
+        end=days[-1]['date'],
+        days=days,
+        n_days=len(days),
+        revenue=revenue,
+        orders=orders,
+        aov=(revenue / orders) if orders else None,
+        fee=(max(fees) if fees else None),
+        venue=next((d['venue'] for d in reversed(days) if d['venue']), None),
+    )
+
+
+def build_events_data(events):
+    """Runs, newest first, each annotated with how it did against the last
+    time the same event ran."""
+    runs = group_event_runs(events)
+    history = {}
+    for r in sorted(runs, key=lambda r: r['end']):
+        prior = history.setdefault(r['key'], [])
+        r['prior'] = list(prior)
+        r['prev'] = prior[-1] if prior else None
+        r['rev_delta'] = (
+            (r['revenue'] - r['prev']['revenue']) / r['prev']['revenue']
+            if r['prev'] and r['prev']['revenue'] else None
+        )
+        prior.append(r)
+    for r in runs:
+        r['run_no'] = len(r['prior']) + 1
+        r['total_runs'] = len(history.get(r['key'], []))
+    return runs
+
+
 # ── Formatters ──────────────────────────────────────────────────────────────
 
 def html_escape(s):
@@ -370,6 +513,11 @@ function openDomModal(domId, title){
   wrap.innerHTML = "";
   var clone = src.cloneNode(true);
   clone.removeAttribute("id");
+  // The source may be a hidden stash (the Events tab keeps its per-event
+  // comparison panels offscreen until asked for) -- the copy is the thing
+  // being shown, so it has to come out of hiding.
+  clone.removeAttribute("hidden");
+  if(clone.style && clone.style.display === "none") clone.style.display = "";
   // Strip the Expand affordance itself -- chrome, not content, and it has
   // no job inside the modal or in a printed PNG. Both placements: the bar
   // above a plain card, and the button floated into a card's headrow.
@@ -1366,6 +1514,7 @@ def read_all():
     d['ap_key_vendors_weekly'] = fetch_ap_key_vendors_weekly()
     d['ap_key_vendors_terms']  = fetch_ap_key_vendors_terms()
     d['ap_key_vendors_open']   = fetch_ap_key_vendors_open()
+    d['events']                = fetch_events()
 
     # Inventory. A missing weekly reading is not the same as zero on hand — it
     # just means nobody recorded a count that week. carry_forward fills those
@@ -1822,6 +1971,32 @@ EXTRA_CSS = '''
 .chk-weekbar select{padding:5px 8px;min-width:104px}
 .chk-step:hover{background:var(--surface-alt)}
 .chk-now{margin-left:6px}
+.ev-table{width:100%}
+.ev-table .ev-cell{padding:8px 10px;vertical-align:top;text-align:left}
+.ev-table .ev-num{text-align:right;white-space:nowrap}
+.ev-when{font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap}
+.ev-name{font-family:var(--display);font-weight:700;font-size:13px;color:var(--ink)}
+.ev-venue{font-family:var(--body);font-size:11.5px;opacity:.65;margin-top:2px}
+.ev-up{color:var(--good)}
+.ev-down{color:var(--watch)}
+.ev-flat{opacity:.4}
+.ev-compare-btn{position:static;white-space:nowrap}
+/* The per-event comparison panels live here until a Compare button clones
+   one into the modal. Kept out of .rc-card so the auto Expand wiring skips
+   them -- they're modal content, not cards on the page. */
+.ev-compare-store{display:none}
+.ev-compare{background:#fff}
+.ev-compare-stats{
+  display:flex;flex-wrap:wrap;gap:18px;margin:12px 0 14px;
+  font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink);
+}
+.ev-compare-stats b{font-size:13px}
+.ev-this{background:var(--surface)}
+.ev-this td:first-child{box-shadow:inset 3px 0 0 var(--ink)}
+.ev-tag{
+  font-family:'IBM Plex Mono',monospace;font-size:9.5px;text-transform:uppercase;
+  letter-spacing:.06em;opacity:.55;
+}
 .chk-callout{
   border-left:3px solid var(--surface-alt);background:var(--surface);
   padding:11px 15px;margin-bottom:14px;border-radius:0 4px 4px 0;
@@ -3303,6 +3478,166 @@ render();
 '''
 
 
+def _ev_date(iso):
+    d = datetime.date.fromisoformat(iso)
+    return d.strftime('%b %-d, %Y')
+
+
+def _ev_span(run):
+    if run['n_days'] == 1:
+        return _ev_date(run['end'])
+    a, b = datetime.date.fromisoformat(run['start']), datetime.date.fromisoformat(run['end'])
+    if (a.year, a.month) == (b.year, b.month):
+        return a.strftime('%b %-d') + '–' + b.strftime('%-d, %Y')
+    return a.strftime('%b %-d') + ' – ' + b.strftime('%b %-d, %Y')
+
+
+def _ev_pct(v):
+    if v is None:
+        return '<span class="ev-flat">&mdash;</span>'
+    cls = 'ev-up' if v >= 0 else 'ev-down'
+    return '<span class="' + cls + '">' + ('+' if v >= 0 else '−') + f'{abs(v)*100:.0f}' + '%</span>'
+
+
+def build_events_compare(run, idx):
+    """The hidden panel behind a run's Compare button -- every time this
+    event has run, oldest to newest, so a repeat reads as a series rather
+    than a pair. Opened full-screen through the same DOM modal the charts
+    and the Summary panel use (see openDomModal)."""
+    all_runs = run['prior'] + [run]
+    revs = [r['revenue'] for r in all_runs]
+    best = max(revs)
+    rows = ''
+    for r in all_runs:
+        is_this = (r is run)
+        rows += (
+            '<tr' + (' class="ev-this"' if is_this else '') + '>'
+            '<td class="ev-cell">' + _ev_span(r) + (' <span class="ev-tag">latest</span>' if is_this else '') + '</td>'
+            '<td class="ev-cell">' + (r['venue'] or '&mdash;') + '</td>'
+            '<td class="ev-cell ev-num">' + (str(r['n_days']) if r['n_days'] > 1 else '&mdash;') + '</td>'
+            '<td class="ev-cell ev-num">' + fk(r['revenue']) + ('  <span class="ev-tag">best</span>' if r['revenue'] == best else '') + '</td>'
+            '<td class="ev-cell ev-num">' + format(r['orders'], ',') + '</td>'
+            '<td class="ev-cell ev-num">' + ('$' + f"{r['aov']:,.2f}" if r['aov'] else '&mdash;') + '</td>'
+            '<td class="ev-cell ev-num">' + (fk(r['fee']) if r['fee'] is not None else '&mdash;') + '</td>'
+            '<td class="ev-cell ev-num">' + _ev_pct(r['rev_delta']) + '</td>'
+            '</tr>\n'
+        )
+    avg = sum(revs) / len(revs)
+    summary = (
+        '<div class="ev-compare-stats">'
+        '<span><b>' + str(len(all_runs)) + '</b> runs</span>'
+        '<span>Total <b>' + fk(sum(revs)) + '</b></span>'
+        '<span>Average <b>' + fk(avg) + '</b></span>'
+        '<span>Best <b>' + fk(best) + '</b></span>'
+        '<span>This run vs. average <b>' + _ev_pct((run['revenue'] - avg) / avg if avg else None) + '</b></span>'
+        '</div>'
+    )
+    return (
+        '<div class="ev-compare" id="ev-compare-' + str(idx) + '" hidden>'
+        '<div class="rc-headrow"><div class="rc-name">' + html_escape(run['name']) + '</div>'
+        '<div class="rc-desc">Every time this event has run, oldest first. '
+        'Consecutive days are counted as one run.</div></div>'
+        + summary +
+        '<table class="rc-hltable ev-table">'
+        '<colgroup><col style="width:16%"><col style="width:26%"><col style="width:7%">'
+        '<col style="width:13%"><col style="width:9%"><col style="width:10%">'
+        '<col style="width:9%"><col style="width:10%"></colgroup>'
+        '<thead><tr><th class="ev-cell">When</th><th class="ev-cell">Venue</th>'
+        '<th class="ev-cell ev-num">Days</th><th class="ev-cell ev-num">Revenue</th>'
+        '<th class="ev-cell ev-num">Orders</th><th class="ev-cell ev-num">AOV</th>'
+        '<th class="ev-cell ev-num">Fee</th><th class="ev-cell ev-num">vs. prior</th></tr></thead>'
+        '<tbody>' + rows + '</tbody></table>'
+        '</div>\n'
+    )
+
+
+def build_events_panel(d):
+    """The Events tab: a running tab of events, newest first, each row able
+    to open every other time that same event has run.
+
+    Sourced entirely from JETTY HUB's Calendar & Events table (see
+    fetch_events). Returns '' when that fetch comes back empty so a missing
+    API key drops the tab rather than rendering an empty shell."""
+    events = d.get('events')
+    if not events:
+        return ''
+    runs = build_events_data(events)
+    if not runs:
+        return ''
+
+    this_year = max(r['end'][:4] for r in runs)
+    ytd = [r for r in runs if r['end'][:4] == this_year]
+    ytd_rev = sum(r['revenue'] for r in ytd)
+    ytd_orders = sum(r['orders'] for r in ytd)
+    ytd_fees = sum(r['fee'] for r in ytd if r['fee'])
+    repeats = sum(1 for r in ytd if r['total_runs'] > 1)
+
+    kpis = (
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">' + this_year + ' Events</div>'
+        '<div class="rc-desc">Events with recorded revenue in Calendar &amp; Events. Consecutive '
+        'days of the same event count as one event &mdash; a five-day boat show is one outing, not '
+        'five.</div></div>'
+        '<div class="rc-boxrow"><div class="rc-box"><div class="rc-row">'
+        + rc_stat('Events', str(len(ytd)))
+        + rc_stat('Revenue', fk(ytd_rev))
+        + rc_stat('Avg / Event', fk(ytd_rev / len(ytd)) if ytd else '—')
+        + rc_stat('Orders', format(ytd_orders, ','))
+        + rc_stat('Avg AOV', '$' + f'{ytd_rev / ytd_orders:,.2f}' if ytd_orders else '—')
+        + rc_stat('Event Fees', fk(ytd_fees))
+        + rc_stat('Repeat Events', str(repeats) + ' of ' + str(len(ytd)))
+        + '</div></div></div>'
+        '</div>\n'
+    )
+
+    rows, panels = '', ''
+    for i, r in enumerate(runs):
+        compare = '<span class="ev-flat">&mdash;</span>'
+        if r['prior']:
+            panels += build_events_compare(r, i)
+            # Title matches the panel's own .rc-name exactly, so the PNG export's
+            # duplicate-heading check catches it and doesn't print the name twice.
+            compare = ('<button class="rc-expand-btn ev-compare-btn" data-dom-id="ev-compare-' + str(i) + '" '
+                       'data-dom-title="' + html_escape(r['name']) + '">'
+                       + str(r['total_runs']) + ' runs</button>')
+        rows += (
+            '<tr>'
+            '<td class="ev-cell ev-when">' + _ev_span(r) + '</td>'
+            '<td class="ev-cell"><div class="ev-name">' + html_escape(r['name']) + '</div>'
+            + ('<div class="ev-venue">' + html_escape(r['venue']) + '</div>' if r['venue'] else '') +
+            '</td>'
+            '<td class="ev-cell ev-num">' + (str(r['n_days']) if r['n_days'] > 1 else '&mdash;') + '</td>'
+            '<td class="ev-cell ev-num"><b>' + fk(r['revenue']) + '</b></td>'
+            '<td class="ev-cell ev-num">' + format(r['orders'], ',') + '</td>'
+            '<td class="ev-cell ev-num">' + ('$' + f"{r['aov']:,.2f}" if r['aov'] else '&mdash;') + '</td>'
+            '<td class="ev-cell ev-num">' + (fk(r['fee']) if r['fee'] is not None else '&mdash;') + '</td>'
+            '<td class="ev-cell ev-num">' + _ev_pct(r['rev_delta']) + '</td>'
+            '<td class="ev-cell ev-num">' + compare + '</td>'
+            '</tr>\n'
+        )
+
+    table = (
+        rc_divider('All Events — Most Recent First')
+        + '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Running Tab</div>'
+        '<div class="rc-desc">&ldquo;vs. prior&rdquo; compares revenue against the last time this same '
+        'event ran. The runs button opens every other time it has run.</div></div>'
+        '<table class="rc-hltable ev-table">'
+        '<colgroup><col style="width:11%"><col style="width:27%"><col style="width:6%">'
+        '<col style="width:10%"><col style="width:8%"><col style="width:9%">'
+        '<col style="width:8%"><col style="width:9%"><col style="width:12%"></colgroup>'
+        '<thead><tr><th class="ev-cell">When</th><th class="ev-cell">Event</th>'
+        '<th class="ev-cell ev-num">Days</th><th class="ev-cell ev-num">Revenue</th>'
+        '<th class="ev-cell ev-num">Orders</th><th class="ev-cell ev-num">AOV</th>'
+        '<th class="ev-cell ev-num">Fee</th><th class="ev-cell ev-num">vs. prior</th>'
+        '<th class="ev-cell ev-num">History</th></tr></thead>'
+        '<tbody>' + rows + '</tbody></table>'
+        '</div>\n'
+        + '<div class="ev-compare-store">' + panels + '</div>\n'
+    )
+    return kpis + table
+
+
 def build_html(d):
     WK  = d['week']
     rev = d['rev']; cogs = d['cogs']; opex = d['opex']; ni = d['net_income']
@@ -3384,6 +3719,7 @@ def build_html(d):
         '  <div class="tab" data-panel="labor">Labor</div>\n'
         '  <div class="tab" data-panel="opex">OpEx</div>\n'
         '  <div class="tab" data-panel="cashflow">Cash Flow</div>\n'
+        + ('  <div class="tab" data-panel="events">Events</div>\n' if d.get('events') else '')
         + ('  <div class="tab" data-panel="jrf">JRF</div>\n' if d.get('jrf') else '') +
         '  <div class="tab tab-instructions" data-panel="instructions">Instructions</div>\n'
         '</nav>\n'
@@ -3475,6 +3811,7 @@ def build_html(d):
         + panel('labor', build_labor_panel(d))
         + panel('opex', build_opex_panel(d))
         + panel('cashflow', build_cashflow_panel(d))
+        + (panel('events', build_events_panel(d)) if d.get('events') else '')
         + (panel('jrf', build_jrf_panel(d['jrf'])) if d.get('jrf') else '')
         + panel('instructions', build_instructions_panel(d))
         + '</main>\n'
