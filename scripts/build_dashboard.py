@@ -1983,6 +1983,7 @@ EXTRA_CSS = '''
 .ev-compare-btn{position:static;white-space:nowrap}
 .ev-viewbar{display:flex;gap:8px;margin:14px 0 12px;flex-wrap:wrap}
 .ev-view-btn{font-size:11.5px}
+.ev-kind{font-family:'IBM Plex Mono',monospace;font-size:11px;opacity:.75;white-space:nowrap}
 .ev-view-on{background:var(--ink);color:#fff;border-color:var(--ink)}
 .ev-view-on:hover{background:var(--ink)}
 .ev-sub{
@@ -3552,6 +3553,13 @@ def _ev_span(run):
     return a.strftime('%b %-d') + ' – ' + b.strftime('%b %-d, %Y')
 
 
+def _ev_type(run):
+    """One-day or Multi-day. Replaces the raw day count -- the When column
+    already carries the span (\"Feb 25 \u2013 Mar 1\"), so the useful thing to
+    read at a glance is which kind of outing it was."""
+    return 'Multi-day' if run['n_days'] > 1 else 'One-day'
+
+
 def _ev_pct(v):
     if v is None:
         return '<span class="ev-flat">&mdash;</span>'
@@ -3585,7 +3593,7 @@ def build_events_compare(key, runs_for_key, idx):
             '<tr' + (' class="ev-this"' if is_latest else '') + '>'
             '<td class="ev-cell">' + _ev_span(r) + (' <span class="ev-tag">latest</span>' if is_latest else '') + '</td>'
             '<td class="ev-cell">' + html_escape(r['venue'] or '—') + '</td>'
-            '<td class="ev-cell ev-num">' + (str(r['n_days']) if r['n_days'] > 1 else '&mdash;') + '</td>'
+            '<td class="ev-cell ev-kind">' + _ev_type(r) + '</td>'
             '<td class="ev-cell ev-num">' + _ev_money(r['revenue'], r['revenue'] == best) + '</td>'
             '<td class="ev-cell ev-num">' + format(r['orders'], ',') + '</td>'
             '<td class="ev-cell ev-num">' + ('$' + f"{r['aov']:,.2f}" if r['aov'] else '&mdash;') + '</td>'
@@ -3640,11 +3648,11 @@ def build_events_compare(key, runs_for_key, idx):
         + summary + yoy
         + ('<div class="ev-sub">Every run</div>' if yoy else '') +
         '<table class="rc-hltable ev-table">'
-        '<colgroup><col style="width:16%"><col style="width:26%"><col style="width:7%">'
+        '<colgroup><col style="width:16%"><col style="width:23%"><col style="width:10%">'
         '<col style="width:13%"><col style="width:9%"><col style="width:10%">'
         '<col style="width:9%"><col style="width:10%"></colgroup>'
         '<thead><tr><th class="ev-cell">When</th><th class="ev-cell">Venue</th>'
-        '<th class="ev-cell ev-num">Days</th><th class="ev-cell ev-num">Revenue</th>'
+        '<th class="ev-cell">Type</th><th class="ev-cell ev-num">Revenue</th>'
         '<th class="ev-cell ev-num">Orders</th><th class="ev-cell ev-num">AOV</th>'
         '<th class="ev-cell ev-num">Fee</th><th class="ev-cell ev-num">vs. prior</th></tr></thead>'
         '<tbody>' + rows + '</tbody></table>'
@@ -3745,7 +3753,7 @@ def build_events_panel(d):
             '<td class="ev-cell"><div class="ev-name">' + html_escape(r['name']) + '</div>'
             + ('<div class="ev-venue">' + html_escape(r['venue']) + '</div>' if r['venue'] else '') +
             '</td>'
-            '<td class="ev-cell ev-num">' + (str(r['n_days']) if r['n_days'] > 1 else '&mdash;') + '</td>'
+            '<td class="ev-cell ev-kind">' + _ev_type(r) + '</td>'
             '<td class="ev-cell ev-num"><b>' + fk(r['revenue']) + '</b></td>'
             '<td class="ev-cell ev-num">' + format(r['orders'], ',') + '</td>'
             '<td class="ev-cell ev-num">' + ('$' + f"{r['aov']:,.2f}" if r['aov'] else '&mdash;') + '</td>'
@@ -3780,10 +3788,10 @@ def build_events_panel(d):
         '<tbody>' + day_rows + '</tbody></table>'
         # Grouped view
         '<table class="rc-hltable ev-table" data-ev-table="runs" hidden>'
-        '<colgroup><col style="width:11%"><col style="width:27%"><col style="width:6%">'
+        '<colgroup><col style="width:11%"><col style="width:24%"><col style="width:9%">'
         '<col style="width:10%"><col style="width:8%"><col style="width:9%">'
         '<col style="width:8%"><col style="width:9%"><col style="width:12%"></colgroup>'
-        '<thead><tr>' + head + '<th class="ev-cell ev-num">Days</th>' + tail + '</tr></thead>'
+        '<thead><tr>' + head + '<th class="ev-cell">Type</th>' + tail + '</tr></thead>'
         '<tbody>' + run_rows + '</tbody></table>'
         '</div>\n'
         + '<div class="ev-compare-store">' + panels + '</div>\n'
