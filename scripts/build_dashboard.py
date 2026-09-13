@@ -2544,20 +2544,49 @@ def build_summary_panel(d):
         rows += row('Columbia Bank Credit Line (EOY Goal)', fk(cl_eoy_goal),
                      'Target Columbia CL balance by year-end.')
 
+        # The bank comes first. Jeremy's rule (2026-09-13): pay Columbia down
+        # to the EOY Goal whatever else happens, and let A/P - CNS absorb
+        # whatever that leaves unfunded, carried into 2027.
+        #
+        # Available Cash already has A/P - CNS paid in full inside Total Cash
+        # OUT, so the shortfall against the paydown is exactly the amount of
+        # CNS that has to go unpaid to fund the bank instead -- no separate
+        # add-back needed.
         base_cash = available_cash_adj if kv else available_cash
         base_cash_label = 'Available Cash (Adjusted)' if kv else 'Available Cash'
         cl_paydown_needed = max(0.0, cl_balance - cl_eoy_goal)
-        cns_carryover = max(0.0, cl_paydown_needed - base_cash)
-        rows += row('A/P - CNS (Carryover debt to 2027)', fk(cns_carryover),
-                     'Columbia CL paydown needed to reach the EOY Goal (Current − EOY Goal) minus '
-                     + base_cash_label + ' -- the shortfall, if any, once that paydown is funded is A/P - '
-                     'CNS left unpaid this year, carried to 2027.', top=True)
+        rows += row('Credit Line Paydown Required', fk(cl_paydown_needed),
+                     'Columbia CL Balance (Current) \u2212 EOY Goal. Paid to the bank first, ahead of '
+                     'A/P - CNS.', top=True)
 
-        cash_surplus_2027 = max(0.0, base_cash - cl_paydown_needed)
-        rows += row('Cash Surplus (2027 BOY)', fk(cash_surplus_2027),
-                     base_cash_label + ' left over after fully funding the Columbia CL paydown to the EOY '
-                     'Goal -- $0 whenever there isn\'t enough to fully fund it (see A/P - CNS Carryover '
-                     'above instead). The cash actually sitting in the bank at the start of 2027.')
+        after_paydown = base_cash - cl_paydown_needed
+        rows += row('Cash After Paydown', vk(after_paydown),
+                     base_cash_label + ' \u2212 Credit Line Paydown Required. Negative means the paydown '
+                     'can\u2019t be funded out of cash alone, and the gap has to come from A/P - CNS going '
+                     'unpaid.')
+
+        shortfall = max(0.0, -after_paydown)
+        # CNS can only absorb what's actually owed on it. A shortfall larger
+        # than the whole CNS balance can't be met by deferring CNS, and
+        # capping here is what keeps that case from being quietly understated.
+        cns_carried = min(shortfall, ap_cns_total)
+        unfunded = shortfall - cns_carried
+
+        if shortfall <= 0:
+            rows += row('Cash Surplus (2027 BOY)', fk(after_paydown),
+                         base_cash_label + ' left over once the Columbia CL paydown is fully funded \u2014 '
+                         'the cash actually sitting in the bank at the start of 2027.')
+
+        rows += row('A/P - CNS (Carried to 2027)', fk(cns_carried),
+                     'How much of the $' + f'{ap_cns_total:,.0f}' + ' A/P - CNS balance goes unpaid this '
+                     'year so the credit line can be paid down to the EOY Goal. Capped at the CNS balance '
+                     'itself \u2014 it can\u2019t carry more than is owed.', bold=True, top=True)
+
+        if unfunded > 0:
+            rows += row('Still Unfunded', fk(unfunded),
+                         'What remains after deferring the entire A/P - CNS balance. Reaching the EOY Goal '
+                         'needs this much more from somewhere else \u2014 more cash in, less cash out, or a '
+                         'lower goal.')
 
     title = 'Summary — Week ' + str(WK)
     return (
