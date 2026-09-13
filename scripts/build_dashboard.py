@@ -1822,9 +1822,20 @@ EXTRA_CSS = '''
 .chk-weekbar select{padding:5px 8px;min-width:104px}
 .chk-step:hover{background:var(--surface-alt)}
 .chk-now{margin-left:6px}
-.chk-tally{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink);opacity:.75;margin-bottom:12px}
-.chk-tally-done{color:var(--good);opacity:1}
-.chk-tally-miss{color:var(--watch);opacity:1}
+.chk-callout{
+  border-left:3px solid var(--surface-alt);background:var(--surface);
+  padding:11px 15px;margin-bottom:14px;border-radius:0 4px 4px 0;
+}
+.chk-callout-miss{border-left-color:var(--watch)}
+.chk-callout-done{border-left-color:var(--good)}
+.chk-callout-head{font-family:var(--display);font-weight:700;font-size:13px;color:var(--ink)}
+.chk-callout-miss .chk-callout-head{color:var(--watch)}
+.chk-callout-done .chk-callout-head{color:var(--good)}
+.chk-callout-list{
+  margin:7px 0 0;padding-left:18px;font-family:var(--body);font-size:12.5px;
+  color:var(--ink);line-height:1.65;
+}
+.chk-callout-sub{font-family:'IBM Plex Mono',monospace;font-size:11.5px;opacity:.75;margin-top:6px}
 .chk-table{width:100%}
 /* .rc-hltable right-aligns its cells (it's built for figures) -- this table
    is prose, so every column reads left except the week stamp. */
@@ -1837,7 +1848,10 @@ EXTRA_CSS = '''
 .chk-item{font-family:var(--display);font-weight:700;font-size:13px;color:var(--ink)}
 .chk-note{font-family:var(--body);font-size:12px;color:var(--ink);opacity:.72;line-height:1.45;margin-top:3px}
 .chk-where,.chk-last{font-family:'IBM Plex Mono',monospace;font-size:11px;opacity:.8}
+/* An outstanding row earns a real marker, not just a tint -- an inset
+   shadow rather than a border, since border-collapse swallows the latter. */
 .chk-row-miss{background:var(--surface)}
+.chk-row-miss td:first-child{box-shadow:inset 3px 0 0 var(--watch)}
 '''
 
 # ── rc- component helpers ────────────────────────────────────────────────────
@@ -3152,7 +3166,7 @@ def build_instructions_panel(d):
         '<button type="button" class="chk-step" data-chk-step="1" aria-label="Next week">&#9654;</button>'
         '<button type="button" class="chk-step chk-now" id="chk-now">Current &mdash; Week ' + str(WK) + '</button>'
         '</div>'
-        '<div class="chk-tally" id="chk-tally"></div>'
+        '<div id="chk-callout"></div>'
         '<table class="rc-hltable chk-table">'
         '<colgroup><col style="width:12%"><col style="width:44%"><col style="width:19%">'
         '<col style="width:13%"><col style="width:12%"></colgroup>'
@@ -3193,51 +3207,100 @@ def build_update_checklist_js(d):
     """Drives the Instructions tab's week selector. Each row carries its own
     packed 52-week status string, so switching weeks is a re-read rather
     than a rebuild, and the page holds every week's state at once."""
-    return (
-        '(function(){\n'
-        'var sel=document.getElementById("chk-week");if(!sel)return;\n'
-        'var CUR=' + str(d['week']) + ';\n'
-        'var LABELS={d:["Updated","chk-done"],m:["Not updated","chk-miss"],'
-        'n:["Not due","chk-na"],e:["As needed","chk-na"]};\n'
-        'var card=document.getElementById("update-checklist");\n'
-        'var rows=card.querySelectorAll("tbody tr[data-chk-status]");\n'
-        'function render(){\n'
-        '  var wk=parseInt(sel.value,10);\n'
-        '  var done=0,due=0;\n'
-        '  for(var i=0;i<rows.length;i++){\n'
-        '    var code=rows[i].dataset.chkStatus.charAt(wk-1);\n'
-        '    var info=LABELS[code]||LABELS.n;\n'
-        '    var cell=rows[i].querySelector(".chk-status");\n'
-        '    cell.textContent=info[0];\n'
-        '    cell.className="chk-cell chk-status "+info[1];\n'
-        '    rows[i].className=(code==="m")?"chk-row-miss":"";\n'
-        '    if(code==="d"||code==="m"){due++;if(code==="d")done++;}\n'
-        '  }\n'
-        '  var title="Update Checklist \u2014 Week "+wk;\n'
-        '  document.getElementById("chk-title").textContent=title;\n'
-        '  // Keep the Expand/PNG title in step, so an exported checklist says\n'
-        '  // which week it is a checklist for.\n'
-        '  var btn=card.querySelector(".rc-expand-btn");\n'
-        '  if(btn) btn.setAttribute("data-dom-title",title);\n'
-        '  var t=document.getElementById("chk-tally");\n'
-        '  if(due===0){ t.textContent="Nothing due for week "+wk+"."; t.className="chk-tally"; }\n'
-        '  else { t.textContent=done+" of "+due+" due items updated for week "+wk+"."\n'
-        '         +(done<due?" "+(due-done)+" outstanding.":""); \n'
-        '    t.className="chk-tally "+(done===due?"chk-tally-done":"chk-tally-miss"); }\n'
-        '}\n'
-        'sel.addEventListener("change",render);\n'
-        'card.querySelectorAll("[data-chk-step]").forEach(function(b){\n'
-        '  b.addEventListener("click",function(){\n'
-        '    var wk=parseInt(sel.value,10)+parseInt(b.dataset.chkStep,10);\n'
-        '    if(wk>=1&&wk<=52){sel.value=String(wk);render();}\n'
-        '  });\n'
-        '});\n'
-        'document.getElementById("chk-now").addEventListener("click",function(){\n'
-        '  sel.value=String(CUR);render();\n'
-        '});\n'
-        'render();\n'
-        '})();\n'
-    )
+    return JS_TEMPLATE.replace('__CURRENT_WEEK__', str(d['week']))
+
+
+JS_TEMPLATE = r'''
+(function(){
+var sel=document.getElementById("chk-week");if(!sel)return;
+var CUR=__CURRENT_WEEK__;
+var LABELS={d:["Updated","chk-done"],m:["Not updated","chk-miss"],
+            n:["Not due","chk-na"],e:["As needed","chk-na"]};
+var card=document.getElementById("update-checklist");
+var rows=card.querySelectorAll("tbody tr[data-chk-status]");
+var box=document.getElementById("chk-callout");
+
+function esc(t){var n=document.createElement("div");n.textContent=t;return n.innerHTML;}
+
+// How many items a given week is still short. Used to look ahead from a
+// week that's already closed out.
+function shortfall(wk){
+  var n=0;
+  for(var i=0;i<rows.length;i++){ if(rows[i].dataset.chkStatus.charAt(wk-1)==="m") n++; }
+  return n;
+}
+
+function renderCallout(wk,done,due,outstanding){
+  if(due===0){
+    box.className="chk-callout";
+    box.innerHTML='<div class="chk-callout-head">Nothing due for week '+wk+'.</div>';
+    return;
+  }
+  if(outstanding.length){
+    var items="";
+    for(var i=0;i<outstanding.length;i++){ items+="<li>"+esc(outstanding[i])+"</li>"; }
+    box.className="chk-callout chk-callout-miss";
+    box.innerHTML='<div class="chk-callout-head">'+outstanding.length
+      +(outstanding.length===1?" item":" items")+' still to update for week '+wk
+      +'</div><ul class="chk-callout-list">'+items+'</ul>'
+      +'<div class="chk-callout-sub">'+done+" of "+due+' done.</div>';
+    return;
+  }
+  // Week is clean. Say so, then point at the next week that isn't -- normally
+  // the week actually being worked on, since the week marker only moves once
+  // its own week has been entered.
+  var ahead="";
+  for(var w=wk+1;w<=52;w++){
+    var n=shortfall(w);
+    if(n){
+      ahead='<div class="chk-callout-sub">Next up — week '+w+': '+n
+           +(n===1?" item":" items")+' outstanding.</div>';
+      break;
+    }
+  }
+  box.className="chk-callout chk-callout-done";
+  box.innerHTML='<div class="chk-callout-head">Week '+wk+' is fully updated — '
+    +done+" of "+due+' in.</div>'+ahead;
+}
+
+function render(){
+  var wk=parseInt(sel.value,10);
+  var done=0,due=0,outstanding=[];
+  for(var i=0;i<rows.length;i++){
+    var code=rows[i].dataset.chkStatus.charAt(wk-1);
+    var info=LABELS[code]||LABELS.n;
+    var cell=rows[i].querySelector(".chk-status");
+    cell.textContent=info[0];
+    cell.className="chk-cell chk-status "+info[1];
+    rows[i].className=(code==="m")?"chk-row-miss":"";
+    if(code==="d"||code==="m"){
+      due++;
+      if(code==="d") done++;
+      else outstanding.push(rows[i].querySelector(".chk-item").textContent.trim());
+    }
+  }
+  var title="Update Checklist — Week "+wk;
+  document.getElementById("chk-title").textContent=title;
+  // Keep the Expand/PNG title in step, so an exported checklist says which
+  // week it is a checklist for.
+  var btn=card.querySelector(".rc-expand-btn");
+  if(btn) btn.setAttribute("data-dom-title",title);
+  renderCallout(wk,done,due,outstanding);
+}
+
+sel.addEventListener("change",render);
+card.querySelectorAll("[data-chk-step]").forEach(function(b){
+  b.addEventListener("click",function(){
+    var wk=parseInt(sel.value,10)+parseInt(b.dataset.chkStep,10);
+    if(wk>=1&&wk<=52){sel.value=String(wk);render();}
+  });
+});
+document.getElementById("chk-now").addEventListener("click",function(){
+  sel.value=String(CUR);render();
+});
+render();
+})();
+'''
 
 
 def build_html(d):
