@@ -1218,11 +1218,25 @@ def read_all():
                             d['trend_charts']['ebit']['trend_2026'])
     ]
 
+    # Every row of the workbook's Cost of Goods Sold section (2026 Actual
+    # rows 21-31), not just the contract-design and shipping lines this used
+    # to carry. The eleven together sum exactly to the sheet's own "Total
+    # Cost of Goods Sold", which is what makes the itemized table reconcile
+    # to the card above it -- Labor included, since the sheet books it inside
+    # COGS and the card is titled "COGS + Labor + Shipping".
+    # "COGS - " is dropped from the labels: inside a COGS table it's noise.
     cogs_map = [
-        ('Contract design — brand', 'Contract Design - Brand'),
-        ('Contract design — INK',   'Contract Design - Ink'),
-        ('Shipping — brand',        'Shipping - BRAND'),
-        ('Shipping — INK',          'Shipping - INK'),
+        ('Spring/Summer',              'COGS - Spring/Summer'),
+        ('Fall/Winter',                'COGS - Fall/Winter'),
+        ('Special',                    'COGS - Special'),
+        ('Screen printing — wholesale', 'COGS - Screen Printing Wholesale'),
+        ('Product testing',            'COGS - Product Testing'),
+        ('Contract design — brand',    'Contract Design - Brand'),
+        ('Contract design — INK',      'Contract Design - Ink'),
+        ('Contract embroidery',        'Contract Embroidery'),
+        ('Labor — total',              'Labor - Total'),
+        ('Shipping — brand',           'Shipping - BRAND'),
+        ('Shipping — INK',             'Shipping - INK'),
     ]
     d['cogs_lines'] = [(lbl, get_a(k), get_b(k), get_ann(k), proj(k)) for lbl,k in cogs_map]
 
@@ -3740,7 +3754,6 @@ def build_events_panel(d):
             '<td class="ev-cell ev-num">' + format(e['orders'], ',') + '</td>'
             '<td class="ev-cell ev-num">' + ('$' + f"{e['aov']:,.2f}" if e['aov'] else '&mdash;') + '</td>'
             '<td class="ev-cell ev-num">' + (fk(e['fee']) if e['fee'] is not None else '&mdash;') + '</td>'
-            '<td class="ev-cell ev-num">' + _ev_pct(e['rev_delta']) + '</td>'
             '<td class="ev-cell ev-num">' + hist_cell(k, e['name'].strip()) + '</td>'
             '</tr>\n'
         )
@@ -3758,39 +3771,40 @@ def build_events_panel(d):
             '<td class="ev-cell ev-num">' + format(r['orders'], ',') + '</td>'
             '<td class="ev-cell ev-num">' + ('$' + f"{r['aov']:,.2f}" if r['aov'] else '&mdash;') + '</td>'
             '<td class="ev-cell ev-num">' + (fk(r['fee']) if r['fee'] is not None else '&mdash;') + '</td>'
-            '<td class="ev-cell ev-num">' + _ev_pct(r['rev_delta']) + '</td>'
             '<td class="ev-cell ev-num">' + hist_cell(r['key'], r['name']) + '</td>'
             '</tr>\n'
         )
 
+    # No "vs. prior" here: the History pop-up already lays every run of an
+    # event side by side, which is the comparison in a form you can actually
+    # read, so a single delta per row was the weaker duplicate.
     head = ('<th class="ev-cell">When</th><th class="ev-cell">Event</th>')
     tail = ('<th class="ev-cell ev-num">Revenue</th><th class="ev-cell ev-num">Orders</th>'
             '<th class="ev-cell ev-num">AOV</th><th class="ev-cell ev-num">Fee</th>'
-            '<th class="ev-cell ev-num">vs. prior</th><th class="ev-cell ev-num">History</th>')
+            '<th class="ev-cell ev-num">History</th>')
 
     table = (
         rc_divider('All Events — Most Recent First')
         + '<div class="rc-card" id="events-running-tab" style="grid-column:1 / -1">'
         '<div class="rc-headrow"><div class="rc-name">Running Tab</div>'
-        '<div class="rc-desc">&ldquo;vs. prior&rdquo; compares revenue against the previous time this same '
-        'event ran. The runs button opens every run of that event, grouped, with a year-over-year '
-        'comparison.</div></div>'
+        '<div class="rc-desc">The runs button opens every run of that event, grouped, with a '
+        'year-over-year comparison.</div></div>'
         '<div class="ev-viewbar rc-noexport">'
         '<button type="button" class="chk-step ev-view-btn ev-view-on" data-ev-view="days">Every day</button>'
         '<button type="button" class="chk-step ev-view-btn" data-ev-view="runs">Group consecutive days</button>'
         '</div>'
         # Day view
         '<table class="rc-hltable ev-table" data-ev-table="days">'
-        '<colgroup><col style="width:11%"><col style="width:31%"><col style="width:11%">'
-        '<col style="width:8%"><col style="width:10%"><col style="width:8%">'
-        '<col style="width:9%"><col style="width:12%"></colgroup>'
+        '<colgroup><col style="width:12%"><col style="width:34%"><col style="width:12%">'
+        '<col style="width:9%"><col style="width:11%"><col style="width:9%">'
+        '<col style="width:13%"></colgroup>'
         '<thead><tr>' + head + tail + '</tr></thead>'
         '<tbody>' + day_rows + '</tbody></table>'
         # Grouped view
         '<table class="rc-hltable ev-table" data-ev-table="runs" hidden>'
-        '<colgroup><col style="width:11%"><col style="width:24%"><col style="width:9%">'
-        '<col style="width:10%"><col style="width:8%"><col style="width:9%">'
-        '<col style="width:8%"><col style="width:9%"><col style="width:12%"></colgroup>'
+        '<colgroup><col style="width:12%"><col style="width:26%"><col style="width:10%">'
+        '<col style="width:11%"><col style="width:9%"><col style="width:10%">'
+        '<col style="width:9%"><col style="width:13%"></colgroup>'
         '<thead><tr>' + head + '<th class="ev-cell">Type</th>' + tail + '</tr></thead>'
         '<tbody>' + run_rows + '</tbody></table>'
         '</div>\n'
