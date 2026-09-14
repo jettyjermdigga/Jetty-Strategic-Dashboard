@@ -1995,11 +1995,7 @@ EXTRA_CSS = '''
 .ev-down{color:var(--watch)}
 .ev-flat{opacity:.4}
 .ev-compare-btn{position:static;white-space:nowrap}
-.ev-viewbar{display:flex;gap:8px;margin:14px 0 12px;flex-wrap:wrap}
-.ev-view-btn{font-size:11.5px}
 .ev-kind{font-family:'IBM Plex Mono',monospace;font-size:11px;opacity:.75;white-space:nowrap}
-.ev-view-on{background:var(--ink);color:#fff;border-color:var(--ink)}
-.ev-view-on:hover{background:var(--ink)}
 .ev-sub{
   font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:uppercase;
   letter-spacing:.07em;opacity:.6;margin:4px 0 6px;
@@ -2281,7 +2277,6 @@ def build_chart_js(d):
         + build_ar_chart_js(d)
         + (build_jrf_chart_js(d['jrf']) if d.get('jrf') else '')
         + build_update_checklist_js(d)
-        + build_events_view_js()
     )
 
 def build_summary_trend_charts_js(d):
@@ -3644,32 +3639,83 @@ def build_events_compare(key, runs_for_key, idx):
             '<tbody>' + cells + '</tbody></table>'
         )
 
-    avg = sum(revs) / len(revs)
-    summary = (
-        '<div class="ev-compare-stats">'
-        '<span><b>' + str(len(runs_for_key)) + '</b> runs</span>'
-        '<span>Total <b>' + fk(sum(revs)) + '</b></span>'
-        '<span>Average <b>' + fk(avg) + '</b></span>'
-        '<span>Best <b>' + fk(best) + '</b></span>'
-        '<span>Latest vs. average <b>' + _ev_pct((latest['revenue'] - avg) / avg if avg else None) + '</b></span>'
-        '</div>'
-    )
+    # A multi-day run is one row in the table above, which for an event that
+    # has only ever run once would leave the panel showing a single line.
+    # Break that run into its days so the pop-up is worth opening -- and so
+    # the run total has its working shown.
+    days_tbl = ''
+    if latest['n_days'] > 1:
+        drows = ''
+        for ev in latest['days']:
+            aov = (ev['revenue'] / ev['orders']) if ev['orders'] else None
+            drows += (
+                '<tr><td class="ev-cell">' + _ev_date(ev['date']) + '</td>'
+                '<td class="ev-cell ev-num">' + fk(ev['revenue']) + '</td>'
+                '<td class="ev-cell ev-num">' + format(ev['orders'], ',') + '</td>'
+                '<td class="ev-cell ev-num">' + ('$' + f'{aov:,.2f}' if aov else '&mdash;') + '</td></tr>\n'
+            )
+        drows += (
+            '<tr><td class="ev-cell"><b>Total</b></td>'
+            '<td class="ev-cell ev-num"><b>' + fk(latest['revenue']) + '</b></td>'
+            '<td class="ev-cell ev-num"><b>' + format(latest['orders'], ',') + '</b></td>'
+            '<td class="ev-cell ev-num"><b>'
+            + ('$' + f"{latest['aov']:,.2f}" if latest['aov'] else '&mdash;') + '</b></td></tr>\n'
+        )
+        days_tbl = (
+            '<div class="ev-sub" style="margin-top:18px">Day by day'
+            + ('' if len(runs_for_key) == 1 else ' &mdash; latest run') + '</div>'
+            '<table class="rc-hltable ev-table">'
+            '<colgroup><col style="width:30%"><col style="width:24%"><col style="width:23%">'
+            '<col style="width:23%"></colgroup>'
+            '<thead><tr><th class="ev-cell">Date</th><th class="ev-cell ev-num">Revenue</th>'
+            '<th class="ev-cell ev-num">Orders</th><th class="ev-cell ev-num">AOV</th></tr></thead>'
+            '<tbody>' + drows + '</tbody></table>'
+        )
+
+    # With a single run there's nothing to average against, so Average /
+    # Best / vs. average would all just restate the total and "+0%" would
+    # read as a real comparison. Say what there is instead.
+    single = len(runs_for_key) == 1
+    if single:
+        summary = (
+            '<div class="ev-compare-stats">'
+            '<span><b>1</b> run</span>'
+            '<span>Total <b>' + fk(latest['revenue']) + '</b></span>'
+            '<span><b>' + str(latest['n_days']) + '</b> days</span>'
+            '<span>Orders <b>' + format(latest['orders'], ',') + '</b></span>'
+            '</div>'
+        )
+    else:
+        avg = sum(revs) / len(revs)
+        summary = (
+            '<div class="ev-compare-stats">'
+            '<span><b>' + str(len(runs_for_key)) + '</b> runs</span>'
+            '<span>Total <b>' + fk(sum(revs)) + '</b></span>'
+            '<span>Average <b>' + fk(avg) + '</b></span>'
+            '<span>Best <b>' + fk(best) + '</b></span>'
+            '<span>Latest vs. average <b>' + _ev_pct((latest['revenue'] - avg) / avg if avg else None) + '</b></span>'
+            '</div>'
+        )
     return (
         '<div class="ev-compare" id="ev-compare-' + str(idx) + '" hidden>'
         '<div class="rc-headrow"><div class="rc-name">' + html_escape(latest['name']) + '</div>'
-        '<div class="rc-desc">Every time this event has run, oldest first. Consecutive days are '
-        'counted as one run.</div></div>'
+        '<div class="rc-desc">'
+        + ('Every day of this event, with the run total.' if len(runs_for_key) == 1
+           else 'Every time this event has run, oldest first. Consecutive days are counted as one run.')
+        + '</div></div>'
         + summary + yoy
-        + ('<div class="ev-sub">Every run</div>' if yoy else '') +
-        '<table class="rc-hltable ev-table">'
-        '<colgroup><col style="width:16%"><col style="width:23%"><col style="width:10%">'
-        '<col style="width:13%"><col style="width:9%"><col style="width:10%">'
-        '<col style="width:9%"><col style="width:10%"></colgroup>'
-        '<thead><tr><th class="ev-cell">When</th><th class="ev-cell">Venue</th>'
-        '<th class="ev-cell">Type</th><th class="ev-cell ev-num">Revenue</th>'
-        '<th class="ev-cell ev-num">Orders</th><th class="ev-cell ev-num">AOV</th>'
-        '<th class="ev-cell ev-num">Fee</th><th class="ev-cell ev-num">vs. prior</th></tr></thead>'
-        '<tbody>' + rows + '</tbody></table>'
+        + ('' if single else (
+            ('<div class="ev-sub">Every run</div>' if yoy else '')
+            + '<table class="rc-hltable ev-table">'
+            '<colgroup><col style="width:16%"><col style="width:23%"><col style="width:10%">'
+            '<col style="width:13%"><col style="width:9%"><col style="width:10%">'
+            '<col style="width:9%"><col style="width:10%"></colgroup>'
+            '<thead><tr><th class="ev-cell">When</th><th class="ev-cell">Venue</th>'
+            '<th class="ev-cell">Type</th><th class="ev-cell ev-num">Revenue</th>'
+            '<th class="ev-cell ev-num">Orders</th><th class="ev-cell ev-num">AOV</th>'
+            '<th class="ev-cell ev-num">Fee</th><th class="ev-cell ev-num">vs. prior</th></tr></thead>'
+            '<tbody>' + rows + '</tbody></table>'))
+        + days_tbl +
         '</div>\n'
     )
 
@@ -3722,9 +3768,14 @@ def build_events_panel(d):
     history = {}
     for r in sorted(runs, key=lambda r: r['end']):
         history.setdefault(r['key'], []).append(r)
+    # A panel is worth having whenever there's something to group: more than
+    # one run, or a single run spanning more than a day. Gating on repeats
+    # alone left 11 of 66 runs -- every multi-day event that has only run
+    # once, the boat shows among them -- with their totals nowhere on the
+    # page once the grouped table went away.
     panel_id, panels = {}, ''
     for i, (key, rs) in enumerate(sorted(history.items())):
-        if len(rs) > 1:
+        if len(rs) > 1 or any(r['n_days'] > 1 for r in rs):
             panel_id[key] = 'ev-compare-' + str(i)
             panels += build_events_compare(key, rs, i)
 
@@ -3737,9 +3788,12 @@ def build_events_panel(d):
         # and "Rocking The Docks", and the title has to match the panel's own
         # heading exactly or the PNG export prints the name twice.
         canonical = history[key][-1]['name']
+        n = len(history[key])
+        # "1 runs" would be nonsense on a one-off multi-day event -- label it
+        # by what the panel actually opens onto.
+        label = (str(n) + ' runs') if n > 1 else (str(history[key][0]['n_days']) + ' days')
         return ('<button class="rc-expand-btn ev-compare-btn" data-dom-id="' + pid + '" '
-                'data-dom-title="' + html_escape(canonical) + '">'
-                + str(len(history[key])) + ' runs</button>')
+                'data-dom-title="' + html_escape(canonical) + '">' + label + '</button>')
 
     day_rows = ''
     for e in days:
@@ -3758,23 +3812,6 @@ def build_events_panel(d):
             '</tr>\n'
         )
 
-    run_rows = ''
-    for r in runs:
-        run_rows += (
-            '<tr>'
-            '<td class="ev-cell ev-when">' + _ev_span(r) + '</td>'
-            '<td class="ev-cell"><div class="ev-name">' + html_escape(r['name']) + '</div>'
-            + ('<div class="ev-venue">' + html_escape(r['venue']) + '</div>' if r['venue'] else '') +
-            '</td>'
-            '<td class="ev-cell ev-kind">' + _ev_type(r) + '</td>'
-            '<td class="ev-cell ev-num"><b>' + fk(r['revenue']) + '</b></td>'
-            '<td class="ev-cell ev-num">' + format(r['orders'], ',') + '</td>'
-            '<td class="ev-cell ev-num">' + ('$' + f"{r['aov']:,.2f}" if r['aov'] else '&mdash;') + '</td>'
-            '<td class="ev-cell ev-num">' + (fk(r['fee']) if r['fee'] is not None else '&mdash;') + '</td>'
-            '<td class="ev-cell ev-num">' + hist_cell(r['key'], r['name']) + '</td>'
-            '</tr>\n'
-        )
-
     # No "vs. prior" here: the History pop-up already lays every run of an
     # event side by side, which is the comparison in a form you can actually
     # read, so a single delta per row was the weaker duplicate.
@@ -3787,52 +3824,17 @@ def build_events_panel(d):
         rc_divider('All Events — Most Recent First')
         + '<div class="rc-card" id="events-running-tab" style="grid-column:1 / -1">'
         '<div class="rc-headrow"><div class="rc-name">Running Tab</div>'
-        '<div class="rc-desc">The runs button opens every run of that event, grouped, with a '
-        'year-over-year comparison.</div></div>'
-        '<div class="ev-viewbar rc-noexport">'
-        '<button type="button" class="chk-step ev-view-btn ev-view-on" data-ev-view="days">Every day</button>'
-        '<button type="button" class="chk-step ev-view-btn" data-ev-view="runs">Group consecutive days</button>'
-        '</div>'
-        # Day view
-        '<table class="rc-hltable ev-table" data-ev-table="days">'
+        '<div class="rc-desc">Every event day, newest first. The History button opens that event grouped &mdash; every run it has had, a day-by-day breakdown of the latest one, and a year-over-year comparison.</div></div>'
+        '<table class="rc-hltable ev-table">'
         '<colgroup><col style="width:12%"><col style="width:34%"><col style="width:12%">'
         '<col style="width:9%"><col style="width:11%"><col style="width:9%">'
         '<col style="width:13%"></colgroup>'
         '<thead><tr>' + head + tail + '</tr></thead>'
         '<tbody>' + day_rows + '</tbody></table>'
-        # Grouped view
-        '<table class="rc-hltable ev-table" data-ev-table="runs" hidden>'
-        '<colgroup><col style="width:12%"><col style="width:26%"><col style="width:10%">'
-        '<col style="width:11%"><col style="width:9%"><col style="width:10%">'
-        '<col style="width:9%"><col style="width:13%"></colgroup>'
-        '<thead><tr>' + head + '<th class="ev-cell">Type</th>' + tail + '</tr></thead>'
-        '<tbody>' + run_rows + '</tbody></table>'
         '</div>\n'
         + '<div class="ev-compare-store">' + panels + '</div>\n'
     )
     return kpis + table
-
-
-def build_events_view_js():
-    """Toggles the running tab between every-day and grouped. Both tables
-    are rendered server-side, so switching is a visibility flip rather than
-    a rebuild."""
-    return r'''
-(function(){
-var card=document.getElementById("events-running-tab");if(!card)return;
-card.querySelectorAll("[data-ev-view]").forEach(function(b){
-  b.addEventListener("click",function(){
-    var want=b.dataset.evView;
-    card.querySelectorAll("[data-ev-table]").forEach(function(t){
-      t.hidden = (t.dataset.evTable !== want);
-    });
-    card.querySelectorAll("[data-ev-view]").forEach(function(x){
-      x.classList.toggle("ev-view-on", x === b);
-    });
-  });
-});
-})();
-'''
 
 
 def build_html(d):
