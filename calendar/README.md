@@ -373,22 +373,32 @@ whole Worker from the Worker's own **Access** tab, and self-hosted applications
 — the kind that take a path — are built around hostnames in a zone you own.
 
 So the feed only works once the calendar is on a domain in the same Cloudflare
-account. The steps, with `calendar.example.com` standing in:
+account. That domain is **jettycalendar.com**, registered through Cloudflare so
+its DNS is in the same account — the company domains stay at Squarespace,
+untouched.
 
 1. **Add the custom domain.** Worker → **Settings** → **Domains & Routes** →
-   **Add** → **Custom domain** → `calendar.example.com`. Cloudflare creates the
-   DNS record itself. Then **disable the `workers.dev` route** on the same page,
-   so there is one way in rather than two.
+   **Add** → **Custom domain** → `jettycalendar.com`. Cloudflare writes the DNS
+   record itself. Do this from the dashboard rather than `wrangler.toml`: the
+   deploy token has no zone permissions, so a route in the config would fail
+   every deploy.
 2. **Protect the hostname.** Zero Trust → **Access** → **Applications** → **Add
-   an application** → **Self-hosted**. Hostname `calendar.example.com`, no path.
+   an application** → **Self-hosted**. Hostname `jettycalendar.com`, no path.
    Give it the policy the Worker has now — the `@jettylife.com` and
-   `@jettyrockfoundation.org` domains.
+   `@jettyrockfoundation.org` email domains.
 3. **Bypass the one path.** Add a **second** self-hosted application, hostname
-   `calendar.example.com`, path `calendar.ics`. One policy, action **Bypass**,
+   `jettycalendar.com`, path `calendar.ics`. One policy, action **Bypass**,
    include **Everyone**. The more specific path wins over the application in
    step 2.
-4. **Re-issue the key.** The feed URL is about to become publicly reachable to
-   anyone holding it, so set a fresh `ICS_KEY` once the bypass is in place.
+4. **Turn off `workers.dev`** on the same page as step 1, so there is one way in
+   rather than two — and set `workers_dev = false` in `wrangler.toml` at the
+   same time, or the next deploy turns it back on.
+5. **Re-issue the key.** The feed URL is now publicly reachable to anyone
+   holding it, so set a fresh `ICS_KEY`.
+
+The feed URL follows whatever hostname the page was loaded on — it is built from
+the request origin — so *Subscribe* starts handing out `jettycalendar.com` by
+itself once step 1 is done.
 
 `REQUIRE_IDENTITY` stays `"true"` throughout, which is what makes the order
 safe: attach the domain before the Access application and the Worker still
