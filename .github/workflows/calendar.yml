@@ -1,0 +1,45 @@
+name: Deploy Jetty Calendar
+
+# Deliberately separate from update.yml. The dashboard deploys when the budget
+# workbook changes; the calendar deploys when its own code changes. Neither can
+# break the other, and neither waits on the other.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'calendar/**'
+      - '.github/workflows/calendar.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: calendar-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # Creates the D1 database the first time and writes its id into
+      # wrangler.toml on every run, so no database id is ever committed.
+      - name: Provision calendar database
+        working-directory: calendar
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python provision_d1.py
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          workingDirectory: calendar
+          command: deploy

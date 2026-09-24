@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 data/
 output/
+.wrangler/
+node_modules/
