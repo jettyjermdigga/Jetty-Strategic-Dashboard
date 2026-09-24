@@ -62,41 +62,58 @@
 
 <div class="cal-shell">
   <aside class="cal-side">
-    <div class="cal-card">
-      <h3>Event Type</h3>
-      <p class="flt-note">Everyone involved in each event &mdash; no primary.
-        Toggling one shows everything on that calendar.</p>
-      <div id="typeTree"></div>
-      <div class="flt-actions">
-        <button data-all="types" data-on="1">All</button>
-        <button data-all="types" data-on="0">None</button>
+    <div class="cal-card flt-card" data-axis="types">
+      <button class="flt-toggle" type="button" aria-expanded="false">
+        <h3>Event Type</h3><span class="flt-sum"></span><i class="flt-caret"></i>
+      </button>
+      <div class="flt-body">
+        <p class="flt-note">Everyone involved in each event &mdash; no primary.
+          Toggling one shows everything on that calendar.</p>
+        <div id="typeTree"></div>
+        <div class="flt-actions">
+          <button data-all="types" data-on="1">All</button>
+          <button data-all="types" data-on="0">None</button>
+        </div>
       </div>
     </div>
-    <div class="cal-card" id="subCard">
-      <h3>Sub-type</h3>
-      <div id="subTree"></div>
-      <div class="flt-actions">
-        <button data-all="subs" data-on="1">All</button>
-        <button data-all="subs" data-on="0">None</button>
+    <div class="cal-card flt-card" data-axis="subs">
+      <button class="flt-toggle" type="button" aria-expanded="false">
+        <h3>Sub-type</h3><span class="flt-sum"></span><i class="flt-caret"></i>
+      </button>
+      <div class="flt-body">
+        <div id="subTree"></div>
+        <div class="flt-actions">
+          <button data-all="subs" data-on="1">All</button>
+          <button data-all="subs" data-on="0">None</button>
+        </div>
       </div>
     </div>
-    <div class="cal-card">
-      <h3>Needs</h3>
-      <p class="flt-note">What an event requires, whichever calendar it is on.</p>
-      <div id="needTree"></div>
-      <div class="flt-actions">
-        <button data-all="needs" data-on="1">All</button>
-        <button data-all="needs" data-on="0">None</button>
+    <div class="cal-card flt-card" data-axis="needs">
+      <button class="flt-toggle" type="button" aria-expanded="false">
+        <h3>Needs</h3><span class="flt-sum"></span><i class="flt-caret"></i>
+      </button>
+      <div class="flt-body">
+        <p class="flt-note">What an event requires, whichever calendar it is on.</p>
+        <div id="needTree"></div>
+        <div class="flt-actions">
+          <button data-all="needs" data-on="1">All</button>
+          <button data-all="needs" data-on="0">None</button>
+        </div>
       </div>
     </div>
-    <div class="cal-card">
-      <h3>Status</h3>
-      <div id="statTree"></div>
+    <div class="cal-card flt-card" data-axis="stats">
+      <button class="flt-toggle" type="button" aria-expanded="false">
+        <h3>Status</h3><span class="flt-sum"></span><i class="flt-caret"></i>
+      </button>
+      <div class="flt-body">
+        <div id="statTree"></div>
+      </div>
     </div>
   </aside>
 
   <main>
     <div id="notice"></div>
+    <div id="filterStatus"></div>
     <div class="cal-card" style="padding:0;overflow:hidden">
       <div id="view"><div class="cal-empty">Loading the calendar&hellip;</div></div>
     </div>

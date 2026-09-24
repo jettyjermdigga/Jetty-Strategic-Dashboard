@@ -29,7 +29,58 @@
     subs: {},    // sub-type key   -> shown
     needs: {},   // need key       -> shown
     stats: {},   // status         -> shown
+    open: {},    // sidebar section -> expanded
   };
+
+  // ── remembered preferences ─────────────────────────────────────────────
+  //
+  // Per person, per browser. What gets stored is the set of boxes you have
+  // turned OFF, not the ones left on -- so an Event Type added to the taxonomy
+  // next month shows up for everyone instead of being silently hidden by a
+  // preference saved before it existed.
+  //
+  // Every read and write is guarded: private windows, cleared site data and
+  // blocked storage all throw, and none of that should stop the calendar
+  // rendering.
+
+  var PREFS_KEY = 'jetty-calendar-prefs-v1';
+
+  function readPrefs() {
+    try {
+      var raw = window.localStorage.getItem(PREFS_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  function savePrefs() {
+    try {
+      var off = {};
+      ['types', 'subs', 'needs', 'stats'].forEach(function (axis) {
+        off[axis] = Object.keys(state[axis]).filter(function (k) { return state[axis][k] === false; });
+      });
+      window.localStorage.setItem(PREFS_KEY, JSON.stringify({
+        off: off,
+        colorBy: state.colorBy,
+        view: state.view,
+        open: state.open,
+      }));
+    } catch (e) { /* storage unavailable; the calendar still works */ }
+  }
+
+  function applyPrefs() {
+    var p = readPrefs();
+    if (!p) return;
+    ['types', 'subs', 'needs', 'stats'].forEach(function (axis) {
+      (p.off && p.off[axis] ? p.off[axis] : []).forEach(function (k) {
+        if (k in state[axis]) state[axis][k] = false;
+      });
+    });
+    if (p.colorBy) { state.colorBy = p.colorBy; $('#colorBy').value = p.colorBy; }
+    // A view saved on a desktop should not land someone on a month grid at
+    // phone width, where it is unreadable.
+    if (p.view && !NARROW) state.view = p.view;
+    if (p.open) state.open = p.open;
+  }
 
   // ── small helpers ──────────────────────────────────────────────────────
 
@@ -279,6 +330,43 @@
     }).join('');
   }
 
+  // Section headers carry a live summary, so a collapsed panel still says
+  // whether it is hiding anything. Counted off the rendered checkboxes rather
+  // than the state object, so it cannot drift from what is on screen.
+  function renderChrome() {
+    Array.prototype.forEach.call(document.querySelectorAll('.flt-card'), function (card) {
+      var axis = card.dataset.axis;
+      var boxes = card.querySelectorAll('.flt-body input[type="checkbox"]');
+      var on = card.querySelectorAll('.flt-body input[type="checkbox"]:checked').length;
+      var sum = card.querySelector('.flt-sum');
+      var filtered = boxes.length > 0 && on < boxes.length;
+      if (sum) {
+        sum.textContent = !boxes.length ? ''
+          : filtered ? on + ' of ' + boxes.length
+          : 'all ' + boxes.length;
+        sum.classList.toggle('on', filtered);
+      }
+      var open = state.open[axis] === true;
+      card.classList.toggle('open', open);
+      var btn = card.querySelector('.flt-toggle');
+      if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  }
+
+  // Persisted filters are silent by nature: someone narrows the view, comes back
+  // a month later and concludes events are missing. This says so, and offers the
+  // way back.
+  function renderFilterStatus() {
+    var el = $('#filterStatus');
+    if (!el) return;
+    var total = state.items.length;
+    var shown = visible().length;
+    if (!total || shown === total) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="flt-status">Filters are hiding '
+      + (total - shown) + ' of ' + total + ' events. '
+      + '<button type="button" id="fltReset">Show everything</button></div>';
+  }
+
   // ── views ──────────────────────────────────────────────────────────────
 
   // With colour reserved for the calendar, these dots are the only at-a-glance
@@ -468,6 +556,8 @@
     });
     var r = retailWeek(ymd(state.cursor));
     if (r && $('#wkNum') !== document.activeElement) $('#wkNum').value = r.week;
+    renderChrome();
+    renderFilterStatus();
     $('#view').innerHTML = state.view === 'day' ? renderDay()
       : state.view === 'week' ? renderWeek()
       : state.view === 'year' ? renderYear()
@@ -813,7 +903,7 @@
     render();
   }
 
-  function setView(v) { state.view = v; render(); }
+  function setView(v) { state.view = v; savePrefs(); render(); }
 
   function wire() {
     $('#prev').addEventListener('click', function () { shift(-1); });
@@ -823,7 +913,9 @@
       var b = e.target.closest('button[data-view]');
       if (b) setView(b.dataset.view);
     });
-    $('#colorBy').addEventListener('change', function () { state.colorBy = this.value; render(); });
+    $('#colorBy').addEventListener('change', function () {
+      state.colorBy = this.value; savePrefs(); render();
+    });
     $('#subscribe').addEventListener('click', showSubscribe);
     $('#addBtn').addEventListener('click', function () {
       showForm(null, (state.view === 'day' || state.view === 'week') ? ymd(state.cursor) : null);
@@ -847,7 +939,18 @@
       var axis = el.dataset.axis;
       if (!axis || !state[axis]) return;
       state[axis][el.value] = el.checked;
+      savePrefs();
       render();
+    });
+
+    // Collapsing a section is a preference too.
+    side.addEventListener('click', function (e) {
+      var btn = e.target.closest('.flt-toggle');
+      if (!btn) return;
+      var axis = btn.closest('.flt-card').dataset.axis;
+      state.open[axis] = !state.open[axis];
+      savePrefs();
+      renderChrome();
     });
     // Each section's All/None acts on that section only.
     Array.prototype.forEach.call(side.querySelectorAll('[data-all]'), function (btn) {
@@ -855,8 +958,18 @@
         var axis = btn.dataset.all;
         var on = btn.dataset.on === '1';
         Object.keys(state[axis]).forEach(function (k) { state[axis][k] = on; });
+        savePrefs();
         renderAll();
       });
+    });
+
+    $('#filterStatus').addEventListener('click', function (e) {
+      if (!e.target.closest('#fltReset')) return;
+      ['types', 'subs', 'needs', 'stats'].forEach(function (axis) {
+        Object.keys(state[axis]).forEach(function (k) { state[axis][k] = true; });
+      });
+      savePrefs();
+      renderAll();
     });
 
     $('#view').addEventListener('click', function (e) {
@@ -972,6 +1085,7 @@
       state.me = r[1] || {};
       injectPalette();
       initFilters();
+      applyPrefs();
       renderWho();
       renderNotice();
       if (state.me.canEdit) {
