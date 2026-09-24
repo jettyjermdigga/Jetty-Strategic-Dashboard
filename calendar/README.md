@@ -120,7 +120,8 @@ import reports such disagreements and then ignores those columns.
 Each event's chip carries **one colour band per Event Type**, so an event that is
 both a JRF event and a Box Truck event says so instead of being forced into one
 colour. Events with a single Event Type get a solid band, so a calendar still
-reads as one thing. *Colour by* can be switched to Status.
+reads as one thing. Colour always means Event Type -- Pending items are marked
+by a faded band and italic title instead, so colour never has two jobs.
 
 The palette is a validated categorical set, not a hand-picked one. Both modes
 pass the lightness band, the chroma floor, the normal-vision separation floor and

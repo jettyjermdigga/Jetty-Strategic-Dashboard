@@ -320,16 +320,6 @@
 .wk-jump input:focus{outline:none}
 .wk-jump:focus-within{border-color:var(--primary-alt)}
 
-.colour-by{display:flex;align-items:center;gap:8px}
-.colour-by span{
-  font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
-  text-transform:uppercase;opacity:.6;white-space:nowrap;
-}
-.colour-by select{
-  font-family:var(--body);font-size:13px;background:transparent;
-  border:1px solid var(--surface-alt);border-radius:6px;padding:5px 8px;
-}
-
 /* ── Multi-department markers ───────────────────────────────────────────── */
 
 /* One band per Event Type. An event that is both a JRF event and a Box Truck

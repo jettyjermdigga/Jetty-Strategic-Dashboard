@@ -24,7 +24,6 @@
     items: [],
     tax: null,
     me: { canEdit: false, email: '' },
-    colorBy: 'event-type',
     types: {},   // Event Type key -> shown
     subs: {},    // sub-type key   -> shown
     needs: {},   // need key       -> shown
@@ -60,7 +59,6 @@
       });
       window.localStorage.setItem(PREFS_KEY, JSON.stringify({
         off: off,
-        colorBy: state.colorBy,
         view: state.view,
         open: state.open,
       }));
@@ -75,7 +73,6 @@
         if (k in state[axis]) state[axis][k] = false;
       });
     });
-    if (p.colorBy) { state.colorBy = p.colorBy; $('#colorBy').value = p.colorBy; }
     // A view saved on a desktop should not land someone on a month grid at
     // phone width, where it is unreadable.
     if (p.view && !NARROW) state.view = p.view;
@@ -171,8 +168,6 @@
       light.push('--et-' + e.key + ':' + e.color + ';');
       dark.push('--et-' + e.key + ':' + (e.colorDark || e.color) + ';');
     });
-    light.push('--st-booked:#2F7A5C;--st-pending:#C6803B;');
-    dark.push('--st-booked:#3d9670;--st-pending:#d9a05a;');
     var el = document.createElement('style');
     el.textContent = ':root{' + light.join('') + '}'
       + '@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){' + dark.join('') + '}}'
@@ -185,9 +180,6 @@
   // One colour band per Event Type, so an event that is both a JRF event and a
   // Box Truck event says so rather than being forced into one of them.
   function bandColors(item) {
-    if (state.colorBy === 'status') {
-      return ['var(--st-' + (item.status === 'Booked' ? 'booked' : 'pending') + ')'];
-    }
     var cols = typesOf(item).map(typeVar);
     return cols.length ? cols : ['#8A8F98'];
   }
@@ -912,9 +904,6 @@
     $('#views').addEventListener('click', function (e) {
       var b = e.target.closest('button[data-view]');
       if (b) setView(b.dataset.view);
-    });
-    $('#colorBy').addEventListener('change', function () {
-      state.colorBy = this.value; savePrefs(); render();
     });
     $('#subscribe').addEventListener('click', showSubscribe);
     $('#addBtn').addEventListener('click', function () {
