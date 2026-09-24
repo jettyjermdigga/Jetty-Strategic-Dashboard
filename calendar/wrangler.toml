@@ -32,7 +32,7 @@ database_id = "__D1_DATABASE_ID__"
 [vars]
 # Who may add or edit calendar items. Everyone else Cloudflare Access lets in
 # sees the calendar read-only. Comma-separated, matched case-insensitively.
-CALENDAR_EDITORS = "jeremy@jettylife.com"
+CALENDAR_EDITORS = "cory@jettylife.com,jeremy@jettylife.com,arlynn@jettylife.com,colleen@jettylife.com,d.bachowski@jettylife.com,kyle@jettyrockfoundation.org"
 
 # Fill these in to switch identity checking from "trust the Access header" to
 # "verify the Access JWT". ACCESS_TEAM_DOMAIN is your Zero Trust team domain
