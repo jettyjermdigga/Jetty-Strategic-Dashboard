@@ -11,7 +11,7 @@
 import { identify } from './access.js';
 import { buildIcs } from './ics.js';
 import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, SUB_TYPES, SUB_TYPE_KEYS,
-         NEEDS, NEED_KEYS, STATUSES, subTypeByKey } from './taxonomy.js';
+         NEEDS, NEED_KEYS, STATUSES } from './taxonomy.js';
 import { retailWeek, retailWeekStart } from './retail.js';
 import SCHEMA from './schema.sql';
 
@@ -101,17 +101,9 @@ function normalise(input, existing) {
   if (!types.length) errors.push('Pick at least one Event Type.');
   out.event_types = types.length ? types.join(',') : null;
 
-  // A sub-type only means something under its own Event Type -- an Email/SMS on
-  // an event that is not a Marketing event is a mistake worth naming.
-  const subs = multi('sub_types', SUB_TYPE_KEYS, 'sub-type').filter((k) => {
-    const st = subTypeByKey(k);
-    if (st && !types.includes(st.parent)) {
-      errors.push('"' + st.label + '" only applies to '
-        + (EVENT_TYPES.find((e) => e.key === st.parent) || {}).label + ' events.');
-      return false;
-    }
-    return true;
-  });
+  // Sub-types say what kind of item this is and apply to any calendar, so there
+  // is nothing to scope them against.
+  const subs = multi('sub_types', SUB_TYPE_KEYS, 'sub-type');
   out.sub_types = subs.length ? subs.join(',') : null;
 
   out.needs = ((n) => (n.length ? n.join(',') : null))(multi('needs', NEED_KEYS, 'need'));
@@ -256,10 +248,9 @@ const IMPORT_ALIASES = {
   'year': '_year', 'week': '_week',
   'start (week)': '_week_start', 'end (week)': '_week_end',
   'month': '_month', 'day': '_day',
-  // The sheet's Type column held one value ("Event") for the whole calendar.
-  // Event Type carries that now, so the column is read and discarded rather
-  // than reported as unrecognised.
-  'type': '_type', 'category': '_type',
+  // The sheet's Type column is what Airtable calls Type: the sub-type. Category
+  // is read and discarded -- the axis it named no longer exists.
+  'type': 'sub_types', 'category': '_ignored',
 };
 
 const MONTH_ABBR = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
@@ -306,9 +297,12 @@ function matchKey(list, raw) {
   return hit ? hit.key : null;
 }
 
+// Comma or semicolon only. A slash is NOT a delimiter: real values contain one
+// -- "Team Building / Culture / Building", "Photo/Vid", "Email/SMS" -- and
+// splitting on it turns one Event Type into three unknown ones.
 function splitList(v) {
   if (v == null) return [];
-  return (Array.isArray(v) ? v : String(v).split(/[,;/]+/)).map((x) => String(x).trim()).filter(Boolean);
+  return (Array.isArray(v) ? v : String(v).split(/[,;]+/)).map((x) => String(x).trim()).filter(Boolean);
 }
 
 function coerceKeys(rec) {
@@ -417,7 +411,13 @@ async function handleApi(request, env, url, who) {
       const unknown = rows[0].filter((h, i) => h.trim() && !header[i]);
       records = rows.slice(1).map((cells) => {
         const rec = {};
-        header.forEach((key, i) => { if (key && cells[i] != null && cells[i].trim()) rec[key] = cells[i].trim(); });
+        header.forEach((key, i) => {
+          if (!key || cells[i] == null || !cells[i].trim()) return;
+          const val = cells[i].trim();
+          // Type and Sub-type both feed the sub-type axis; a sheet can carry
+          // either or both, so join instead of letting the last column win.
+          rec[key] = (key === 'sub_types' && rec[key]) ? rec[key] + ',' + val : val;
+        });
         return rec;
       });
       if (!records.length) return json({ error: 'No item rows found. Unrecognised columns: ' + (unknown.join(', ') || 'none') + '.' }, 400);

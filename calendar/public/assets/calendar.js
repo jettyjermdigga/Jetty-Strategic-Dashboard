@@ -252,23 +252,15 @@
                       n.types[e.key] || 0, state.types[e.key], e.note);
     }).join('');
 
-    // Sub-types are grouped under the Event Type they belong to, since that is
-    // the only place they mean anything.
-    var groups = [];
-    state.tax.eventTypes.forEach(function (e) {
-      var kids = state.tax.subTypes.filter(function (st) { return st.parent === e.key; });
-      if (!kids.length) return;
-      groups.push('<div class="flt-sub"><h4>' + esc(e.label) + '</h4>'
-        + kids.map(function (st) {
-            return checkRow('subs', st.key, st.label, null,
-                            n.subs[st.key] || 0, state.subs[st.key], st.note);
-          }).join('')
-        + '</div>');
+    // Sub-types apply to any calendar, so the list is flat.
+    var subRows = state.tax.subTypes.map(function (st) {
+      return checkRow('subs', st.key, st.label, null,
+                      n.subs[st.key] || 0, state.subs[st.key], st.note);
     });
     if (n.subs[NONE]) {
-      groups.push(checkRow('subs', NONE, 'No sub-type', null, n.subs[NONE], state.subs[NONE]));
+      subRows.push(checkRow('subs', NONE, 'No sub-type', null, n.subs[NONE], state.subs[NONE]));
     }
-    $('#subTree').innerHTML = groups.join('');
+    $('#subTree').innerHTML = subRows.join('');
 
     var needRows = state.tax.needs.map(function (nd) {
       return checkRow('needs', nd.key, nd.label, null,
@@ -591,10 +583,15 @@
         }).join('')
       + '</div></div>'
 
-      // Sub-types only exist under one Event Type, so each group appears only
-      // once that Event Type is ticked.
-      + '<div class="fld" id="subWrap"' + '><label>Sub-type</label>'
-      + '<div id="subGrid"></div></div>'
+      + '<div class="fld"><label>Sub-type '
+      + '<span class="lbl-note">what kind of item it is</span></label>'
+      + '<div class="chk-grid">'
+      + state.tax.subTypes.map(function (st) {
+          return '<label class="fld-inline"><input type="checkbox" class="f-sub" value="'
+            + esc(st.key) + '"' + (chosenSubs.indexOf(st.key) >= 0 ? ' checked' : '') + '>'
+            + esc(st.label) + '</label>';
+        }).join('')
+      + '</div></div>'
 
       + '<div class="fld"><label>Needs '
       + '<span class="lbl-note">what this event requires</span></label>'
@@ -670,82 +667,13 @@
       $('#retailOut').innerHTML = r
         ? '<span class="rl">Retail</span> Week ' + r.week + ' of ' + r.year
           + ' <span class="muted">(' + esc(weekRangeLabel(r)) + ')</span>'
-          + ' · ' + MONTHS[d.getMonth()].slice(0, 3).toUpperCase()
-          + ' · ' + DOW[d.getDay()].toUpperCase()
+          + ' \u00b7 ' + MONTHS[d.getMonth()].slice(0, 3).toUpperCase()
+          + ' \u00b7 ' + DOW[d.getDay()].toUpperCase()
         : '<span class="muted">Pick a start date to see its retail week.</span>';
     }
     showRetail();
 
     $('#f-allday').addEventListener('change', function () { $('#timeRow').hidden = this.checked; });
-
-    // Only offer the sub-types belonging to the Event Types actually ticked.
-    function renderSubs() {
-      var on = Array.prototype.map.call(
-        document.querySelectorAll('.f-type:checked'), function (el) { return el.value; });
-      var kept = Array.prototype.map.call(
-        document.querySelectorAll('.f-sub:checked'), function (el) { return el.value; });
-      var html = '';
-      state.tax.eventTypes.forEach(function (e) {
-        if (on.indexOf(e.key) < 0) return;
-        var kids = state.tax.subTypes.filter(function (st) { return st.parent === e.key; });
-        if (!kids.length) return;
-        html += '<div class="chk-grid">' + kids.map(function (st) {
-          var was = kept.indexOf(st.key) >= 0 || chosenSubs.indexOf(st.key) >= 0;
-          return '<label class="fld-inline" title="' + esc(st.note || '') + '">'
-            + '<input type="checkbox" class="f-sub" value="' + esc(st.key) + '"'
-            + (was ? ' checked' : '') + '>' + esc(st.label) + '</label>';
-        }).join('') + '</div>';
-      });
-      $('#subGrid').innerHTML = html;
-      $('#subWrap').hidden = !html;
-    }
-    renderSubs();
-    Array.prototype.forEach.call(document.querySelectorAll('.f-type'), function (el) {
-      el.addEventListener('change', renderSubs);
-    });
-
-    // Year / Week / Start (Week) / End (Week) / Month / Day are shown as they
-    // will be derived, so you can see the retail week without typing it.
-    function showRetail() {
-      var v = $('#f-start').value;
-      var r = v ? retailWeek(v) : null;
-      var d = v ? fromYmd(v) : null;
-      $('#retailOut').innerHTML = r
-        ? '<span class="rl">Retail</span> Week ' + r.week + ' of ' + r.year
-          + ' <span class="muted">(' + esc(weekRangeLabel(r)) + ')</span>'
-          + ' · ' + MONTHS[d.getMonth()].slice(0, 3).toUpperCase()
-          + ' · ' + DOW[d.getDay()].toUpperCase()
-        : '<span class="muted">Pick a start date to see its retail week.</span>';
-    }
-    showRetail();
-
-    $('#f-allday').addEventListener('change', function () { $('#timeRow').hidden = this.checked; });
-
-    // Only offer the sub-types belonging to the Event Types actually ticked.
-    function renderSubs() {
-      var on = Array.prototype.map.call(
-        document.querySelectorAll('.f-type:checked'), function (el) { return el.value; });
-      var kept = Array.prototype.map.call(
-        document.querySelectorAll('.f-sub:checked'), function (el) { return el.value; });
-      var html = '';
-      state.tax.eventTypes.forEach(function (e) {
-        if (on.indexOf(e.key) < 0) return;
-        var kids = state.tax.subTypes.filter(function (st) { return st.parent === e.key; });
-        if (!kids.length) return;
-        html += '<div class="chk-grid">' + kids.map(function (st) {
-          var was = kept.indexOf(st.key) >= 0 || chosenSubs.indexOf(st.key) >= 0;
-          return '<label class="fld-inline" title="' + esc(st.note || '') + '">'
-            + '<input type="checkbox" class="f-sub" value="' + esc(st.key) + '"'
-            + (was ? ' checked' : '') + '>' + esc(st.label) + '</label>';
-        }).join('') + '</div>';
-      });
-      $('#subGrid').innerHTML = html;
-      $('#subWrap').hidden = !html;
-    }
-    renderSubs();
-    Array.prototype.forEach.call(document.querySelectorAll('.f-type'), function (el) {
-      el.addEventListener('change', renderSubs);
-    });
 
     // Move the end date with the start date, keeping whatever span was already
     // set. Without this, picking a start date and leaving the end date on its

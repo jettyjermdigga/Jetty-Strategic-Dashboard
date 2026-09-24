@@ -64,13 +64,17 @@ A meeting for one department is tagged **Meetings + that department**, so it
 lands on both calendars. That is why the menu's Meetings sub-list has no separate
 existence here: six of its eight entries were already Event Types.
 
-**Sub-types** say what kind of item it is and are scoped to one Event Type.
-Only Marketing has them so far — Ambassador, Influencer, Promotion, Campaign,
-Email/SMS, Photo/Video, Collab — and they are only offered once Marketing is
-ticked.
+**Sub-types** say what kind of item it is, and apply to any calendar: Event,
+Meeting, Campaign, Promotion, Email, SMS, Social, Photo/Video, Collab,
+Ambassador, Influencer, Blog Post, Website, Seasonal. The menu sheet listed
+sub-types only under Marketing, but Airtable's `Type` field does the same job
+across every calendar and is filled in on all 14,279 records, so that is the
+list.
 
 **Needs** are what an event requires, and cut across every calendar: Drifting
-Buoy, Social Permit, Sound, Jetty Brewing Company. "Do we need the mobile bar?"
+Buoy, Social Permit, Sound, Jetty Brewing Company, Insurance, Box Truck
+(vehicle), Van, 10x10 Setup, 10x20 Setup. The last five already existed in
+Airtable — insurance as its own Yes/No field, the rest as `Setup Needs`. "Do we need the mobile bar?"
 is a fair question of a box truck event and a JRF event alike, which is why
 Drifting Buoy appeared under two parents on the menu sheet. JBC arrived in the
 sheet's Event Type column but is a need too — a reminder that the event wants our
@@ -140,6 +144,41 @@ sorting makes those the same value, which is what they always meant.
 `worker/taxonomy.js` is the only place Type, Event Type and Status are defined.
 The filter sidebar, the add form, the colour coding and the Google Calendar
 descriptions are all generated from it. Adding a department is one line.
+
+## Backfilling from Airtable
+
+`Calendar & Events 🗓` in the JETTY HUB base holds 14,279 records going back to
+2013, 594 of them dated in 2026. That is the backfill source:
+
+```
+export AIRTABLE_API_KEY=pat...
+python tools/airtable_import.py --from-year 2026 -o events.csv
+```
+
+Then paste `events.csv` into **Import**.
+
+This is a **one-time backfill, not a sync.** Airtable stops being the source once
+the rows are in; nothing writes back, and running it twice duplicates events
+rather than updating them.
+
+The script maps as little as it can. Airtable's own labels — `Box Truck`, `JRF`,
+`WHSL`, `Event`, `JBC` — are the values `worker/taxonomy.js` already recognises,
+so they pass through untouched and the Worker resolves them. That keeps the
+taxonomy in one file rather than two that drift. What it does handle:
+
+* **Times are plain text in Airtable** (`1:00`, `6pm`, `9:30am`), so the missing
+  am/pm starts there, not in Excel. Same rule either way: a start between 7 and
+  11 is morning, everything else afternoon or evening.
+* **Two Event Type values belong on other axes** — JBC is a need, Ambassador is
+  a sub-type.
+* **Four Event Type values are retired**: Brand, Deadline, Window, Women's. They
+  carry one 2026 record between them, and it is tagged JRF as well, so dropping
+  them loses nothing. Each drop is reported.
+* **Needs come from three fields** — `Setup Needs` plus the two Yes/No questions
+  — and are merged into one.
+
+A record left with no Event Type after mapping is reported and skipped, never
+guessed at.
 
 ## Loading a spreadsheet
 

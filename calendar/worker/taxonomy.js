@@ -33,7 +33,8 @@ export const EVENT_TYPES = [
   { key: 'flagship-store', label: 'Flagship Store', color: '#eb6834', colorDark: '#d95926',
     note: 'Events at our brick-and-mortar store' },
   { key: 'long-branch-store', label: 'Long Branch Store', color: '#4a3aa7', colorDark: '#9085e9',
-    note: 'Events at our brick-and-mortar store' },
+    note: 'Events at our brick-and-mortar store',
+    sheetValues: ['Long Branch'] },
   { key: 'jrf', label: 'Jetty Rock Foundation (JRF)', color: '#008300', colorDark: '#008300',
     note: 'Fundraising events/initiatives involving our nonprofit',
     sheetValues: ['JRF'] },
@@ -41,29 +42,45 @@ export const EVENT_TYPES = [
     note: 'Events involving live screenprinting and/or non-brand apparel sales',
     sheetValues: ['INK'] },
   { key: 'wholesale', label: 'Wholesale', color: '#2a78d6', colorDark: '#3987e5',
-    note: 'Tradeshows, sales trips and other industry events affecting our retail network' },
+    note: 'Tradeshows, sales trips and other industry events affecting our retail network',
+    sheetValues: ['WHSL'] },
   { key: 'marketing', label: 'Marketing', color: '#eda100', colorDark: '#c98500',
     note: 'MKG-specific events that our team uses as a guide to plan for',
     sheetValues: ['MKG-specific', 'MKG'] },
   { key: 'meetings', label: 'Meetings', color: '#a34a8f', colorDark: '#c06aab',
-    note: 'Milestone meetings with mixed departments' },
+    note: 'Milestone meetings with mixed departments',
+    sheetValues: ['Meeting'] },
   { key: 'logistics', label: 'Logistics', color: '#1baf7a', colorDark: '#199e70' },
   { key: 'prodev', label: 'ProDev', color: '#c05fd6', colorDark: '#c05fd6' },
   { key: 'culture', label: 'Culture', color: '#7d8a3c', colorDark: '#8b9645',
-    note: 'Team-building' },
+    note: 'Team-building',
+    sheetValues: ['Team Building / Culture / Building', 'Team Building / Culture', 'Team Building'] },
 ];
 
 // A meeting for one department is tagged Meetings + that department, so it
 // lands on both calendars. That is why the menu's Meetings sub-list needs no
 // separate existence: six of its eight entries are Event Types already.
+//
+// Sub-types say what kind of item something is. The menu sheet listed them only
+// under Marketing, but Airtable's Type field does the same job across every
+// calendar and is filled in on all 14,279 records, so this is that list --
+// unscoped, and offered on any Event Type. Influencer comes from the menu sheet;
+// Airtable has no equivalent yet.
 export const SUB_TYPES = [
-  { key: 'ambassador',  label: 'Ambassador',  parent: 'marketing', note: 'MKG events/initiatives involving an ambassador' },
-  { key: 'influencer',  label: 'Influencer',  parent: 'marketing', note: 'MKG events/initiatives involving an influencer' },
-  { key: 'promotion',   label: 'Promotion',   parent: 'marketing', note: 'A campaign involving a sale, contest, etc.' },
-  { key: 'campaign',    label: 'Campaign',    parent: 'marketing', note: 'A seasonal brand campaign highlighting products' },
-  { key: 'email-sms',   label: 'Email/SMS',   parent: 'marketing', note: 'Product & promo-based themes for email/SMS lifecycle MKG' },
-  { key: 'photo-video', label: 'Photo/Video', parent: 'marketing', note: 'Photo & video shoots' },
-  { key: 'collab',      label: 'Collab',      parent: 'marketing', note: 'Campaigns involving a collab partner' },
+  { key: 'event',       label: 'Event',        sheetValues: ['Event \u{1F3AA}'] },
+  { key: 'meeting',     label: 'Meeting',      sheetValues: ['Meeting \u{1F91F}\u{1F3FB}'] },
+  { key: 'campaign',    label: 'Campaign',     sheetValues: ['Campaign \u26A1'] },
+  { key: 'promotion',   label: 'Promotion',    sheetValues: ['Promotion \u{1F4E3}'] },
+  { key: 'email',       label: 'Email',        sheetValues: ['Email \u{1F4E9}'] },
+  { key: 'sms',         label: 'SMS',          sheetValues: ['SMS \u{1F4F2}'] },
+  { key: 'social',      label: 'Social' },
+  { key: 'photo-video', label: 'Photo/Video',  sheetValues: ['Photo/Vid \u{1F4F8}', 'Photo/Vid'] },
+  { key: 'collab',      label: 'Collab',       sheetValues: ['Collab \u{1F91D}\u{1F3FB}'] },
+  { key: 'ambassador',  label: 'Ambassador',   sheetValues: ['Ambassador \u{1F3C4}\u{1F3FB}\u200D\u2642\uFE0F\u{1F3C4}\u{1F3FB}\u200D\u2640\uFE0F'] },
+  { key: 'influencer',  label: 'Influencer' },
+  { key: 'blog-post',   label: 'Blog Post' },
+  { key: 'website',     label: 'Website',      sheetValues: ['Website \u{1F310}'] },
+  { key: 'seasonal',    label: 'Seasonal' },
 ];
 
 // Each of these is a yes/no on any event, whatever its Event Type.
@@ -75,6 +92,16 @@ export const NEEDS = [
   // the event wants our own branded beer, not a calendar of its own.
   { key: 'jetty-brewing',  label: 'Jetty Brewing Company', note: 'Do we need our own branded beer?',
     sheetValues: ['JBC'] },
+  // These four already exist in Airtable -- the first as its own Yes/No field,
+  // the rest as Setup Needs options.
+  { key: 'insurance',      label: 'Insurance',             note: 'Do we need insurance or an insurance cert?' },
+  { key: 'box-truck-rig',  label: 'Box Truck (vehicle)',   note: 'Do we need the box truck itself?',
+    sheetValues: ['Box Truck'] },
+  { key: 'van',            label: 'Van',                   note: 'Do we need the van?' },
+  { key: 'setup-10x10',    label: '10x10 Setup',           note: 'Do we need the 10x10?',
+    sheetValues: ['!0 X10 Setup', '10 X 10 Setup', '10X10 Setup'] },
+  { key: 'setup-10x20',    label: '10x20 Setup',           note: 'Do we need the 10x20?',
+    sheetValues: ['10 X 20 Setup', '10X20 Setup'] },
 ];
 
 // Booked is the sheet's checkbox; anything unchecked is still being chased.

@@ -46,6 +46,7 @@ RETAIL_EPOCH = datetime.date(2026, 1, 4)   # Sunday starting retail week 1 of 20
 RETAIL_EPOCH_YEAR = 2026
 
 TEXT_TIME = re.compile(r"^\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\s*$", re.I)
+BARE_TIME = re.compile(r"^\s*(\d{1,2})(?::(\d{2}))?\s*$")
 
 
 def retail_week(d):
@@ -80,15 +81,24 @@ def to_time(v, is_end):
     if isinstance(v, datetime.datetime):
         v = v.time()
     if isinstance(v, str):
+        v = v.strip()
+        if not v:
+            return None
         m = TEXT_TIME.match(v)
-        if not m:
+        if m:
+            h, minute, ap = int(m.group(1)), int(m.group(2) or 0), m.group(3).lower()
+            if ap == "p" and h != 12:
+                h += 12
+            if ap == "a" and h == 12:
+                h = 0
+            return "%02d:%02d" % (h, minute)
+        # Airtable stores these as plain text, so most arrive with no meridiem at
+        # all -- "1:00", "9:30", "11". Same clock, same rule as a spreadsheet time.
+        bare = BARE_TIME.match(v)
+        if bare:
+            v = datetime.time(int(bare.group(1)) % 24, int(bare.group(2) or 0))
+        else:
             raise ValueError("cannot read %r as a time" % (v,))
-        h, minute, ap = int(m.group(1)), int(m.group(2) or 0), m.group(3).lower()
-        if ap == "p" and h != 12:
-            h += 12
-        if ap == "a" and h == 12:
-            h = 0
-        return "%02d:%02d" % (h, minute)
     if isinstance(v, datetime.time):
         h, minute = v.hour, v.minute
         # No meridiem was stored. Starts between 7 and 11 are the only ones that
