@@ -105,7 +105,9 @@ export const NEEDS = [
 ];
 
 // Booked is the sheet's checkbox; anything unchecked is still being chased.
-export const STATUSES = ['Booked', 'Pending'];
+// Cancelled is kept rather than deleted so the calendar still answers "what
+// happened to that?" -- it shows struck through, and can be filtered out.
+export const STATUSES = ['Booked', 'Pending', 'Cancelled'];
 
 // Retail week 1 of 2026 runs Sun 4 Jan to Sat 10 Jan, taken from the 2026 box
 // truck calendar. Other years step 364 days from this anchor, which holds until

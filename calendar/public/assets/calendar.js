@@ -366,7 +366,7 @@
   // calendar department is left off -- on a box truck calendar every event is
   // Box Truck, and a dot on all 112 says nothing.
   function chipHtml(it, dateStr) {
-    var cls = 'chip' + (it.status === 'Pending' ? ' pending' : '');
+    var cls = 'chip' + (it.status === 'Booked' ? '' : ' ' + it.status.toLowerCase());
     var cont = it.start_date < dateStr ? '→ ' : '';
     var time = (!it.all_day && it.start_time && it.start_date === dateStr)
       ? '<span class="t">' + esc(hhmm(it.start_time)) + '</span>' : '';
@@ -404,7 +404,8 @@
     if (where) meta.push(where);
     var nd = needsOf(it).map(function (k) { return labelIn(state.tax.needs, k); });
     if (nd.length) meta.push('Needs: ' + nd.join(', '));
-    return '<div class="day-item" style="--chip:' + colorFor(it) + '" data-id="' + esc(it.id) + '">'
+    var rcls = 'day-item' + (it.status === 'Booked' ? '' : ' ' + it.status.toLowerCase());
+    return '<div class="' + rcls + '" style="--chip:' + colorFor(it) + '" data-id="' + esc(it.id) + '">'
       + bandHtml(it)
       + '<div class="day-when">' + esc(when) + '</div>'
       + '<div><div class="day-title">' + esc(it.title) + '</div>'
@@ -606,7 +607,8 @@
 
     add('Event Type', chips(typesOf(it), state.tax.eventTypes, true));
     add('Sub-type', chips(subsOf(it), state.tax.subTypes, false));
-    add('Status', '<span class="pill ' + (it.status === 'Booked' ? 'ok' : 'warn') + '">'
+    var pillCls = it.status === 'Booked' ? 'ok' : (it.status === 'Cancelled' ? 'off' : 'warn');
+    add('Status', '<span class="pill ' + pillCls + '">'
       + esc(it.status) + '</span>');
     if (r) add('Retail week', 'Week ' + r.week + ' of ' + r.year + ' <span class="muted">('
       + esc(weekRangeLabel(r)) + ')</span>');

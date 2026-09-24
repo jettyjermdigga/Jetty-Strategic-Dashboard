@@ -156,6 +156,15 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
 .chip .n{overflow:hidden;text-overflow:ellipsis}
 .chip.pending .bar{opacity:.5}
 .chip.pending .n{font-style:italic;opacity:.8}
+
+/* Cancelled items stay on the calendar rather than vanishing -- struck
+   through, so "what happened to that?" still has an answer on the day it
+   was meant to be. */
+.chip.cancelled .bar{opacity:.3}
+.chip.cancelled .n{text-decoration:line-through;opacity:.5}
+.day-item.cancelled .bar{opacity:.3}
+.day-item.cancelled .day-title{text-decoration:line-through;opacity:.55}
+.day-item.cancelled .day-meta{opacity:.6}
 .mo-more{font-family:var(--mono);font-size:10.5px;opacity:.55;padding-left:3px;cursor:pointer}
 .mo-more:hover{opacity:1;text-decoration:underline}
 
@@ -397,6 +406,7 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
 }
 .pill.ok{background:rgba(47,122,92,.14);color:var(--good)}
 .pill.warn{background:rgba(198,128,59,.16);color:#8A5A20}
+.pill.off{background:rgba(67,87,94,.12);color:var(--ink);opacity:.6;text-decoration:line-through}
 @media (prefers-color-scheme: dark){ .pill.warn{color:#E0A566} }
 .muted{opacity:.55}
 
