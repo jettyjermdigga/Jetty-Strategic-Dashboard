@@ -39,8 +39,8 @@ CALENDAR_EDITORS = "jeremy@jettylife.com"
 # (e.g. jetty.cloudflareaccess.com); ACCESS_AUD is the Application Audience tag
 # on the Access application protecting THIS Worker -- the calendar needs its own
 # Access application, separate from the dashboard's.
-ACCESS_TEAM_DOMAIN = ""
-ACCESS_AUD = ""
+ACCESS_TEAM_DOMAIN = "wild-pine-bbc7.cloudflareaccess.com"
+ACCESS_AUD = "72de24beb216200c9ac2cfaedef7695eb65616b19059cf3ac0ec0bfaa1b8cfe7"
 
 # The calendar refuses to serve anything to a request that did not come through
 # Cloudflare Access. This is what keeps a brand-new Worker hostname from being
