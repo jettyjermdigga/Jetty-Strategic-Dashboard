@@ -233,6 +233,9 @@
 .fld input:focus,.fld select:focus,.fld textarea:focus{outline:2px solid var(--primary-alt);outline-offset:-1px}
 .fld-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .fld-inline{display:flex;align-items:center;gap:8px;font-family:var(--body);font-size:14px;cursor:pointer}
+/* An explicit display on a class beats the hidden attribute's own
+   display:none, so anything hidden has to say so louder. */
+[hidden]{display:none !important}
 
 .form-err{
   font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--watch);
@@ -329,10 +332,11 @@
 
 /* ── Multi-department markers ───────────────────────────────────────────── */
 
-/* Most events are Box Truck alone. The extra dots are what make the ones that
-   also pull in JRF, INK or MKG visible without opening them. */
+/* Colour belongs to the calendar, so these dots carry the cross-department
+   signal instead -- one per tag beyond the calendar's own department. */
 .chip-depts{display:flex;gap:2px;margin-left:auto;flex-shrink:0}
-.chip-depts i{width:5px;height:5px;border-radius:50%;display:block}
+.chip-depts i{width:6px;height:6px;border-radius:50%;display:block;
+  box-shadow:0 0 0 1px rgba(255,255,255,.55)}
 
 /* ── Week view ──────────────────────────────────────────────────────────── */
 
@@ -399,3 +403,16 @@
   .wk-items .day-item{grid-template-columns:minmax(0,1fr)}
   .addr-row{grid-template-columns:1fr 70px 96px}
 }
+
+.flt-note{
+  font-family:var(--body);font-size:12px;line-height:1.5;opacity:.6;
+  margin:-4px 0 10px;
+}
+
+.tag{
+  display:inline-flex;align-items:center;gap:5px;
+  font-family:var(--body);font-size:13px;
+  background:var(--surface-alt);border-radius:999px;padding:2px 10px 2px 8px;
+  margin:0 4px 4px 0;
+}
+.tag i{width:8px;height:8px;border-radius:50%;flex-shrink:0}

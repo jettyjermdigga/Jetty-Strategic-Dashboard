@@ -46,7 +46,8 @@ An event carries what the box truck sheet carries:
 | Event name | Name | required |
 | Status | Booked | the checkbox: ticked is **Booked**, blank is **Pending** |
 | Type | Type | the top-level calendar; only Box Truck & Events so far |
-| Event Type | Event Type | which departments have a role — multi-select |
+| Event Type | Event Type | the department putting it on the calendar — one |
+| Tag in | Event Type | other departments that should also see it — any number |
 | Start / end date | Event 🚀 / Event 🛑 | |
 | Start / end time | Start ⌚ / End ⌚ | 24-hour on the way in |
 | Venue, Address, City, State, Zip | same | |
@@ -69,18 +70,31 @@ places: one week number off by one, and two weekday labels that do not match
 their own dates. That is what happens when the same fact is entered twice. An
 import reports such disagreements and then ignores those columns.
 
+## Owners, tags and colour
+
+One department **owns** an event — the one that put it on the calendar — and any
+others are **tagged in**, which is what puts the event on their calendar too.
+Box Truck adds Coquina Jam and tags in JRF and INK: all three departments see it
+in their own filtered view, and it stays a Box Truck & Events item throughout.
+
+**Colour says which calendar an event belongs to, not who is on it.** Every Box
+Truck & Events item is the same colour, so the month reads as one calendar
+rather than a mosaic. Tags show as a small dot each on the event's chip, so a
+cross-department event is still visible at a glance without changing colour.
+*Colour by* can be switched to Status or Event Type when that is what you want
+to see.
+
+The sheet has a single Event Type column listing every department involved, in
+no reliable order — both `Box Truck,JRF` and `JRF,Box Truck` appear. On import
+the department that owns this calendar (`defaultOwner` on the Type in
+`worker/taxonomy.js`) is taken as the owner and the rest become tags, so list
+order does not matter.
+
 ## Changing the structure
 
 `worker/taxonomy.js` is the only place Type, Event Type and Status are defined.
 The filter sidebar, the add form, the colour coding and the Google Calendar
 descriptions are all generated from it. Adding a department is one line.
-
-The **order** of `DEPARTMENTS` is load-bearing for colour: an event is coloured
-by the *last* department in that list it has. Nearly every box truck event is
-Box Truck, so colouring by the first one paints the whole month a single colour;
-keeping the everyday department first and the notable ones after it makes the
-events that also involve JRF, INK, JBC or MKG stand out. Events carrying more
-than one department also get a dot per department on their chip.
 
 ## Loading a spreadsheet
 
@@ -115,7 +129,8 @@ rejected one, because you cannot tell what landed.
 Cloudflare Access sits in front of the whole Worker, so anyone who loads the
 page is signed in.
 
-- **Everyone** who gets in can read the calendar and subscribe to the feed.
+- **Everyone** who gets in can read the whole calendar and subscribe to the feed.
+  The Event Type filters narrow the view; they are not access control.
 - **Editors** — the emails in `CALENDAR_EDITORS` in `wrangler.toml` — also see
   *Add event* and *Import*, and can edit and delete.
 

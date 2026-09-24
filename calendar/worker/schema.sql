@@ -7,7 +7,10 @@ CREATE TABLE IF NOT EXISTS items (
   id          TEXT PRIMARY KEY,
   title       TEXT NOT NULL,              -- Name
   category    TEXT NOT NULL,              -- Type
-  departments TEXT,                       -- Event Type: comma-separated dept keys
+  owner_dept  TEXT,                       -- Event Type, primary: the department whose
+                                          -- calendar this is and who added it
+  tags        TEXT,                       -- Event Type, tagged in: comma-separated dept
+                                          -- keys that should also see the event
   status      TEXT NOT NULL DEFAULT 'Pending',
   start_date  TEXT NOT NULL,              -- Event, YYYY-MM-DD
   end_date    TEXT NOT NULL,              -- Event end, YYYY-MM-DD, inclusive

@@ -122,9 +122,11 @@ export function buildIcs(items, opts) {
 
     const descParts = [];
     if (it.category) descParts.push('Type: ' + label(CATEGORIES, it.category));
-    if (it.departments) {
-      descParts.push('Event Type: ' + it.departments.split(',')
-        .map((d) => label(DEPARTMENTS, d.trim())).join(', '));
+    if (it.owner_dept) {
+      const tagged = it.tags
+        ? it.tags.split(',').map((d) => label(DEPARTMENTS, d.trim())).join(', ') : '';
+      descParts.push('Event Type: ' + label(DEPARTMENTS, it.owner_dept)
+        + (tagged ? ' (tagged in: ' + tagged + ')' : ''));
     }
     if (it.status) descParts.push('Status: ' + it.status);
     const where = [it.venue, it.address,
@@ -140,7 +142,8 @@ export function buildIcs(items, opts) {
     if (it.url) lines.push('URL:' + esc(it.url));
     lines.push('CATEGORIES:' + esc([
       it.category && label(CATEGORIES, it.category),
-      ...(it.departments ? it.departments.split(',').map((d) => label(DEPARTMENTS, d.trim())) : []),
+      it.owner_dept && label(DEPARTMENTS, it.owner_dept),
+      ...(it.tags ? it.tags.split(',').map((d) => label(DEPARTMENTS, d.trim())) : []),
     ].filter(Boolean).join(',')));
     lines.push('STATUS:' + (it.status === 'Booked' ? 'CONFIRMED' : 'TENTATIVE'));
     lines.push('TRANSP:TRANSPARENT');

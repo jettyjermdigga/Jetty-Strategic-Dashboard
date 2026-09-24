@@ -24,7 +24,7 @@
     items: [],
     tax: null,
     me: { canEdit: false, email: '' },
-    colorBy: 'department',
+    colorBy: 'category',
     cats: {},     // category key -> bool
     depts: {},    // department key (or NO_DEPT) -> bool
     stats: {},    // status -> bool
@@ -100,28 +100,38 @@
     for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
     return null;
   }
-  function deptsOf(item) {
-    return item.departments ? item.departments.split(',').filter(Boolean) : [];
+  // One department owns an event; any others are tagged in so it also shows on
+  // their calendar.
+  function tagsOf(item) {
+    return item.tags ? item.tags.split(',').filter(Boolean) : [];
   }
-  function deptLabels(item) {
-    return deptsOf(item).map(function (k) { var d = deptOf(k); return d ? d.label : k; });
+  function allDeptsOf(item) {
+    return (item.owner_dept ? [item.owner_dept] : []).concat(tagsOf(item));
+  }
+  function deptLabel(key) { var d = deptOf(key); return d ? d.label : key; }
+  function deptSummary(item) {
+    var owner = item.owner_dept ? deptLabel(item.owner_dept) : '';
+    var tags = tagsOf(item).map(deptLabel);
+    if (!owner) return tags.join(', ');
+    return owner + (tags.length ? '  +  ' + tags.join(', ') : '');
   }
 
-  // Colour by the LAST department in taxonomy order that the event has, not the
-  // first it happens to list. On the box truck calendar almost every event is
-  // Box Truck, so colouring by the first one paints the whole month a single
-  // colour and buries the thing worth seeing -- which events also pull in JRF,
-  // INK, JBC or MKG. The department list runs from the everyday one to the
-  // notable ones, so the last match is the one worth showing.
+  // Optional colouring only. Picks the LAST department in taxonomy order the
+  // event has, since the list runs from the everyday department to the notable
+  // ones -- the first listed is nearly always the calendar's own.
   function leadDept(item) {
     var list = state.tax ? state.tax.departments : [];
-    var have = deptsOf(item);
+    var have = allDeptsOf(item);
     for (var i = list.length - 1; i >= 0; i--) {
       if (have.indexOf(list[i].key) >= 0) return list[i];
     }
     return null;
   }
 
+  // Colour says which calendar an event belongs to. Every Box Truck & Events
+  // item is the same colour; the departments an event is tagged with are a
+  // filter axis, not a colour, so that a tag can put one event on several
+  // calendars without changing how it looks on its own.
   function colorFor(item) {
     if (state.colorBy === 'status') return item.status === 'Booked' ? '#2F7A5C' : '#C6803B';
     if (state.colorBy === 'department') {
@@ -137,9 +147,10 @@
   function passes(item) {
     if (state.cats[item.category] === false) return false;
     if (state.stats[item.status] === false) return false;
-    var ds = deptsOf(item);
+    // The point of tagging: an event shows on the owner's calendar and on the
+    // calendar of everyone tagged in, so any one of them being on is enough.
+    var ds = allDeptsOf(item);
     if (!ds.length) return state.depts[NO_DEPT] !== false;
-    // An event involving several departments shows while any one of them is on.
     return ds.some(function (k) { return state.depts[k] !== false; });
   }
 
@@ -200,7 +211,7 @@
     state.items.forEach(function (it) {
       byCat[it.category] = (byCat[it.category] || 0) + 1;
       byStat[it.status] = (byStat[it.status] || 0) + 1;
-      var ds = deptsOf(it);
+      var ds = allDeptsOf(it);
       if (!ds.length) byDept[NO_DEPT] = (byDept[NO_DEPT] || 0) + 1;
       ds.forEach(function (k) { byDept[k] = (byDept[k] || 0) + 1; });
     });
@@ -239,12 +250,17 @@
 
   // ── views ──────────────────────────────────────────────────────────────
 
-  function deptDots(it) {
-    var ds = deptsOf(it);
-    if (ds.length < 2) return '';
-    return '<span class="chip-depts">' + ds.slice(0, 4).map(function (k) {
+  // With colour reserved for the calendar, these dots are the only at-a-glance
+  // sign that an event also involves another department. The event's own
+  // calendar department is left off -- on a box truck calendar every event is
+  // Box Truck, and a dot on all 112 says nothing.
+  function tagDots(it) {
+    var extra = tagsOf(it);
+    if (!extra.length) return '';
+    return '<span class="chip-depts">' + extra.slice(0, 4).map(function (k) {
       var d = deptOf(k);
-      return '<i style="background:' + (d ? d.color : '#8A8F98') + '"></i>';
+      return '<i style="background:' + (d ? d.color : '#8A8F98') + '" title="' + esc(deptLabel(k))
+        + '"></i>';
     }).join('') + '</span>';
   }
 
@@ -253,11 +269,11 @@
     var cont = it.start_date < dateStr ? '→ ' : '';
     var time = (!it.all_day && it.start_time && it.start_date === dateStr)
       ? '<span class="t">' + esc(hhmm(it.start_time)) + '</span>' : '';
-    var tip = it.title + ' — ' + (deptLabels(it).join(', ') || 'no Event Type')
+    var tip = it.title + ' — ' + (deptSummary(it) || 'no Event Type')
       + ' · ' + it.status + (it.venue ? ' · ' + it.venue : '');
     return '<div class="' + cls + '" style="--chip:' + colorFor(it) + '" data-id="' + esc(it.id) + '" '
       + 'title="' + esc(tip) + '">'
-      + time + '<span class="n">' + esc(cont + it.title) + '</span>' + deptDots(it) + '</div>';
+      + time + '<span class="n">' + esc(cont + it.title) + '</span>' + tagDots(it) + '</div>';
   }
 
   function placeLabel(it) {
@@ -277,8 +293,8 @@
     var when = it.all_day ? 'All day'
       : hhmm(it.start_time) + (it.end_time ? '–' + hhmm(it.end_time) : '');
     var meta = [];
-    var dl = deptLabels(it);
-    if (dl.length) meta.push(dl.join(' + '));
+    var dl = deptSummary(it);
+    if (dl) meta.push(dl);
     if (it.status !== 'Booked') meta.push(it.status);
     if (it.start_date !== it.end_date) meta.push(spanLabel(it));
     var where = placeLabel(it);
@@ -465,7 +481,16 @@
     var rows = '';
     var add = function (k, v) { if (v) rows += '<dt>' + k + '</dt><dd>' + v + '</dd>'; };
 
-    add('Event Type', esc(deptLabels(it).join(', ')));
+    add('Event Type', it.owner_dept
+      ? esc(deptLabel(it.owner_dept)) + '<span class="muted"> \u00b7 added it</span>'
+      : '');
+    add('Tagged in', tagsOf(it).length
+      ? tagsOf(it).map(function (k) {
+          var d = deptOf(k);
+          return '<span class="tag"><i style="background:' + (d ? d.color : '#8A8F98') + '"></i>'
+            + esc(deptLabel(k)) + '</span>';
+        }).join(' ')
+      : '');
     add('Status', '<span class="pill ' + (it.status === 'Booked' ? 'ok' : 'warn') + '">'
       + esc(it.status) + '</span>');
     if (r) add('Retail week', 'Week ' + r.week + ' of ' + r.year + ' <span class="muted">('
@@ -506,12 +531,13 @@
 
   function showForm(existing, defaultDate) {
     var it = existing || {
-      title: '', category: state.tax.categories[0].key, departments: '',
+      title: '', category: state.tax.categories[0].key, owner_dept: '', tags: '',
       status: 'Pending', start_date: defaultDate || todayYmd(), end_date: defaultDate || todayYmd(),
       all_day: 1, start_time: '', end_time: '',
       venue: '', address: '', city: '', state: '', zip: '', notes: '', url: '',
     };
-    var chosen = deptsOf(it);
+    var owner = it.owner_dept || (state.tax.categories[0] || {}).defaultOwner || null;
+    var chosen = tagsOf(it);
     var timed = !it.all_day;
 
     var body = ''
@@ -534,11 +560,23 @@
       + '</select></div>'
       + '</div>'
 
-      + '<div class="fld"><label>Event Type <span class="lbl-note">which departments have a role</span></label>'
-      + '<div class="chk-grid">'
+      + '<div class="fld"><label for="f-owner">Event Type '
+      + '<span class="lbl-note">the department putting it on the calendar</span></label>'
+      + '<select id="f-owner">'
       + state.tax.departments.map(function (d) {
-          return '<label class="fld-inline"><input type="checkbox" class="f-dept" value="' + esc(d.key) + '"'
-            + (chosen.indexOf(d.key) >= 0 ? ' checked' : '') + '>'
+          return '<option value="' + esc(d.key) + '"' + (d.key === owner ? ' selected' : '') + '>'
+            + esc(d.label) + '</option>';
+        }).join('')
+      + '</select></div>'
+
+      + '<div class="fld"><label>Tag in '
+      + '<span class="lbl-note">also shows on their calendar</span></label>'
+      + '<div class="chk-grid" id="tagGrid">'
+      + state.tax.departments.map(function (d) {
+          return '<label class="fld-inline" data-dept="' + esc(d.key) + '"'
+            + (d.key === owner ? ' hidden' : '') + '>'
+            + '<input type="checkbox" class="f-tag" value="' + esc(d.key) + '"'
+            + (chosen.indexOf(d.key) >= 0 && d.key !== owner ? ' checked' : '') + '>'
             + '<i class="dot" style="background:' + d.color + '"></i>' + esc(d.label) + '</label>';
         }).join('')
       + '</div></div>'
@@ -607,6 +645,17 @@
 
     $('#f-allday').addEventListener('change', function () { $('#timeRow').hidden = this.checked; });
 
+    // Tagging the owner into its own event would double-count it in every
+    // filter, so it drops out of the tag list.
+    $('#f-owner').addEventListener('change', function () {
+      var chosenOwner = this.value;
+      Array.prototype.forEach.call($('#tagGrid').children, function (lab) {
+        var mine = lab.dataset.dept === chosenOwner;
+        lab.hidden = mine;
+        if (mine) lab.querySelector('input').checked = false;
+      });
+    });
+
     // Move the end date with the start date, keeping whatever span was already
     // set. Without this, picking a start date and leaving the end date on its
     // default silently produces a multi-day event.
@@ -630,8 +679,9 @@
       title: $('#f-title').value,
       category: $('#f-cat').value,
       status: $('#f-status').value,
-      departments: Array.prototype.map.call(
-        document.querySelectorAll('.f-dept:checked'), function (el) { return el.value; }),
+      owner_dept: $('#f-owner').value,
+      tags: Array.prototype.map.call(
+        document.querySelectorAll('.f-tag:checked'), function (el) { return el.value; }),
       start_date: $('#f-start').value,
       end_date: $('#f-end').value || $('#f-start').value,
       all_day: allDay ? 1 : 0,

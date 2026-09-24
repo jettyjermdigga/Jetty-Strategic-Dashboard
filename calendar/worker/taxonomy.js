@@ -13,6 +13,9 @@ export const CATEGORIES = [
     label: 'Box Truck & Events',
     sheetValues: ['Event \u{1F3AA}', 'Event', 'Box Truck & Event', 'Box Truck & Events'],
     color: '#43575E',
+    // Whose calendar this is. An event on it is owned by this department unless
+    // it says otherwise, and every other department on it is tagged in.
+    defaultOwner: 'box-truck',
   },
 ];
 
@@ -20,11 +23,10 @@ export const CATEGORIES = [
 // An event can have several, so this is a multi-select rather than a level of
 // the category tree.
 //
-// Order matters for colour: an event is coloured by the LAST department here
-// that it has. Nearly every box truck event is Box Truck, so colouring by the
-// first one would paint the month a single colour; keeping the everyday
-// department first and the notable ones after it makes the events that also
-// involve JRF, INK, JBC or MKG stand out.
+// One department owns an event -- the one that put it on the calendar -- and any
+// others are tagged in, which is what makes the event show up on their calendar
+// too. Box Truck adds Coquina Jam and tags in JRF and INK; all three see it, and
+// it stays a Box Truck & Events item.
 export const DEPARTMENTS = [
   { key: 'box-truck',    label: 'Box Truck',     color: '#43575E' },
   { key: 'jrf',          label: 'JRF',           color: '#2F7A5C' },
@@ -54,7 +56,8 @@ export function departmentByKey(key) {
 }
 
 export const TAXONOMY = {
-  categories: CATEGORIES.map(({ key, label, color }) => ({ key, label, color })),
+  categories: CATEGORIES.map(({ key, label, color, defaultOwner }) =>
+    ({ key, label, color, defaultOwner })),
   departments: DEPARTMENTS,
   statuses: STATUSES,
   retailEpoch: RETAIL_EPOCH,
