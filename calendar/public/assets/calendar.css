@@ -105,6 +105,37 @@
 .mo-cell.out{background:#fafbfb}
 .mo-cell.out .mo-num{opacity:.32}
 .mo-cell:hover{background:rgba(67,87,94,.05)}
+
+/* ── Click open space to add ────────────────────────────────────────────── */
+
+/* Clicking an empty month cell already opened the form; without a mark on
+   hover nobody found it. Editors only -- for everyone else the cell is
+   navigation, so it must not advertise something they cannot do. */
+body.can-edit .mo-cell{position:relative}
+body.can-edit .mo-cell::after{
+  content:"+";position:absolute;top:5px;right:6px;
+  font-family:var(--mono);font-size:14px;line-height:1;opacity:0;
+  color:var(--primary);transition:opacity .12s;pointer-events:none;
+}
+body.can-edit .mo-cell:hover::after{opacity:.55}
+
+/* The day and week views have no grid to click, so they get an explicit row.
+   It stays quiet until hovered so it never competes with the events. */
+.add-row{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;
+  opacity:.34;cursor:pointer;padding:7px 2px;border-radius:6px;
+  transition:opacity .12s,background .12s;
+}
+.add-row:hover{opacity:.85;background:rgba(67,87,94,.06)}
+.day-wrap .add-row{margin-top:10px}
+
+/* Seven of these stacked down a week reads as a to-do list, so on a pointer
+   device they stay out of the way until the day is hovered. Touch has no
+   hover, so there they stay quietly visible. */
+.wk-items .add-row{opacity:0;transition:opacity .12s,background .12s}
+.wk-day:hover .add-row{opacity:.4}
+.wk-items .add-row:hover{opacity:.85}
+@media (hover: none){ .wk-items .add-row{opacity:.34} }
 .mo-num{
   font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;
   opacity:.65;align-self:flex-start;padding:1px 5px;border-radius:999px;

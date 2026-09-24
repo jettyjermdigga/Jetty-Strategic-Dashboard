@@ -440,15 +440,24 @@
     return head + '<div class="mo-grid">' + cells + '</div>';
   }
 
+  // Shown only to editors -- everyone else sees the day as it is.
+  function addRowHtml(ds, label) {
+    if (!state.me.canEdit) return '';
+    return '<div class="add-row" data-add="' + esc(ds) + '">+ ' + (label || 'Add an event') + '</div>';
+  }
+
   function renderDay() {
     var ds = ymd(state.cursor);
     var on = itemsOn(ds);
     if (!on.length) {
-      return emptyHtml('Nothing scheduled', 'No calendar items on this day match the current filters.');
+      return '<div class="day-wrap">'
+        + emptyHtml('Nothing scheduled', 'No calendar items on this day match the current filters.')
+        + addRowHtml(ds, 'Add an event on this day') + '</div>';
     }
     return '<div class="day-wrap"><div class="day-sub">' + on.length
       + (on.length === 1 ? ' item' : ' items') + '</div><div class="day-list">'
-      + on.map(rowHtml).join('') + '</div></div>';
+      + on.map(rowHtml).join('') + '</div>'
+      + addRowHtml(ds, 'Add an event on this day') + '</div>';
   }
 
   // Retail weeks run Sunday to Saturday and are how the business plans, so they
@@ -470,8 +479,8 @@
         + DOW[day.getDay()] + ' · ' + MONTHS[day.getMonth()].slice(0, 3) + '</div>'
         + '<div class="wk-items">'
         + (on.length ? on.map(rowHtml).join('')
-                     : '<div class="wk-none">—</div>')
-        + '</div></div>';
+                     : (state.me.canEdit ? '' : '<div class="wk-none">—</div>'))
+        + addRowHtml(ds) + '</div></div>';
     }
     return '<div class="wk-wrap"><div class="day-sub">Retail week ' + r.week + ' of ' + r.year
       + ' · ' + weekRangeLabel(r) + ' · ' + total
@@ -639,7 +648,7 @@
   function showForm(existing, defaultDate) {
     var it = existing || {
       title: '', event_types: '', sub_types: '', needs: '',
-      status: 'Pending', start_date: defaultDate || todayYmd(), end_date: defaultDate || todayYmd(),
+      status: 'Booked', start_date: defaultDate || todayYmd(), end_date: defaultDate || todayYmd(),
       all_day: 1, start_time: '', end_time: '',
       venue: '', address: '', city: '', state: '', zip: '', notes: '', url: '',
     };
@@ -962,6 +971,8 @@
     });
 
     $('#view').addEventListener('click', function (e) {
+      var adder = e.target.closest('[data-add]');
+      if (adder && state.me.canEdit) { showForm(null, adder.dataset.add); return; }
       var chip = e.target.closest('[data-id]');
       if (chip) { showDetail(chip.dataset.id); return; }
       var more = e.target.closest('.mo-more');
@@ -1078,6 +1089,7 @@
       renderWho();
       renderNotice();
       if (state.me.canEdit) {
+        document.body.classList.add('can-edit');
         $('#addBtn').hidden = false;
         $('#importBtn').hidden = false;
       }
