@@ -1,19 +1,24 @@
 -- Company calendar store. Applied lazily by the Worker on first request, so
 -- there is no separate migration step to run or forget.
+--
+-- Year, Week, Start (Week), End (Week), Month and Day are deliberately absent:
+-- all six are functions of start_date and are derived on read. See worker/retail.js.
 CREATE TABLE IF NOT EXISTS items (
   id          TEXT PRIMARY KEY,
-  title       TEXT NOT NULL,
-  category    TEXT NOT NULL,
-  type        TEXT,
-  division    TEXT,
-  start_date  TEXT NOT NULL,              -- YYYY-MM-DD
-  end_date    TEXT NOT NULL,              -- YYYY-MM-DD, inclusive
+  title       TEXT NOT NULL,              -- Name
+  category    TEXT NOT NULL,              -- Type
+  departments TEXT,                       -- Event Type: comma-separated dept keys
+  status      TEXT NOT NULL DEFAULT 'Pending',
+  start_date  TEXT NOT NULL,              -- Event, YYYY-MM-DD
+  end_date    TEXT NOT NULL,              -- Event end, YYYY-MM-DD, inclusive
   all_day     INTEGER NOT NULL DEFAULT 1,
-  start_time  TEXT,                       -- HH:MM, local, only when all_day = 0
+  start_time  TEXT,                       -- HH:MM, 24-hour, only when all_day = 0
   end_time    TEXT,
-  location    TEXT,
-  owner       TEXT,
-  status      TEXT NOT NULL DEFAULT 'Confirmed',
+  venue       TEXT,
+  address     TEXT,
+  city        TEXT,
+  state       TEXT,
+  zip         TEXT,
   notes       TEXT,
   url         TEXT,
   created_by  TEXT,

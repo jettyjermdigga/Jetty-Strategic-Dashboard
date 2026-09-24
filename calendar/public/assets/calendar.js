@@ -2,8 +2,8 @@
  *
  * The whole item list is fetched once and filtered in the browser. A company
  * calendar is a few thousand rows at most, so paging it per view would buy
- * nothing and would make switching between month and year feel slow. The API
- * takes from/to if that ever stops being true.
+ * nothing and would make switching between week and year feel slow. The API
+ * takes from/to and week/year if that ever stops being true.
  */
 (function () {
   'use strict';
@@ -12,7 +12,7 @@
                 'July', 'August', 'September', 'October', 'November', 'December'];
   var DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  var UNASSIGNED = '—unassigned—';
+  var NO_DEPT = '—none—';
 
   // A month grid is unreadable at phone width -- there is no room for titles.
   // Agenda shows the same information in a form that survives the narrow column.
@@ -24,10 +24,10 @@
     items: [],
     tax: null,
     me: { canEdit: false, email: '' },
-    colorBy: 'category',
-    cats: {},       // catKey -> { on: bool, types: { typeName: bool } }
-    divs: {},       // divKey (or UNASSIGNED) -> bool
-    stats: { Confirmed: true, Tentative: true, Cancelled: false },
+    colorBy: 'department',
+    cats: {},     // category key -> bool
+    depts: {},    // department key (or NO_DEPT) -> bool
+    stats: {},    // status -> bool
   };
 
   // ── small helpers ──────────────────────────────────────────────────────
@@ -44,7 +44,6 @@
   }
   function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
   function addMonths(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
-  function sameDay(a, b) { return ymd(a) === ymd(b); }
   function todayYmd() { return ymd(new Date()); }
 
   function esc(s) {
@@ -62,50 +61,90 @@
     return h12 + (p[1] === '00' ? '' : ':' + p[1]) + suffix;
   }
 
-  function catOf(key) {
+  // ── retail calendar (mirrors worker/retail.js) ─────────────────────────
+
+  var DAY_MS = 86400000;
+  function retailWeek(dateStr) {
+    if (!state.tax || !dateStr) return null;
+    var base = fromYmd(state.tax.retailEpoch);
+    var idx = Math.floor((fromYmd(dateStr) - base) / (7 * DAY_MS));
+    var yearOffset = Math.floor(idx / 52);
+    var start = addDays(base, idx * 7);
+    return {
+      year: state.tax.retailEpochYear + yearOffset,
+      week: idx - yearOffset * 52 + 1,
+      start: ymd(start),
+      end: ymd(addDays(start, 6)),
+    };
+  }
+  function retailWeekStart(year, week) {
     if (!state.tax) return null;
-    for (var i = 0; i < state.tax.categories.length; i++) {
-      if (state.tax.categories[i].key === key) return state.tax.categories[i];
-    }
+    var idx = (Number(year) - state.tax.retailEpochYear) * 52 + (Number(week) - 1);
+    return addDays(fromYmd(state.tax.retailEpoch), idx * 7);
+  }
+  function weekRangeLabel(r) {
+    var s = fromYmd(r.start), e = fromYmd(r.end);
+    return MONTHS[s.getMonth()].slice(0, 3) + ' ' + s.getDate() + ' – '
+      + MONTHS[e.getMonth()].slice(0, 3) + ' ' + e.getDate();
+  }
+
+  // ── taxonomy lookups ───────────────────────────────────────────────────
+
+  function catOf(key) {
+    var list = state.tax ? state.tax.categories : [];
+    for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
     return null;
   }
-  function divOf(key) {
-    if (!state.tax) return null;
-    for (var i = 0; i < state.tax.divisions.length; i++) {
-      if (state.tax.divisions[i].key === key) return state.tax.divisions[i];
+  function deptOf(key) {
+    var list = state.tax ? state.tax.departments : [];
+    for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
+    return null;
+  }
+  function deptsOf(item) {
+    return item.departments ? item.departments.split(',').filter(Boolean) : [];
+  }
+  function deptLabels(item) {
+    return deptsOf(item).map(function (k) { var d = deptOf(k); return d ? d.label : k; });
+  }
+
+  // Colour by the LAST department in taxonomy order that the event has, not the
+  // first it happens to list. On the box truck calendar almost every event is
+  // Box Truck, so colouring by the first one paints the whole month a single
+  // colour and buries the thing worth seeing -- which events also pull in JRF,
+  // INK, JBC or MKG. The department list runs from the everyday one to the
+  // notable ones, so the last match is the one worth showing.
+  function leadDept(item) {
+    var list = state.tax ? state.tax.departments : [];
+    var have = deptsOf(item);
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (have.indexOf(list[i].key) >= 0) return list[i];
     }
     return null;
   }
 
   function colorFor(item) {
-    if (state.colorBy === 'division') {
-      var d = divOf(item.division);
+    if (state.colorBy === 'status') return item.status === 'Booked' ? '#2F7A5C' : '#C6803B';
+    if (state.colorBy === 'department') {
+      var d = leadDept(item);
       return d ? d.color : '#8A8F98';
     }
     var c = catOf(item.category);
     return c ? c.color : '#8A8F98';
   }
 
-  function labelFor(item) {
-    var c = catOf(item.category);
-    return (c ? c.label : item.category) + (item.type ? ' · ' + item.type : '');
-  }
-
   // ── filtering ──────────────────────────────────────────────────────────
 
   function passes(item) {
-    var cat = state.cats[item.category];
-    if (!cat || !cat.on) return false;
-    if (item.type && cat.types.hasOwnProperty(item.type) && !cat.types[item.type]) return false;
-    var dkey = item.division || UNASSIGNED;
-    if (state.divs.hasOwnProperty(dkey) && !state.divs[dkey]) return false;
-    if (!state.stats[item.status]) return false;
-    return true;
+    if (state.cats[item.category] === false) return false;
+    if (state.stats[item.status] === false) return false;
+    var ds = deptsOf(item);
+    if (!ds.length) return state.depts[NO_DEPT] !== false;
+    // An event involving several departments shows while any one of them is on.
+    return ds.some(function (k) { return state.depts[k] !== false; });
   }
 
   function visible() { return state.items.filter(passes); }
 
-  // Items covering a given day, sorted so all-day entries sit above timed ones.
   function itemsOn(dateStr, pool) {
     return (pool || visible())
       .filter(function (it) { return it.start_date <= dateStr && it.end_date >= dateStr; })
@@ -140,7 +179,15 @@
 
   function periodLabel() {
     var c = state.cursor;
-    if (state.view === 'day') return DOW_LONG[c.getDay()] + ', ' + MONTHS[c.getMonth()] + ' ' + c.getDate();
+    if (state.view === 'day') {
+      var r = retailWeek(ymd(c));
+      return DOW_LONG[c.getDay()] + ', ' + MONTHS[c.getMonth()] + ' ' + c.getDate()
+        + (r ? '  ·  Wk ' + r.week : '');
+    }
+    if (state.view === 'week') {
+      var w = retailWeek(ymd(c));
+      return w ? 'Week ' + w.week + '  ·  ' + weekRangeLabel(w) : '';
+    }
     if (state.view === 'year') return String(c.getFullYear());
     if (state.view === 'agenda') return 'Next 6 months';
     return MONTHS[c.getMonth()] + ' ' + c.getFullYear();
@@ -148,76 +195,103 @@
 
   // ── filter sidebar ─────────────────────────────────────────────────────
 
-  function countsBy() {
-    var byCat = {}, byType = {}, byDiv = {};
+  function counts() {
+    var byCat = {}, byDept = {}, byStat = {};
     state.items.forEach(function (it) {
       byCat[it.category] = (byCat[it.category] || 0) + 1;
-      if (it.type) {
-        var k = it.category + '::' + it.type;
-        byType[k] = (byType[k] || 0) + 1;
-      }
-      var d = it.division || UNASSIGNED;
-      byDiv[d] = (byDiv[d] || 0) + 1;
+      byStat[it.status] = (byStat[it.status] || 0) + 1;
+      var ds = deptsOf(it);
+      if (!ds.length) byDept[NO_DEPT] = (byDept[NO_DEPT] || 0) + 1;
+      ds.forEach(function (k) { byDept[k] = (byDept[k] || 0) + 1; });
     });
-    return { byCat: byCat, byType: byType, byDiv: byDiv };
+    return { byCat: byCat, byDept: byDept, byStat: byStat };
+  }
+
+  function checkRow(attr, key, label, color, count, on) {
+    return '<label class="flt-row"><input type="checkbox" data-' + attr + '="' + esc(key) + '"'
+      + (on === false ? '' : ' checked') + '>'
+      + (color ? '<i class="dot" style="background:' + color + '"></i>' : '')
+      + '<span>' + esc(label) + '</span>'
+      + (count == null ? '' : '<span class="count">' + count + '</span>') + '</label>';
   }
 
   function renderFilters() {
     if (!state.tax) return;
-    var n = countsBy();
+    var n = counts();
 
     $('#catTree').innerHTML = state.tax.categories.map(function (c) {
-      var st = state.cats[c.key];
-      var used = c.types.filter(function (t) { return n.byType[c.key + '::' + t]; });
-      var rows = used.map(function (t) {
-        return '<label><input type="checkbox" data-cat="' + esc(c.key) + '" data-type="' + esc(t) + '"'
-          + (st.types[t] === false ? '' : ' checked') + '>'
-          + '<span>' + esc(t) + '</span>'
-          + '<span class="count">' + n.byType[c.key + '::' + t] + '</span></label>';
-      }).join('');
-      return '<div class="flt-group">'
-        + '<div class="flt-head">'
-        + '<label><input type="checkbox" data-cat="' + esc(c.key) + '"' + (st.on ? ' checked' : '') + '>'
-        + '<i class="dot" style="background:' + c.color + '"></i>'
-        + '<span class="name">' + esc(c.label) + '</span></label>'
-        + '<span class="count">' + (n.byCat[c.key] || 0) + '</span>'
-        + (rows ? '<button class="flt-toggle" data-expand="' + esc(c.key) + '" aria-expanded="false" aria-label="Show types">&#9656;</button>' : '')
-        + '</div>'
-        + (rows ? '<div class="flt-types" id="types-' + esc(c.key) + '">' + rows + '</div>' : '')
-        + '</div>';
+      return checkRow('cat', c.key, c.label, c.color, n.byCat[c.key] || 0, state.cats[c.key]);
     }).join('');
 
-    var divKeys = state.tax.divisions.map(function (d) { return d.key; });
-    if (n.byDiv[UNASSIGNED]) divKeys.push(UNASSIGNED);
-    $('#divTree').innerHTML = divKeys.map(function (k) {
-      var d = divOf(k);
-      var label = d ? d.label : 'No division';
-      var color = d ? d.color : '#8A8F98';
-      return '<label class="flt-row"><input type="checkbox" data-div="' + esc(k) + '"'
-        + (state.divs[k] === false ? '' : ' checked') + '>'
-        + '<i class="dot" style="background:' + color + '"></i>'
-        + '<span>' + esc(label) + '</span>'
-        + '<span class="count">' + (n.byDiv[k] || 0) + '</span></label>';
-    }).join('');
+    var rows = state.tax.departments.map(function (d) {
+      return checkRow('dept', d.key, d.label, d.color, n.byDept[d.key] || 0, state.depts[d.key]);
+    });
+    if (n.byDept[NO_DEPT]) {
+      rows.push(checkRow('dept', NO_DEPT, 'None set', '#8A8F98', n.byDept[NO_DEPT], state.depts[NO_DEPT]));
+    }
+    $('#deptTree').innerHTML = rows.join('');
 
     $('#statTree').innerHTML = state.tax.statuses.map(function (s) {
-      return '<label class="flt-row"><input type="checkbox" data-stat="' + esc(s) + '"'
-        + (state.stats[s] ? ' checked' : '') + '>'
-        + '<span>' + esc(s) + '</span></label>';
+      return checkRow('stat', s, s, s === 'Booked' ? '#2F7A5C' : '#C6803B',
+                      n.byStat[s] || 0, state.stats[s]);
     }).join('');
   }
 
   // ── views ──────────────────────────────────────────────────────────────
 
+  function deptDots(it) {
+    var ds = deptsOf(it);
+    if (ds.length < 2) return '';
+    return '<span class="chip-depts">' + ds.slice(0, 4).map(function (k) {
+      var d = deptOf(k);
+      return '<i style="background:' + (d ? d.color : '#8A8F98') + '"></i>';
+    }).join('') + '</span>';
+  }
+
   function chipHtml(it, dateStr) {
-    var cls = 'chip' + (it.status === 'Tentative' ? ' tentative' : '')
-      + (it.status === 'Cancelled' ? ' cancelled' : '');
+    var cls = 'chip' + (it.status === 'Pending' ? ' pending' : '');
     var cont = it.start_date < dateStr ? '→ ' : '';
     var time = (!it.all_day && it.start_time && it.start_date === dateStr)
       ? '<span class="t">' + esc(hhmm(it.start_time)) + '</span>' : '';
+    var tip = it.title + ' — ' + (deptLabels(it).join(', ') || 'no Event Type')
+      + ' · ' + it.status + (it.venue ? ' · ' + it.venue : '');
     return '<div class="' + cls + '" style="--chip:' + colorFor(it) + '" data-id="' + esc(it.id) + '" '
-      + 'title="' + esc(it.title + ' — ' + labelFor(it)) + '">'
-      + time + '<span class="n">' + esc(cont + it.title) + '</span></div>';
+      + 'title="' + esc(tip) + '">'
+      + time + '<span class="n">' + esc(cont + it.title) + '</span>' + deptDots(it) + '</div>';
+  }
+
+  function placeLabel(it) {
+    var cityState = [it.city, it.state].filter(Boolean).join(', ');
+    return [it.venue, cityState].filter(Boolean).join(' · ');
+  }
+
+  function spanLabel(it) {
+    var s = fromYmd(it.start_date), e = fromYmd(it.end_date);
+    var days = Math.round((e - s) / DAY_MS) + 1;
+    return MONTHS[s.getMonth()].slice(0, 3) + ' ' + s.getDate() + ' – '
+      + MONTHS[e.getMonth()].slice(0, 3) + ' ' + e.getDate() + ' (' + days + ' days)';
+  }
+
+  // One row renderer for the day, week and agenda views.
+  function rowHtml(it) {
+    var when = it.all_day ? 'All day'
+      : hhmm(it.start_time) + (it.end_time ? '–' + hhmm(it.end_time) : '');
+    var meta = [];
+    var dl = deptLabels(it);
+    if (dl.length) meta.push(dl.join(' + '));
+    if (it.status !== 'Booked') meta.push(it.status);
+    if (it.start_date !== it.end_date) meta.push(spanLabel(it));
+    var where = placeLabel(it);
+    if (where) meta.push(where);
+    return '<div class="day-item" style="--chip:' + colorFor(it) + '" data-id="' + esc(it.id) + '">'
+      + '<div class="day-when">' + esc(when) + '</div>'
+      + '<div><div class="day-title">' + esc(it.title) + '</div>'
+      + '<div class="day-meta">' + meta.map(function (m) { return '<span>' + esc(m) + '</span>'; }).join('')
+      + '</div></div></div>';
+  }
+
+  function emptyHtml(head, body) {
+    return '<div class="cal-empty"><strong>' + head + '</strong>' + body + '</div>';
   }
 
   function renderMonth() {
@@ -244,44 +318,42 @@
     return head + '<div class="mo-grid">' + cells + '</div>';
   }
 
-  function spanLabel(it) {
-    var s = fromYmd(it.start_date);
-    var e = fromYmd(it.end_date);
-    var days = Math.round((e - s) / 86400000) + 1;
-    return MONTHS[s.getMonth()].slice(0, 3) + ' ' + s.getDate() + ' \u2013 '
-      + MONTHS[e.getMonth()].slice(0, 3) + ' ' + e.getDate() + ' (' + days + ' days)';
-  }
-
-  // One row renderer for the day view and the agenda. The agenda used to reuse
-  // the month chip, which is a single line with nowhere to put the category,
-  // division or location -- so its rows read as empty colour bars.
-  function rowHtml(it) {
-    var when = it.all_day ? 'All day'
-      : hhmm(it.start_time) + (it.end_time ? '\u2013' + hhmm(it.end_time) : '');
-    var meta = [labelFor(it)];
-    var d = divOf(it.division); if (d) meta.push(d.label);
-    if (it.start_date !== it.end_date) meta.push(spanLabel(it));
-    if (it.location) meta.push(it.location);
-    if (it.owner) meta.push(it.owner);
-    if (it.status !== 'Confirmed') meta.push(it.status);
-    var cls = 'day-item' + (it.status === 'Cancelled' ? ' cancelled' : '');
-    return '<div class="' + cls + '" style="--chip:' + colorFor(it) + '" data-id="' + esc(it.id) + '">'
-      + '<div class="day-when">' + esc(when) + '</div>'
-      + '<div><div class="day-title">' + esc(it.title) + '</div>'
-      + '<div class="day-meta">' + meta.map(function (m) { return '<span>' + esc(m) + '</span>'; }).join('')
-      + '</div></div></div>';
-  }
-
   function renderDay() {
     var ds = ymd(state.cursor);
     var on = itemsOn(ds);
     if (!on.length) {
-      return '<div class="cal-empty"><strong>Nothing scheduled</strong>'
-        + 'No calendar items on this day match the current filters.</div>';
+      return emptyHtml('Nothing scheduled', 'No calendar items on this day match the current filters.');
     }
     return '<div class="day-wrap"><div class="day-sub">' + on.length
       + (on.length === 1 ? ' item' : ' items') + '</div><div class="day-list">'
       + on.map(rowHtml).join('') + '</div></div>';
+  }
+
+  // Retail weeks run Sunday to Saturday and are how the business plans, so they
+  // get a view of their own rather than only a label.
+  function renderWeek() {
+    var r = retailWeek(ymd(state.cursor));
+    if (!r) return emptyHtml('No week', '');
+    var pool = visible();
+    var today = todayYmd();
+    var total = 0;
+    var days = '';
+    for (var i = 0; i < 7; i++) {
+      var day = addDays(fromYmd(r.start), i);
+      var ds = ymd(day);
+      var on = itemsOn(ds, pool);
+      total += on.length;
+      days += '<div class="wk-day' + (ds === today ? ' is-today' : '') + '">'
+        + '<div class="wk-date" data-day="' + ds + '"><span class="d">' + day.getDate() + '</span>'
+        + DOW[day.getDay()] + ' · ' + MONTHS[day.getMonth()].slice(0, 3) + '</div>'
+        + '<div class="wk-items">'
+        + (on.length ? on.map(rowHtml).join('')
+                     : '<div class="wk-none">—</div>')
+        + '</div></div>';
+    }
+    return '<div class="wk-wrap"><div class="day-sub">Retail week ' + r.week + ' of ' + r.year
+      + ' · ' + weekRangeLabel(r) + ' · ' + total
+      + (total === 1 ? ' item' : ' items') + '</div>' + days + '</div>';
   }
 
   function renderYear() {
@@ -324,18 +396,17 @@
     var to = ymd(addMonths(state.cursor, 6));
     var pool = visible().filter(function (it) { return it.end_date >= from && it.start_date <= to; });
     if (!pool.length) {
-      return '<div class="cal-empty"><strong>Nothing coming up</strong>'
-        + 'No items in the next six months match the current filters.</div>';
+      return emptyHtml('Nothing coming up', 'No items in the next six months match the current filters.');
     }
-    // Group by the day each item starts, but surface anything already running.
     var byDay = {};
     pool.forEach(function (it) {
       var key = it.start_date < from ? from : it.start_date;
       (byDay[key] = byDay[key] || []).push(it);
     });
     var today = todayYmd();
-    var rows = Object.keys(byDay).sort().map(function (ds) {
+    return '<div class="ag-wrap">' + Object.keys(byDay).sort().map(function (ds) {
       var d = fromYmd(ds);
+      var r = retailWeek(ds);
       var items = byDay[ds].sort(function (a, b) {
         if (a.all_day !== b.all_day) return b.all_day - a.all_day;
         return (a.start_time || '').localeCompare(b.start_time || '');
@@ -343,11 +414,9 @@
       return '<div class="ag-day"><div class="ag-date' + (ds === today ? ' is-today' : '') + '">'
         + '<span class="d">' + d.getDate() + '</span>'
         + DOW[d.getDay()] + ' · ' + MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getFullYear()
-        + '</div><div class="ag-items">'
-        + items.map(rowHtml).join('')
-        + '</div></div>';
-    }).join('');
-    return '<div class="ag-wrap">' + rows + '</div>';
+        + (r ? '<span class="wk">Wk ' + r.week + '</span>' : '')
+        + '</div><div class="ag-items">' + items.map(rowHtml).join('') + '</div></div>';
+    }).join('') + '</div>';
   }
 
   function render() {
@@ -355,11 +424,13 @@
     Array.prototype.forEach.call($('#views').children, function (b) {
       b.setAttribute('aria-pressed', b.dataset.view === state.view ? 'true' : 'false');
     });
-    var html = state.view === 'day' ? renderDay()
+    var r = retailWeek(ymd(state.cursor));
+    if (r && $('#wkNum') !== document.activeElement) $('#wkNum').value = r.week;
+    $('#view').innerHTML = state.view === 'day' ? renderDay()
+      : state.view === 'week' ? renderWeek()
       : state.view === 'year' ? renderYear()
       : state.view === 'agenda' ? renderAgenda()
       : renderMonth();
-    $('#view').innerHTML = html;
   }
 
   function renderAll() { renderFilters(); render(); }
@@ -375,35 +446,41 @@
   function closeModal() { $('#modal').hidden = true; }
 
   function whenText(it) {
-    var s = fromYmd(it.start_date);
-    var e = fromYmd(it.end_date);
-    var one = it.start_date === it.end_date;
-    var fmt = function (d) { return DOW_LONG[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear(); };
-    if (one) {
-      return fmt(s) + (it.all_day ? '' : ' · ' + hhmm(it.start_time)
-        + (it.end_time ? '–' + hhmm(it.end_time) : ''));
-    }
-    var days = Math.round((e - s) / 86400000) + 1;
-    return fmt(s) + ' – ' + fmt(e) + ' · ' + days + ' days';
+    var s = fromYmd(it.start_date), e = fromYmd(it.end_date);
+    var fmt = function (d) {
+      return DOW_LONG[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+    };
+    var times = it.all_day ? '' : ' · ' + hhmm(it.start_time)
+      + (it.end_time ? '–' + hhmm(it.end_time) : '');
+    if (it.start_date === it.end_date) return fmt(s) + times;
+    return fmt(s) + ' – ' + fmt(e) + ' · '
+      + (Math.round((e - s) / DAY_MS) + 1) + ' days' + times;
   }
 
   function showDetail(id) {
     var it = state.items.filter(function (x) { return x.id === id; })[0];
     if (!it) return;
     var c = catOf(it.category);
-    var d = divOf(it.division);
+    var r = it.retail || retailWeek(it.start_date);
     var rows = '';
     var add = function (k, v) { if (v) rows += '<dt>' + k + '</dt><dd>' + v + '</dd>'; };
-    add('Type', esc(it.type || ''));
-    add('Division', d ? esc(d.label) : '');
-    add('Location', esc(it.location || ''));
-    add('Owner', esc(it.owner || ''));
-    if (it.status !== 'Confirmed') add('Status', esc(it.status));
+
+    add('Event Type', esc(deptLabels(it).join(', ')));
+    add('Status', '<span class="pill ' + (it.status === 'Booked' ? 'ok' : 'warn') + '">'
+      + esc(it.status) + '</span>');
+    if (r) add('Retail week', 'Week ' + r.week + ' of ' + r.year + ' <span class="muted">('
+      + esc(weekRangeLabel(r)) + ')</span>');
+
+    var addr = [it.address, [it.city, it.state].filter(Boolean).join(', '), it.zip]
+      .filter(Boolean).join('<br>');
+    add('Venue', esc(it.venue || ''));
+    add('Address', addr);
     add('Link', it.url ? '<a href="' + esc(it.url) + '" target="_blank" rel="noopener">' + esc(it.url) + '</a>' : '');
     add('Notes', it.notes ? '<span class="det-notes">' + esc(it.notes) + '</span>' : '');
 
     var stamp = '';
-    if (it.created_by) stamp += 'Added by ' + esc(it.created_by) + (it.created_at ? ' on ' + esc(it.created_at.slice(0, 10)) : '');
+    if (it.created_by) stamp += 'Added by ' + esc(it.created_by)
+      + (it.created_at ? ' on ' + esc(it.created_at.slice(0, 10)) : '');
     if (it.updated_at && it.updated_at !== it.created_at) {
       stamp += '<br>Last edited by ' + esc(it.updated_by || '') + ' on ' + esc(it.updated_at.slice(0, 10));
     }
@@ -422,103 +499,127 @@
         + '<button class="cal-btn primary" data-act="edit" data-id="' + esc(it.id) + '">Edit</button>'
       : '<div class="grow"></div><button class="cal-btn" data-act="close">Close</button>';
 
-    openModal('Calendar item', body, foot);
+    openModal('Event', body, foot);
   }
 
-  function typeOptions(catKey, selected) {
-    var c = catOf(catKey);
-    if (!c) return '<option value="">—</option>';
-    return '<option value="">— none —</option>' + c.types.map(function (t) {
-      return '<option value="' + esc(t) + '"' + (t === selected ? ' selected' : '') + '>' + esc(t) + '</option>';
-    }).join('');
-  }
+  // ── add / edit form ────────────────────────────────────────────────────
 
   function showForm(existing, defaultDate) {
     var it = existing || {
-      title: '', category: state.tax.categories[0].key, type: '', division: '',
-      start_date: defaultDate || todayYmd(), end_date: defaultDate || todayYmd(),
-      all_day: 1, start_time: '', end_time: '', location: '', owner: '',
-      status: 'Confirmed', notes: '', url: '',
+      title: '', category: state.tax.categories[0].key, departments: '',
+      status: 'Pending', start_date: defaultDate || todayYmd(), end_date: defaultDate || todayYmd(),
+      all_day: 1, start_time: '', end_time: '',
+      venue: '', address: '', city: '', state: '', zip: '', notes: '', url: '',
     };
+    var chosen = deptsOf(it);
     var timed = !it.all_day;
 
     var body = ''
       + '<div class="form-err" id="formErr" hidden></div>'
-      + '<div class="fld"><label for="f-title">Title</label>'
-      + '<input type="text" id="f-title" value="' + esc(it.title) + '" maxlength="200" placeholder="What is it?"></div>'
+      + '<div class="fld"><label for="f-title">Event name</label>'
+      + '<input type="text" id="f-title" value="' + esc(it.title) + '" maxlength="200"></div>'
 
       + '<div class="fld-row">'
-      + '<div class="fld"><label for="f-cat">Category</label><select id="f-cat">'
+      + '<div class="fld"><label for="f-cat">Type</label><select id="f-cat">'
       + state.tax.categories.map(function (c) {
-          return '<option value="' + esc(c.key) + '"' + (c.key === it.category ? ' selected' : '') + '>' + esc(c.label) + '</option>';
-        }).join('')
-      + '</select></div>'
-      + '<div class="fld"><label for="f-type">Type</label><select id="f-type">'
-      + typeOptions(it.category, it.type) + '</select></div>'
-      + '</div>'
-
-      + '<div class="fld-row">'
-      + '<div class="fld"><label for="f-div">Division</label><select id="f-div">'
-      + '<option value="">— none —</option>'
-      + state.tax.divisions.map(function (d) {
-          return '<option value="' + esc(d.key) + '"' + (d.key === it.division ? ' selected' : '') + '>' + esc(d.label) + '</option>';
+          return '<option value="' + esc(c.key) + '"' + (c.key === it.category ? ' selected' : '') + '>'
+            + esc(c.label) + '</option>';
         }).join('')
       + '</select></div>'
       + '<div class="fld"><label for="f-status">Status</label><select id="f-status">'
       + state.tax.statuses.map(function (s) {
-          return '<option value="' + esc(s) + '"' + (s === it.status ? ' selected' : '') + '>' + esc(s) + '</option>';
+          return '<option value="' + esc(s) + '"' + (s === it.status ? ' selected' : '') + '>'
+            + esc(s) + '</option>';
         }).join('')
       + '</select></div>'
       + '</div>'
 
+      + '<div class="fld"><label>Event Type <span class="lbl-note">which departments have a role</span></label>'
+      + '<div class="chk-grid">'
+      + state.tax.departments.map(function (d) {
+          return '<label class="fld-inline"><input type="checkbox" class="f-dept" value="' + esc(d.key) + '"'
+            + (chosen.indexOf(d.key) >= 0 ? ' checked' : '') + '>'
+            + '<i class="dot" style="background:' + d.color + '"></i>' + esc(d.label) + '</label>';
+        }).join('')
+      + '</div></div>'
+
       + '<div class="fld-row">'
-      + '<div class="fld"><label for="f-start">Starts</label><input type="date" id="f-start" value="' + esc(it.start_date) + '"></div>'
-      + '<div class="fld"><label for="f-end">Ends</label><input type="date" id="f-end" value="' + esc(it.end_date) + '">'
-      + '<div class="hint">Same as the start date for a one-day item.</div></div>'
+      + '<div class="fld"><label for="f-start">Starts</label>'
+      + '<input type="date" id="f-start" value="' + esc(it.start_date) + '"></div>'
+      + '<div class="fld"><label for="f-end">Ends</label>'
+      + '<input type="date" id="f-end" value="' + esc(it.end_date) + '">'
+      + '<div class="hint">Same as the start date for a one-day event.</div></div>'
       + '</div>'
+
+      + '<div class="fld"><div class="retail-readout" id="retailOut"></div></div>'
 
       + '<div class="fld"><label class="fld-inline"><input type="checkbox" id="f-allday"'
       + (timed ? '' : ' checked') + '> All day</label></div>'
 
       + '<div class="fld-row" id="timeRow"' + (timed ? '' : ' hidden') + '>'
-      + '<div class="fld"><label for="f-stime">Start time</label><input type="time" id="f-stime" value="' + esc(it.start_time || '') + '"></div>'
-      + '<div class="fld"><label for="f-etime">End time</label><input type="time" id="f-etime" value="' + esc(it.end_time || '') + '"></div>'
+      + '<div class="fld"><label for="f-stime">Start time</label>'
+      + '<input type="time" id="f-stime" value="' + esc(it.start_time || '') + '"></div>'
+      + '<div class="fld"><label for="f-etime">End time</label>'
+      + '<input type="time" id="f-etime" value="' + esc(it.end_time || '') + '"></div>'
       + '</div>'
 
-      + '<div class="fld-row">'
-      + '<div class="fld"><label for="f-loc">Location</label><input type="text" id="f-loc" value="' + esc(it.location || '') + '" maxlength="200"></div>'
-      + '<div class="fld"><label for="f-owner">Owner</label><input type="text" id="f-owner" value="' + esc(it.owner || '') + '" maxlength="120" placeholder="Person or department"></div>'
+      + '<div class="fld"><label for="f-venue">Venue</label>'
+      + '<input type="text" id="f-venue" value="' + esc(it.venue || '') + '" maxlength="200"></div>'
+      + '<div class="fld"><label for="f-address">Address</label>'
+      + '<input type="text" id="f-address" value="' + esc(it.address || '') + '" maxlength="200"></div>'
+      + '<div class="fld-row addr-row">'
+      + '<div class="fld"><label for="f-city">City</label>'
+      + '<input type="text" id="f-city" value="' + esc(it.city || '') + '" maxlength="120"></div>'
+      + '<div class="fld"><label for="f-state">State</label>'
+      + '<input type="text" id="f-state" value="' + esc(it.state || '') + '" maxlength="2" '
+      + 'style="text-transform:uppercase"></div>'
+      + '<div class="fld"><label for="f-zip">Zip</label>'
+      + '<input type="text" id="f-zip" value="' + esc(it.zip || '') + '" maxlength="10" inputmode="numeric"></div>'
       + '</div>'
 
-      + '<div class="fld"><label for="f-url">Link</label><input type="url" id="f-url" value="' + esc(it.url || '') + '" placeholder="https://"></div>'
-      + '<div class="fld"><label for="f-notes">Notes</label><textarea id="f-notes" maxlength="4000">' + esc(it.notes || '') + '</textarea></div>';
+      + '<div class="fld"><label for="f-url">Link</label>'
+      + '<input type="url" id="f-url" value="' + esc(it.url || '') + '" placeholder="https://"></div>'
+      + '<div class="fld"><label for="f-notes">Notes</label>'
+      + '<textarea id="f-notes" maxlength="4000">' + esc(it.notes || '') + '</textarea></div>';
 
     var foot = '<div class="grow"></div>'
       + '<button class="cal-btn" data-act="close">Cancel</button>'
-      + '<button class="cal-btn primary" data-act="save"' + (existing ? ' data-id="' + esc(existing.id) + '"' : '') + '>'
+      + '<button class="cal-btn primary" data-act="save"'
+      + (existing ? ' data-id="' + esc(existing.id) + '"' : '') + '>'
       + (existing ? 'Save changes' : 'Add to calendar') + '</button>';
 
-    openModal(existing ? 'Edit item' : 'Add calendar item', body, foot);
+    openModal(existing ? 'Edit event' : 'Add event', body, foot);
 
-    $('#f-cat').addEventListener('change', function () {
-      $('#f-type').innerHTML = typeOptions(this.value, '');
-    });
-    $('#f-allday').addEventListener('change', function () {
-      $('#timeRow').hidden = this.checked;
-    });
+    // Year / Week / Start (Week) / End (Week) / Month / Day are shown as they
+    // will be derived, so you can see the retail week without typing it.
+    function showRetail() {
+      var v = $('#f-start').value;
+      var r = v ? retailWeek(v) : null;
+      var d = v ? fromYmd(v) : null;
+      $('#retailOut').innerHTML = r
+        ? '<span class="rl">Retail</span> Week ' + r.week + ' of ' + r.year
+          + ' <span class="muted">(' + esc(weekRangeLabel(r)) + ')</span>'
+          + ' · ' + MONTHS[d.getMonth()].slice(0, 3).toUpperCase()
+          + ' · ' + DOW[d.getDay()].toUpperCase()
+        : '<span class="muted">Pick a start date to see its retail week.</span>';
+    }
+    showRetail();
+
+    $('#f-allday').addEventListener('change', function () { $('#timeRow').hidden = this.checked; });
+
     // Move the end date with the start date, keeping whatever span was already
     // set. Without this, picking a start date and leaving the end date on its
-    // default silently produces a multi-day item -- and nothing on the form
-    // says so, because the end field looks untouched.
+    // default silently produces a multi-day event.
     var lastStart = it.start_date;
     $('#f-start').addEventListener('change', function () {
       var end = $('#f-end');
       if (this.value && lastStart && end.value) {
-        var span = Math.round((fromYmd(end.value) - fromYmd(lastStart)) / 86400000);
+        var span = Math.round((fromYmd(end.value) - fromYmd(lastStart)) / DAY_MS);
         if (span >= 0) end.value = ymd(addDays(fromYmd(this.value), span));
       }
       if (end.value < this.value) end.value = this.value;
       lastStart = this.value;
+      showRetail();
     });
     $('#f-title').focus();
   }
@@ -528,16 +629,19 @@
     return {
       title: $('#f-title').value,
       category: $('#f-cat').value,
-      type: $('#f-type').value,
-      division: $('#f-div').value,
       status: $('#f-status').value,
+      departments: Array.prototype.map.call(
+        document.querySelectorAll('.f-dept:checked'), function (el) { return el.value; }),
       start_date: $('#f-start').value,
       end_date: $('#f-end').value || $('#f-start').value,
       all_day: allDay ? 1 : 0,
       start_time: allDay ? '' : $('#f-stime').value,
       end_time: allDay ? '' : $('#f-etime').value,
-      location: $('#f-loc').value,
-      owner: $('#f-owner').value,
+      venue: $('#f-venue').value,
+      address: $('#f-address').value,
+      city: $('#f-city').value,
+      state: $('#f-state').value,
+      zip: $('#f-zip').value,
       url: $('#f-url').value,
       notes: $('#f-notes').value,
     };
@@ -547,31 +651,33 @@
     var box = $('#formErr');
     if (!box) { alert(msg); return; }
     box.innerHTML = esc(msg)
-      + (list && list.length ? '<ul>' + list.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul>' : '');
+      + (list && list.length
+          ? '<ul>' + list.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul>'
+          : '');
     box.hidden = false;
     box.scrollIntoView({ block: 'nearest' });
   }
 
   function showImport() {
     var body = '<div class="form-err" id="formErr" hidden></div>'
-      + '<p style="font-family:var(--body);font-size:14px;line-height:1.6;margin:0 0 14px">'
-      + 'Paste rows straight out of a spreadsheet, saved as CSV. The first row must be the '
-      + 'column headers. Everything is checked before anything is written &mdash; if one row is '
-      + 'wrong, nothing is imported.</p>'
-      + '<div class="fld"><label>Recognised columns</label>'
-      + '<div class="sub-url">title, category, type, division, start date, end date, all day, '
-      + 'start time, end time, location, owner, status, notes, url</div>'
-      + '<div class="hint">Only <strong>title</strong>, <strong>category</strong> and '
-      + '<strong>start date</strong> are required. Dates are YYYY-MM-DD, times are HH:MM. '
-      + 'Category accepts either the label or the key &mdash; "Events" and "events" both work.</div></div>'
+      + '<p class="modal-lede">Paste rows straight out of the calendar spreadsheet, saved as CSV. '
+      + 'The first row must be the column headers. Everything is checked before anything is '
+      + 'written &mdash; if one row is wrong, nothing is imported.</p>'
+      + '<div class="fld"><label>Columns it recognises</label>'
+      + '<div class="sub-url">Name, Booked, Type, Event Type, Event \u{1F680}, Event \u{1F6D1}, '
+      + 'Start ⌚, End ⌚, Venue, Address, City, State, Zip, Notes, URL</div>'
+      + '<div class="hint">Only <strong>Name</strong>, <strong>Type</strong> and a '
+      + '<strong>start date</strong> are required. Year, Week, Start (Week), End (Week), Month and '
+      + 'Day are read if present and checked against the date, but not stored &mdash; the calendar '
+      + 'works them out. Dates are YYYY-MM-DD, times are HH:MM on a 24-hour clock.</div></div>'
       + '<div class="fld"><label for="f-csv">CSV</label>'
       + '<textarea id="f-csv" style="min-height:190px;font-family:var(--mono);font-size:12px" '
-      + 'placeholder="title,category,type,division,start date,end date&#10;'
-      + 'Rocking the Docks,events,Box Truck,brand,2026-09-12,2026-09-13"></textarea></div>';
+      + 'placeholder="Name,Booked,Type,Event Type,Event \u{1F680},Start ⌚,End ⌚,Venue,City,State&#10;'
+      + 'Rocking the Docks,checked,Event,Box Truck,2026-07-11,12:00,18:00,Dock Road,Beach Haven,NJ"></textarea></div>';
     var foot = '<div class="grow"></div>'
       + '<button class="cal-btn" data-act="close">Cancel</button>'
       + '<button class="cal-btn primary" data-act="import">Import</button>';
-    openModal('Import calendar items', body, foot);
+    openModal('Import events', body, foot);
     $('#f-csv').focus();
   }
 
@@ -579,20 +685,18 @@
     var url = state.me.feedUrl || '';
     var body;
     if (!url) {
-      body = '<p style="font-family:var(--body);font-size:14.5px;line-height:1.7;margin:0">'
-        + 'The calendar feed is not switched on yet. Set the <code>ICS_KEY</code> secret on the '
-        + 'Worker and add a Cloudflare Access bypass policy for <code>/calendar.ics</code>, and '
-        + 'this panel will hand out a subscribe link.</p>';
+      body = '<p class="modal-lede">The calendar feed is not switched on yet. Set the '
+        + '<code>ICS_KEY</code> secret on the Worker and add a Cloudflare Access bypass policy for '
+        + '<code>/calendar.ics</code>, and this panel will hand out a subscribe link.</p>';
     } else {
-      body = '<p style="font-family:var(--body);font-size:14.5px;line-height:1.7;margin:0 0 4px">'
-        + 'Add this calendar to Google Calendar and it shows up alongside your own. '
-        + 'Google refreshes subscribed calendars on its own schedule, so a new item can take '
-        + 'a few hours to appear there &mdash; this page is always current.</p>'
+      body = '<p class="modal-lede">Add this calendar to Google Calendar and it shows up alongside '
+        + 'your own. Google refreshes subscribed calendars on its own schedule, so a new event can '
+        + 'take a few hours to appear there &mdash; this page is always current.</p>'
         + '<div class="sub-url" id="feedUrl">' + esc(url) + '</div>'
         + '<ol class="sub-steps">'
         + '<li>Copy the link above.</li>'
-        + '<li>In Google Calendar, open <strong>Other calendars</strong> &rarr; '
-        + '<strong>+</strong> &rarr; <strong>From URL</strong>.</li>'
+        + '<li>In Google Calendar, open <strong>Other calendars</strong> &rarr; <strong>+</strong> '
+        + '&rarr; <strong>From URL</strong>.</li>'
         + '<li>Paste the link and choose <strong>Add calendar</strong>.</li>'
         + '</ol>'
         + '<p class="hint">Treat the link like a password &mdash; anyone who has it can read the '
@@ -632,8 +736,8 @@
   function shift(dir) {
     var c = state.cursor;
     if (state.view === 'day') state.cursor = addDays(c, dir);
+    else if (state.view === 'week') state.cursor = addDays(c, 7 * dir);
     else if (state.view === 'year') state.cursor = new Date(c.getFullYear() + dir, c.getMonth(), 1);
-    else if (state.view === 'agenda') state.cursor = addMonths(c, dir);
     else state.cursor = addMonths(c, dir);
     render();
   }
@@ -651,45 +755,39 @@
     $('#colorBy').addEventListener('change', function () { state.colorBy = this.value; render(); });
     $('#subscribe').addEventListener('click', showSubscribe);
     $('#addBtn').addEventListener('click', function () {
-      showForm(null, state.view === 'day' ? ymd(state.cursor) : null);
+      showForm(null, (state.view === 'day' || state.view === 'week') ? ymd(state.cursor) : null);
     });
     $('#importBtn').addEventListener('click', showImport);
 
-    // Filters
-    document.querySelector('.cal-side').addEventListener('change', function (e) {
+    // Jump straight to a retail week -- the number people actually quote.
+    function jumpWeek() {
+      var wk = Number($('#wkNum').value);
+      if (!wk || wk < 1 || wk > 53) return;
+      var cur = retailWeek(ymd(state.cursor));
+      var d = retailWeekStart(cur ? cur.year : state.tax.retailEpochYear, wk);
+      if (d) { state.cursor = d; setView('week'); }
+    }
+    $('#wkNum').addEventListener('change', jumpWeek);
+    $('#wkNum').addEventListener('keydown', function (e) { if (e.key === 'Enter') jumpWeek(); });
+
+    var side = document.querySelector('.cal-side');
+    side.addEventListener('change', function (e) {
       var el = e.target;
-      if (el.dataset.type) {
-        state.cats[el.dataset.cat].types[el.dataset.type] = el.checked;
-      } else if (el.dataset.cat) {
-        state.cats[el.dataset.cat].on = el.checked;
-      } else if (el.dataset.div) {
-        state.divs[el.dataset.div] = el.checked;
-      } else if (el.dataset.stat) {
-        state.stats[el.dataset.stat] = el.checked;
-      } else return;
+      if (el.dataset.cat) state.cats[el.dataset.cat] = el.checked;
+      else if (el.dataset.dept) state.depts[el.dataset.dept] = el.checked;
+      else if (el.dataset.stat) state.stats[el.dataset.stat] = el.checked;
+      else return;
       render();
     });
-    document.querySelector('.cal-side').addEventListener('click', function (e) {
-      var t = e.target.closest('.flt-toggle');
-      if (t) {
-        var panel = document.getElementById('types-' + t.dataset.expand);
-        var open = panel.classList.toggle('open');
-        t.setAttribute('aria-expanded', open ? 'true' : 'false');
-      }
-    });
-    $('#catAll').addEventListener('click', function () {
-      Object.keys(state.cats).forEach(function (k) {
-        state.cats[k].on = true;
-        Object.keys(state.cats[k].types).forEach(function (t) { state.cats[k].types[t] = true; });
-      });
+    $('#deptAll').addEventListener('click', function () {
+      Object.keys(state.depts).forEach(function (k) { state.depts[k] = true; });
       renderAll();
     });
-    $('#catNone').addEventListener('click', function () {
-      Object.keys(state.cats).forEach(function (k) { state.cats[k].on = false; });
+    $('#deptNone').addEventListener('click', function () {
+      Object.keys(state.depts).forEach(function (k) { state.depts[k] = false; });
       renderAll();
     });
 
-    // Clicks inside the calendar surface
     $('#view').addEventListener('click', function (e) {
       var chip = e.target.closest('[data-id]');
       if (chip) { showDetail(chip.dataset.id); return; }
@@ -710,7 +808,6 @@
       }
     });
 
-    // Modal actions
     $('#modalX').addEventListener('click', closeModal);
     $('#modal').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
@@ -723,8 +820,7 @@
       if (act === 'close') return closeModal();
 
       if (act === 'copy') {
-        var url = state.me.feedUrl || '';
-        navigator.clipboard.writeText(url).then(function () {
+        navigator.clipboard.writeText(state.me.feedUrl || '').then(function () {
           b.textContent = 'Copied';
           setTimeout(function () { b.textContent = 'Copy link'; }, 1600);
         });
@@ -749,12 +845,11 @@
       }
 
       if (act === 'save') {
-        var payload = readForm();
         b.disabled = true;
         var id = b.dataset.id;
         api(id ? '/api/items/' + id : '/api/items', {
           method: id ? 'PATCH' : 'POST',
-          body: JSON.stringify(payload),
+          body: JSON.stringify(readForm()),
         }).then(function () {
           closeModal();
           return loadItems();
@@ -773,7 +868,14 @@
           .then(function (r) {
             closeModal();
             return loadItems().then(function () {
-              alert('Imported ' + r.imported + (r.imported === 1 ? ' item.' : ' items.'));
+              var msg = 'Imported ' + r.imported + (r.imported === 1 ? ' event.' : ' events.');
+              if (r.warnings && r.warnings.length) {
+                msg += '\n\nThe sheet disagrees with itself on ' + r.warnings.length
+                  + (r.warnings.length === 1 ? ' row' : ' rows')
+                  + '. The events are in; these columns were ignored:\n\n'
+                  + r.warnings.slice(0, 12).join('\n');
+              }
+              alert(msg);
             });
           })
           .catch(function (err) { b.disabled = false; formError(err.message, err.problems); });
@@ -784,13 +886,10 @@
   // ── boot ───────────────────────────────────────────────────────────────
 
   function initFilters() {
-    state.tax.categories.forEach(function (c) {
-      var types = {};
-      c.types.forEach(function (t) { types[t] = true; });
-      state.cats[c.key] = { on: true, types: types };
-    });
-    state.tax.divisions.forEach(function (d) { state.divs[d.key] = true; });
-    state.divs[UNASSIGNED] = true;
+    state.tax.categories.forEach(function (c) { state.cats[c.key] = true; });
+    state.tax.departments.forEach(function (d) { state.depts[d.key] = true; });
+    state.depts[NO_DEPT] = true;
+    state.tax.statuses.forEach(function (s) { state.stats[s] = true; });
   }
 
   Promise.all([api('/api/taxonomy'), api('/api/me').catch(function () { return {}; })])
@@ -808,7 +907,6 @@
       return loadItems();
     })
     .catch(function (err) {
-      $('#view').innerHTML = '<div class="cal-empty"><strong>The calendar could not load</strong>'
-        + esc(err.message) + '</div>';
+      $('#view').innerHTML = emptyHtml('The calendar could not load', esc(err.message));
     });
 })();

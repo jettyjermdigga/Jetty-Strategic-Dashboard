@@ -10,7 +10,8 @@
 
 import { identify } from './access.js';
 import { buildIcs } from './ics.js';
-import { TAXONOMY, CATEGORY_KEYS, DIVISION_KEYS, STATUSES, categoryByKey } from './taxonomy.js';
+import { TAXONOMY, CATEGORY_KEYS, DEPARTMENT_KEYS, STATUSES, CATEGORIES, DEPARTMENTS } from './taxonomy.js';
+import { retailWeek, retailWeekStart } from './retail.js';
 import SCHEMA from './schema.sql';
 
 // Shown instead of the calendar when a request arrives with no Cloudflare
@@ -74,40 +75,50 @@ function normalise(input, existing) {
   const base = existing || {};
   const out = {};
   const errors = [];
+  const pick = (k) => (input[k] != null ? input[k] : base[k]);
 
-  out.title = clean(input.title != null ? input.title : base.title, 200);
-  if (!out.title) errors.push('Title is required.');
+  out.title = clean(pick('title'), 200);
+  if (!out.title) errors.push('Event name is required.');
 
-  out.category = clean(input.category != null ? input.category : base.category, 40);
-  if (!out.category || !CATEGORY_KEYS.includes(out.category)) {
-    errors.push('Category must be one of: ' + CATEGORY_KEYS.join(', ') + '.');
+  out.category = clean(pick('category'), 60) || CATEGORY_KEYS[0];
+  if (!CATEGORY_KEYS.includes(out.category)) {
+    errors.push('Type must be one of: ' + CATEGORY_KEYS.join(', ') + '.');
   }
 
-  out.type = clean(input.type != null ? input.type : base.type, 60);
-  const cat = categoryByKey(out.category);
-  if (out.type && cat && !cat.types.includes(out.type)) {
-    errors.push('"' + out.type + '" is not a type under ' + cat.label + '.');
+  // Event Type is multi-valued -- an event can involve Box Truck and JRF at once.
+  const rawDepts = pick('departments');
+  const deptList = Array.isArray(rawDepts)
+    ? rawDepts
+    : String(rawDepts == null ? '' : rawDepts).split(',');
+  const depts = [];
+  for (const d of deptList) {
+    const key = clean(d, 40);
+    if (!key) continue;
+    if (!DEPARTMENT_KEYS.includes(key)) {
+      errors.push('Unknown Event Type "' + key + '".');
+    } else if (!depts.includes(key)) {
+      depts.push(key);
+    }
   }
+  out.departments = depts.length ? depts.join(',') : null;
 
-  out.division = clean(input.division != null ? input.division : base.division, 40);
-  if (out.division && !DIVISION_KEYS.includes(out.division)) {
-    errors.push('Unknown division "' + out.division + '".');
-  }
+  out.status = clean(pick('status'), 20) || 'Pending';
+  if (!STATUSES.includes(out.status)) errors.push('Status must be Booked or Pending.');
 
-  out.start_date = clean(input.start_date != null ? input.start_date : base.start_date, 10);
+  out.start_date = clean(pick('start_date'), 10);
   if (!out.start_date || !DATE_RE.test(out.start_date)) errors.push('Start date must be YYYY-MM-DD.');
 
-  out.end_date = clean(input.end_date != null ? input.end_date : base.end_date, 10) || out.start_date;
+  out.end_date = clean(pick('end_date'), 10) || out.start_date;
   if (!out.end_date || !DATE_RE.test(out.end_date)) errors.push('End date must be YYYY-MM-DD.');
   if (out.start_date && out.end_date && out.end_date < out.start_date) {
     errors.push('End date is before the start date.');
   }
 
-  const allDayRaw = input.all_day != null ? input.all_day : base.all_day;
+  const allDayRaw = pick('all_day');
   out.all_day = (allDayRaw === false || allDayRaw === 0 || allDayRaw === '0' || allDayRaw === 'false') ? 0 : 1;
 
-  out.start_time = clean(input.start_time != null ? input.start_time : base.start_time, 5);
-  out.end_time = clean(input.end_time != null ? input.end_time : base.end_time, 5);
+  out.start_time = clean(pick('start_time'), 5);
+  out.end_time = clean(pick('end_time'), 5);
   if (out.all_day) {
     out.start_time = null;
     out.end_time = null;
@@ -115,28 +126,42 @@ function normalise(input, existing) {
     if (!out.start_time || !TIME_RE.test(out.start_time)) errors.push('Start time must be HH:MM.');
     if (out.end_time && !TIME_RE.test(out.end_time)) errors.push('End time must be HH:MM.');
     if (out.start_time && out.end_time
-        && out.start_date === out.end_date && out.end_time < out.start_time) {
-      errors.push('End time is before the start time.');
+        && out.start_date === out.end_date && out.end_time <= out.start_time) {
+      errors.push('End time is not after the start time.');
     }
   }
 
-  out.location = clean(input.location != null ? input.location : base.location, 200);
-  out.owner = clean(input.owner != null ? input.owner : base.owner, 120);
+  out.venue = clean(pick('venue'), 200);
+  out.address = clean(pick('address'), 200);
+  out.city = clean(pick('city'), 120);
 
-  out.status = clean(input.status != null ? input.status : base.status, 20) || 'Confirmed';
-  if (!STATUSES.includes(out.status)) errors.push('Unknown status "' + out.status + '".');
+  const st = clean(pick('state'), 2);
+  out.state = st ? st.toUpperCase() : null;
+  if (out.state && !/^[A-Z]{2}$/.test(out.state)) errors.push('State must be a two-letter code.');
 
-  out.notes = clean(input.notes != null ? input.notes : base.notes, 4000);
-  out.url = clean(input.url != null ? input.url : base.url, 500);
+  // Spreadsheets store zips as numbers, which eats the leading zero on every
+  // NJ code -- 08260 comes back as 8260. Pad rather than reject.
+  const zip = clean(pick('zip'), 10);
+  out.zip = zip ? (/^\d{1,5}$/.test(zip) ? zip.padStart(5, '0') : zip) : null;
+  if (out.zip && !/^\d{5}(-\d{4})?$/.test(out.zip)) errors.push('Zip must be 5 digits.');
+
+  out.notes = clean(pick('notes'), 4000);
+  out.url = clean(pick('url'), 500);
   if (out.url && !/^https?:\/\//i.test(out.url)) errors.push('Link must start with http:// or https://.');
 
   return { row: out, errors };
 }
 
 const COLS = [
-  'title', 'category', 'type', 'division', 'start_date', 'end_date', 'all_day',
-  'start_time', 'end_time', 'location', 'owner', 'status', 'notes', 'url',
+  'title', 'category', 'departments', 'status', 'start_date', 'end_date', 'all_day',
+  'start_time', 'end_time', 'venue', 'address', 'city', 'state', 'zip', 'notes', 'url',
 ];
+
+// Year / Week / Start (Week) / End (Week) / Month / Day are not stored; they are
+// attached here so every reader sees the same values.
+function withRetail(row) {
+  return { ...row, all_day: row.all_day ? 1 : 0, retail: retailWeek(row.start_date) };
+}
 
 async function listItems(db, from, to) {
   // An item overlaps the window when it starts before the window ends and ends
@@ -156,7 +181,7 @@ async function listItems(db, from, to) {
   }
   sql += ' ORDER BY start_date ASC, all_day DESC, start_time ASC, title ASC';
   const res = await db.prepare(sql).bind(...binds).all();
-  return (res.results || []).map((r) => ({ ...r, all_day: r.all_day ? 1 : 0 }));
+  return (res.results || []).map(withRetail);
 }
 
 // Constant-time-ish comparison so the feed key cannot be recovered a character
@@ -196,42 +221,98 @@ function parseCsv(text) {
   return rows.filter((r) => r.some((c) => c.trim() !== ''));
 }
 
+// Headers as they actually appear on the Jetty sheets, alongside plainer
+// spellings. Year / Week / Start (Week) / End (Week) / Month / Day are listed so
+// an import can check them against the date rather than silently ignore them.
 const IMPORT_ALIASES = {
-  title: 'title', name: 'title', event: 'title',
-  category: 'category', type: 'type', 'event type': 'type',
-  division: 'division', 'business unit': 'division',
-  start: 'start_date', 'start date': 'start_date', date: 'start_date',
-  end: 'end_date', 'end date': 'end_date',
-  'all day': 'all_day', allday: 'all_day',
-  'start time': 'start_time', 'end time': 'end_time',
-  location: 'location', venue: 'location',
-  owner: 'owner', status: 'status', notes: 'notes', note: 'notes',
-  url: 'url', link: 'url',
+  'name': 'title', 'title': 'title', 'event name': 'title', 'event': 'title',
+  'booked': 'status', 'status': 'status',
+  'type': 'category', 'category': 'category',
+  'event type': 'departments', 'departments': 'departments', 'department': 'departments',
+  'event \u{1F680}': 'start_date', 'start': 'start_date', 'start date': 'start_date', 'date': 'start_date',
+  'event \u{1F6D1}': 'end_date', 'end': 'end_date', 'end date': 'end_date',
+  'start \u{231A}': 'start_time', 'start time': 'start_time', 'event start time': 'start_time',
+  'end \u{231A}': 'end_time', 'end time': 'end_time', 'event end time': 'end_time',
+  'all day': 'all_day', 'allday': 'all_day',
+  'venue': 'venue', 'address': 'address', 'city': 'city', 'state': 'state', 'zip': 'zip',
+  'notes': 'notes', 'note': 'notes', 'url': 'url', 'link': 'url',
+  // Checked against the event date, never stored.
+  'year': '_year', 'week': '_week',
+  'start (week)': '_week_start', 'end (week)': '_week_end',
+  'month': '_month', 'day': '_day',
 };
+
+const MONTH_ABBR = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const DOW_ABBR = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+// The sheet repeats facts that the event date already determines. Rather than
+// drop those columns on import, compare them -- a disagreement is a typo worth
+// naming, in the sheet or in the date.
+function retailMismatches(rec) {
+  const out = [];
+  const d = rec.start_date;
+  if (!d || !DATE_RE.test(d)) return out;
+  const r = retailWeek(d);
+  const parts = d.split('-').map(Number);
+  const utc = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  const check = (given, actual, label) => {
+    const g = String(given == null ? '' : given).trim();
+    if (g && g.toUpperCase() !== String(actual).toUpperCase()) {
+      out.push(label + ' says ' + g + ', but ' + d + ' is ' + actual);
+    }
+  };
+  check(rec._year, r.year, 'Year');
+  check(rec._week, r.week, 'Week');
+  check(rec._week_start, r.start, 'Start (Week)');
+  check(rec._week_end, r.end, 'End (Week)');
+  check(rec._month, MONTH_ABBR[utc.getUTCMonth()], 'Month');
+  check(rec._day, DOW_ABBR[utc.getUTCDay()], 'Day');
+  return out;
+}
 
 function slugify(v) {
   return String(v || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-// Import files are written by people, not machines: accept the label as well as
-// the key for category and division, so "Box Truck"/"events" and "Events" work.
+// Import files are written by people, not machines: accept the label, the key
+// and the spelling the sheet actually uses.
 function coerceKeys(rec) {
   if (rec.category) {
-    const c = TAXONOMY.categories.find(
-      (x) => x.key === slugify(rec.category) || slugify(x.label) === slugify(rec.category),
-    );
+    const want = slugify(rec.category);
+    const c = CATEGORIES.find((x) => x.key === want
+      || slugify(x.label) === want
+      || (x.sheetValues || []).some((v) => slugify(v) === want || v === String(rec.category).trim()));
     if (c) rec.category = c.key;
   }
-  if (rec.division) {
-    const d = TAXONOMY.divisions.find(
-      (x) => x.key === slugify(rec.division) || slugify(x.label) === slugify(rec.division),
-    );
-    if (d) rec.division = d.key;
+
+  if (rec.departments != null) {
+    const parts = Array.isArray(rec.departments)
+      ? rec.departments
+      : String(rec.departments).split(/[,;/]+/);
+    rec.departments = parts.map((raw) => {
+      const want = slugify(raw);
+      if (!want) return '';
+      const d = DEPARTMENTS.find((x) => x.key === want || slugify(x.label) === want);
+      return d ? d.key : String(raw).trim();
+    }).filter(Boolean);
   }
-  if (rec.status) {
-    const s = STATUSES.find((x) => x.toLowerCase() === String(rec.status).trim().toLowerCase());
-    if (s) rec.status = s;
+
+  if (rec.status != null) {
+    // The sheet's Booked column is a checkbox: ticked means booked, blank means
+    // still being chased.
+    const raw = String(rec.status).trim().toLowerCase();
+    if (['checked', 'true', 'yes', 'y', 'x', '1', 'booked'].includes(raw)) rec.status = 'Booked';
+    else if (!raw || ['unchecked', 'false', 'no', 'n', '0', 'pending'].includes(raw)) rec.status = 'Pending';
+    else {
+      const s2 = STATUSES.find((x) => x.toLowerCase() === raw);
+      if (s2) rec.status = s2;
+    }
   }
+
+  // A row with times is not an all-day item.
+  if (rec.all_day == null && (rec.start_time || rec.end_time)) rec.all_day = 0;
+
   return rec;
 }
 
@@ -246,8 +327,18 @@ async function handleApi(request, env, url, who) {
   const method = request.method;
 
   if (path === '/api/items' && method === 'GET') {
-    const items = await listItems(db, url.searchParams.get('from'), url.searchParams.get('to'));
-    return json({ items });
+    let from = url.searchParams.get('from');
+    let to = url.searchParams.get('to');
+    const week = url.searchParams.get('week');
+    if (week) {
+      const year = url.searchParams.get('year') || TAXONOMY.retailEpochYear;
+      const wkStart = retailWeekStart(year, week);
+      if (!wkStart) return json({ error: 'week must be 1-53.' }, 400);
+      const parts = wkStart.split('-').map(Number);
+      from = wkStart;
+      to = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2] + 6)).toISOString().slice(0, 10);
+    }
+    return json({ items: await listItems(db, from, to) });
   }
 
   const requireEditor = () => (who.canEdit
@@ -271,7 +362,7 @@ async function handleApi(request, env, url, who) {
       + 'VALUES (?' + ',?'.repeat(COLS.length + 4) + ')',
     ).bind(id, ...COLS.map((c) => row[c]), who.email, now, who.email, now).run();
 
-    return json({ item: { id, ...row, created_by: who.email, created_at: now } }, 201);
+    return json({ item: withRetail({ id, ...row, created_by: who.email, created_at: now }) }, 201);
   }
 
   if (path === '/api/items/import' && method === 'POST') {
@@ -303,10 +394,18 @@ async function handleApi(request, env, url, who) {
     // worse than a rejected one, because you cannot tell what landed.
     const rows = [];
     const problems = [];
+    const warnings = [];
     records.forEach((rec, i) => {
-      const { row, errors } = normalise(coerceKeys({ ...rec }), null);
-      if (errors.length) problems.push('Row ' + (i + 2) + ': ' + errors.join(' '));
-      else rows.push(row);
+      const coerced = coerceKeys({ ...rec });
+      const { row, errors } = normalise(coerced, null);
+      if (errors.length) {
+        problems.push('Row ' + (i + 2) + ': ' + errors.join(' '));
+        return;
+      }
+      // Not fatal: the item is fine, the sheet's own derived columns are not.
+      retailMismatches({ ...coerced, start_date: row.start_date })
+        .forEach((m) => warnings.push('Row ' + (i + 2) + ': ' + m));
+      rows.push(row);
     });
     if (problems.length) return json({ error: 'Nothing was imported.', problems: problems.slice(0, 25) }, 400);
 
@@ -319,7 +418,7 @@ async function handleApi(request, env, url, who) {
       crypto.randomUUID(), ...COLS.map((c) => row[c]), who.email, now, who.email, now,
     )));
 
-    return json({ imported: rows.length }, 201);
+    return json({ imported: rows.length, warnings: warnings.slice(0, 40) }, 201);
   }
 
   const idMatch = path.match(
@@ -330,7 +429,7 @@ async function handleApi(request, env, url, who) {
     const existing = await db.prepare('SELECT * FROM items WHERE id = ?').bind(id).first();
     if (!existing) return json({ error: 'No calendar item with that id.' }, 404);
 
-    if (method === 'GET') return json({ item: existing });
+    if (method === 'GET') return json({ item: withRetail(existing) });
 
     const denied = requireEditor(); if (denied) return denied;
 
@@ -349,7 +448,7 @@ async function handleApi(request, env, url, who) {
         'UPDATE items SET ' + COLS.map((c) => c + ' = ?').join(', ')
         + ', updated_by = ?, updated_at = ? WHERE id = ?',
       ).bind(...COLS.map((c) => row[c]), who.email, now, id).run();
-      return json({ item: { id, ...row, updated_by: who.email, updated_at: now } });
+      return json({ item: withRetail({ id, ...row, updated_by: who.email, updated_at: now }) });
     }
 
     return json({ error: 'Method not allowed.' }, 405);

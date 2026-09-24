@@ -34,39 +34,46 @@
 
   <div class="cal-seg" id="views" role="group" aria-label="Calendar view">
     <button data-view="day">Day</button>
+    <button data-view="week">Week</button>
     <button data-view="month" aria-pressed="true">Month</button>
     <button data-view="year">Year</button>
     <button data-view="agenda">Agenda</button>
   </div>
 
+  <label class="wk-jump" title="Jump to a retail week">
+    <span>Wk</span>
+    <input type="number" id="wkNum" min="1" max="53" inputmode="numeric">
+  </label>
+
   <div class="cal-spacer"></div>
 
-  <label class="fld-inline" style="font-size:12.5px;opacity:.75">
-    <span style="font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">Colour by</span>
-    <select id="colorBy" style="font-family:var(--body);font-size:13px;background:transparent;border:1px solid var(--surface-alt);border-radius:6px;padding:5px 8px">
-      <option value="category">Category</option>
-      <option value="division">Division</option>
+  <label class="colour-by">
+    <span>Colour by</span>
+    <select id="colorBy">
+      <option value="department" selected>Event Type</option>
+      <option value="status">Status</option>
+      <option value="category">Type</option>
     </select>
   </label>
 
   <button class="cal-btn" id="subscribe">Subscribe</button>
   <button class="cal-btn" id="importBtn" hidden>Import</button>
-  <button class="cal-btn primary" id="addBtn" hidden>+ Add item</button>
+  <button class="cal-btn primary" id="addBtn" hidden>+ Add event</button>
 </div>
 
 <div class="cal-shell">
   <aside class="cal-side">
     <div class="cal-card">
-      <h3>Categories</h3>
+      <h3>Type</h3>
       <div id="catTree"></div>
-      <div class="flt-actions">
-        <button id="catAll">All</button>
-        <button id="catNone">None</button>
-      </div>
     </div>
     <div class="cal-card">
-      <h3>Divisions</h3>
-      <div id="divTree"></div>
+      <h3>Event Type</h3>
+      <div id="deptTree"></div>
+      <div class="flt-actions">
+        <button id="deptAll">All</button>
+        <button id="deptNone">None</button>
+      </div>
     </div>
     <div class="cal-card">
       <h3>Status</h3>

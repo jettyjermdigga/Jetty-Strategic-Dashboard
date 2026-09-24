@@ -5,7 +5,7 @@
 // text values, and a real VTIMEZONE so timed items land at the right hour
 // rather than drifting by the viewer's offset.
 
-import { CATEGORIES, DIVISIONS } from './taxonomy.js';
+import { CATEGORIES, DEPARTMENTS } from './taxonomy.js';
 
 const TZID = 'America/New_York';
 
@@ -103,8 +103,6 @@ export function buildIcs(items, opts) {
 
   const now = stamp();
   for (const it of items) {
-    if (it.status === 'Cancelled' && !o.includeCancelled) continue;
-
     lines.push('BEGIN:VEVENT');
     lines.push('UID:' + esc(it.id) + '@jetty-calendar');
     lines.push('DTSTAMP:' + now);
@@ -119,23 +117,32 @@ export function buildIcs(items, opts) {
       lines.push('DTEND;TZID=' + TZID + ':' + compact(it.end_date) + 'T' + e);
     }
 
-    const prefix = it.status === 'Tentative' ? '[Tentative] ' : '';
+    const prefix = it.status === 'Pending' ? '[Pending] ' : '';
     lines.push('SUMMARY:' + esc(prefix + it.title));
 
     const descParts = [];
-    if (it.category) descParts.push('Category: ' + label(CATEGORIES, it.category));
-    if (it.type) descParts.push('Type: ' + it.type);
-    if (it.division) descParts.push('Division: ' + label(DIVISIONS, it.division));
-    if (it.owner) descParts.push('Owner: ' + it.owner);
+    if (it.category) descParts.push('Type: ' + label(CATEGORIES, it.category));
+    if (it.departments) {
+      descParts.push('Event Type: ' + it.departments.split(',')
+        .map((d) => label(DEPARTMENTS, d.trim())).join(', '));
+    }
+    if (it.status) descParts.push('Status: ' + it.status);
+    const where = [it.venue, it.address,
+                   [it.city, it.state].filter(Boolean).join(', '), it.zip]
+      .filter(Boolean).join(' \u00b7 ');
+    if (where) descParts.push('Where: ' + where);
     if (it.notes) descParts.push('', it.notes);
     if (descParts.length) lines.push('DESCRIPTION:' + esc(descParts.join('\n')));
 
-    if (it.location) lines.push('LOCATION:' + esc(it.location));
+    const loc = [it.venue, it.address, [it.city, it.state].filter(Boolean).join(', '), it.zip]
+      .filter(Boolean).join(', ');
+    if (loc) lines.push('LOCATION:' + esc(loc));
     if (it.url) lines.push('URL:' + esc(it.url));
-    lines.push('CATEGORIES:' + esc(
-      [it.category && label(CATEGORIES, it.category), it.type].filter(Boolean).join(','),
-    ));
-    lines.push('STATUS:' + (it.status === 'Tentative' ? 'TENTATIVE' : 'CONFIRMED'));
+    lines.push('CATEGORIES:' + esc([
+      it.category && label(CATEGORIES, it.category),
+      ...(it.departments ? it.departments.split(',').map((d) => label(DEPARTMENTS, d.trim())) : []),
+    ].filter(Boolean).join(',')));
+    lines.push('STATUS:' + (it.status === 'Booked' ? 'CONFIRMED' : 'TENTATIVE'));
     lines.push('TRANSP:TRANSPARENT');
     lines.push('END:VEVENT');
   }
