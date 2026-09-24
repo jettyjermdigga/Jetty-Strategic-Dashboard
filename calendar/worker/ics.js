@@ -5,7 +5,7 @@
 // text values, and a real VTIMEZONE so timed items land at the right hour
 // rather than drifting by the viewer's offset.
 
-import { EVENT_TYPES, SUB_TYPES, NEEDS } from './taxonomy.js';
+import { EVENT_TYPES, DEPARTMENTS, SUB_TYPES, NEEDS, VEHICLES } from './taxonomy.js';
 
 const TZID = 'America/New_York';
 
@@ -117,16 +117,24 @@ export function buildIcs(items, opts) {
       lines.push('DTEND;TZID=' + TZID + ':' + compact(it.end_date) + 'T' + e);
     }
 
-    const prefix = it.status === 'Pending' ? '[Pending] ' : '';
+    const prefix = it.status === 'Booked' ? '' : '[' + it.status + '] ';
     lines.push('SUMMARY:' + esc(prefix + it.title));
 
     const descParts = [];
     const names = (list, csv) => (csv || '').split(',')
       .map((k) => label(list, k.trim())).filter(Boolean).join(', ');
-    if (it.event_types) descParts.push('Event Type: ' + names(EVENT_TYPES, it.event_types));
+    const dept = label(DEPARTMENTS, it.department);
+    if (dept) {
+      const also = names(DEPARTMENTS, it.departments);
+      descParts.push('Department: ' + dept + (also ? ' (with ' + also + ')' : ''));
+    }
     if (it.sub_types) descParts.push('Sub-type: ' + names(SUB_TYPES, it.sub_types));
     if (it.status) descParts.push('Status: ' + it.status);
-    if (it.needs) descParts.push('Needs: ' + names(NEEDS, it.needs));
+    if (it.needs) {
+      const staff = it.staff_count ? ' (' + it.staff_count + ')' : '';
+      descParts.push('Needs: ' + names(NEEDS, it.needs) + staff);
+    }
+    if (it.vehicles) descParts.push('Vehicles: ' + names(VEHICLES, it.vehicles));
     const where = [it.venue, it.address,
                    [it.city, it.state].filter(Boolean).join(', '), it.zip]
       .filter(Boolean).join(' \u00b7 ');
@@ -139,10 +147,13 @@ export function buildIcs(items, opts) {
     if (loc) lines.push('LOCATION:' + esc(loc));
     if (it.url) lines.push('URL:' + esc(it.url));
     lines.push('CATEGORIES:' + esc([
-      ...(it.event_types ? it.event_types.split(',').map((k) => label(EVENT_TYPES, k.trim())) : []),
+      label(EVENT_TYPES, it.event_type),
+      label(DEPARTMENTS, it.department),
+      ...(it.departments ? it.departments.split(',').map((k) => label(DEPARTMENTS, k.trim())) : []),
       ...(it.sub_types ? it.sub_types.split(',').map((k) => label(SUB_TYPES, k.trim())) : []),
     ].filter(Boolean).join(',')));
-    lines.push('STATUS:' + (it.status === 'Booked' ? 'CONFIRMED' : 'TENTATIVE'));
+    lines.push('STATUS:' + (it.status === 'Booked' ? 'CONFIRMED'
+      : it.status === 'Cancelled' ? 'CANCELLED' : 'TENTATIVE'));
     lines.push('TRANSP:TRANSPARENT');
     lines.push('END:VEVENT');
   }

@@ -39,64 +39,100 @@ There is no build step. `public/` is deployed as-is.
 
 ## Structure
 
-Three axes, because the menu spreadsheet's second level held three different
-kinds of thing.
+Five axes, from the decision tree.
 
-**Event Types** are the calendars themselves, and they are **peers** — no
-primary, no owner. Coquina Jam is a JRF event that the Box Truck always works,
-and naming either one the owner would misdescribe how it runs. An event carries
-every Event Type involved and shows on each of their calendars.
+**Event Type** is what kind of item this is. Exactly one per item, and it decides
+which questions the form asks.
 
 | | |
 |---|---|
-| Box Truck & Events | Mobile store and/or tent setup selling Jetty/JRF apparel |
+| Events & Marketing | Anything that happens in the world, and the marketing around it |
+| Meetings & Deadlines | Internal. Asks for far less — who, when, and nothing more |
+
+**Departments** are whose calendar it is. One is the **primary** — it owns the
+event and gives it its colour — and any number of others come along for the ride,
+shown as small dots rather than colour. The Long Branch Spring Cleaning Sale is a
+store event that Marketing promotes, not a joint one.
+
+| | |
+|---|---|
+| Box Truck | Mobile store and/or tent setup selling Jetty/JRF apparel |
 | Flagship Store | Events at our brick-and-mortar store |
 | Long Branch Store | Events at our brick-and-mortar store |
-| Jetty Rock Foundation (JRF) | Fundraising events/initiatives involving our nonprofit |
+| Jetty Rock Foundation | Fundraising events/initiatives involving our nonprofit |
 | Jetty INK | Live screenprinting and/or non-brand apparel sales |
 | Wholesale | Tradeshows, sales trips and other industry events |
-| Marketing | MKG-specific events the team plans against |
-| Meetings | Milestone meetings with mixed departments |
-| Logistics, ProDev | from the menu's Meetings sub-list |
+| Marketing | MKG-specific work the team plans against |
+| Logistics | |
+| Product Development | |
 | Culture | Team-building |
 
-A meeting for one department is tagged **Meetings + that department**, so it
-lands on both calendars. That is why the menu's Meetings sub-list has no separate
-existence here: six of its eight entries were already Event Types.
+Meetings is no longer a department: a meeting is an Event Type, and it still
+belongs to whichever department called it.
 
-**Sub-types** say what kind of item it is, and apply to any calendar: Event,
-Meeting, Campaign, Promotion, Email, SMS, Social, Photo/Video, Collab,
-Ambassador, Influencer, Blog Post, Website, Seasonal. The menu sheet listed
-sub-types only under Marketing, but Airtable's `Type` field does the same job
-across every calendar and is filled in on all 14,279 records, so that is the
-list.
+**Sub-types** belong to a department. Only two have any — Wholesale has
+Tradeshow, and Marketing has Campaign, Promotion, Email, SMS, Photo/Video,
+Collab, Ambassador, Influencer and Website. The form offers the sub-types of
+**every** department on the event, not only the primary one, so a store sale that
+Marketing promotes can still be a Promotion without Marketing having to own it.
 
-**Needs** are what an event requires, and cut across every calendar: Drifting
-Buoy, Social Permit, Sound, Jetty Brewing Company, Insurance, Box Truck
-(vehicle), Van, 10x10 Setup, 10x20 Setup. The last five already existed in
-Airtable — insurance as its own Yes/No field, the rest as `Setup Needs`. "Do we need the mobile bar?"
-is a fair question of a box truck event and a JRF event alike, which is why
-Drifting Buoy appeared under two parents on the menu sheet. JBC arrived in the
-sheet's Event Type column but is a need too — a reminder that the event wants our
-own branded beer — so the import routes it here rather than making it a calendar.
+**Needs** are what an event requires, asked by the department that answers for
+them: **Extra staff needed** (Box Truck, with a count) and **Social Permit** and
+**Sound** (Jetty Rock Foundation). They are offered as soon as that department is
+on the event, primary or not — the Box Truck still needs its staff when it is
+working someone else's event.
+
+**Vehicles** — Box Truck, INK Van, Brand Transit — are unscoped. Whose event it
+is has no bearing on what has to be driven there.
+
+**Status** is Booked, Pending or Cancelled. A cancelled event stays on the
+calendar struck through rather than being deleted, so the day it was meant to
+happen still answers "what happened to that?".
+
+## Adding an item
+
+Adding is an interview: one question at a time, in the decision tree's order,
+with later questions shaped by earlier answers. Editing is not — every answer
+already exists, so the whole form is shown at once.
+
+1. What kind of item is this?
+2. What is it called?
+3. Whose is it? *(the primary department)*
+4. Anyone else involved?
+5. What kind of item is it for them? *(skipped when no department on the event has sub-types)*
+6. When is it? *(retail week, month and day are derived on screen from the start date)*
+7. Where is it?
+8. What does it need? *(needs, the staff count if asked for, and vehicles)*
+9. Anything else? *(status, link, notes)*
+
+A **Meetings & Deadlines** item takes the short form — steps 1, 2, 3, 6 and 9 —
+and the fields it skips are cleared on write rather than merely hidden, so what
+is stored matches what the form showed.
+
+**Required**: name, primary department, a start date. Everything else can be
+filled in later.
+
+There are two ways in: the **+ Add event** button, or clicking open space in the
+calendar — an empty month cell, or the add row on a day in week and day view. All
+of them are editors-only.
 
 ## Fields
 
-| Field | Sheet column | Notes |
-|---|---|---|
-| Event name | Name | required |
-| Status | Booked | the checkbox: ticked is **Booked**, blank is **Pending** |
-| Event Type | Event Type | one or more, all peers — at least one required |
-| Sub-type | — | scoped to its Event Type |
-| Needs | — | cross-cutting |
-| Start / end date | Event 🚀 / Event 🛑 | |
-| Start / end time | Start ⌚ / End ⌚ | 24-hour on the way in |
-| Venue, Address, City, State, Zip | same | |
-| Notes, Link | — | additions, not on the sheet |
-
-The sheet's `Type` column held one value for the whole calendar; Event Type
-carries that now, so the column is read and discarded rather than reported as an
-unrecognised header.
+| Field | Notes |
+|---|---|
+| Event name | required |
+| Event Type | exactly one; defaults to Events & Marketing |
+| Department | the primary one — required, sets the colour |
+| Also involved | any number of other departments |
+| Sub-type | scoped to the departments on the event |
+| Needs | scoped to the department that answers for them |
+| Extra staff | a count, only when that need is ticked |
+| Vehicles | unscoped |
+| Status | Booked (the default), Pending or Cancelled |
+| Start / end date | required start |
+| Start / end time | 24-hour on the way in |
+| Venue, Address, City, State, Zip | events only |
+| Notes, Link | |
 
 ## The retail calendar
 
@@ -117,11 +153,13 @@ import reports such disagreements and then ignores those columns.
 
 ## Colour
 
-Each event's chip carries **one colour band per Event Type**, so an event that is
-both a JRF event and a Box Truck event says so instead of being forced into one
-colour. Events with a single Event Type get a solid band, so a calendar still
-reads as one thing. Colour always means Event Type -- Pending items are marked
-by a faded band and italic title instead, so colour never has two jobs.
+Each event carries **one colour, its primary department's** — the department that
+owns it. The other departments involved show as small dots beside the title, so
+the event still reads as one department's at a glance while saying who else turns
+up. An event with no department at all is grey rather than borrowing somebody's.
+
+Colour always means department. Pending items are marked by a faded band and an
+italic title, cancelled ones by a strikethrough — so colour never has two jobs.
 
 The palette is a validated categorical set, not a hand-picked one. Both modes
 pass the lightness band, the chroma floor, the normal-vision separation floor and
@@ -142,9 +180,14 @@ sorting makes those the same value, which is what they always meant.
 
 ## Changing the structure
 
-`worker/taxonomy.js` is the only place Type, Event Type and Status are defined.
-The filter sidebar, the add form, the colour coding and the Google Calendar
-descriptions are all generated from it. Adding a department is one line.
+`worker/taxonomy.js` is the only place the five axes and Status are defined. The
+filter sidebar, the add form's questions, the colour coding and the Google
+Calendar descriptions are all generated from it. Adding a department is one line
+— though a new department also needs a colour, and the palette is a validated
+set, so run it back through the validator rather than picking one by eye.
+
+Scoping is data, not code: a sub-type or need names its `department`, and the
+form works out which questions to ask from that.
 
 ## Airtable after the backfill
 

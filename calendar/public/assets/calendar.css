@@ -74,7 +74,8 @@
 /* ── Filter tree ────────────────────────────────────────────────────────── */
 
 .flt-row{display:flex;align-items:center;gap:7px;font-family:var(--body);font-size:13px;padding:3px 0;cursor:pointer}
-.flt-row .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+/* Used in the sidebar and in the form, so it is not scoped to either. */
+.dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;display:inline-block}
 .flt-row .count{margin-left:auto;font-family:var(--mono);font-size:10.5px;opacity:.45}
 
 .flt-actions{display:flex;gap:6px;margin-top:12px}
@@ -362,9 +363,9 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
 
 /* ── Multi-department markers ───────────────────────────────────────────── */
 
-/* One band per Event Type. An event that is both a JRF event and a Box Truck
-   event shows both rather than being forced into one of them. Absolutely
-   positioned so it stays out of the chip's flex row and the row's grid. */
+/* One band, the primary department's -- the department that owns the event.
+   Absolutely positioned so it stays out of the chip's flex row and the row's
+   grid. */
 .bar{
   position:absolute;left:0;top:0;bottom:0;width:5px;
   display:flex;flex-direction:column;overflow:hidden;
@@ -417,6 +418,49 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
 .chk-grid .fld-inline{font-size:13.5px}
 .addr-row{grid-template-columns:1fr 84px 110px}
 
+/* ── The interview ──────────────────────────────────────────────────────── */
+
+/* Adding asks one question at a time; editing shows every section at once, so
+   these styles have to read both as a wizard step and as a form heading. */
+.step + .step{margin-top:22px}
+.step-q{
+  margin:0 0 12px;font-family:var(--body);font-size:16px;font-weight:600;
+  letter-spacing:-.01em;
+}
+.step-q.sub{margin-top:20px;font-size:14px;opacity:.85}
+
+.step-trail{display:flex;align-items:center;gap:6px;margin-bottom:18px}
+.step-trail:empty{display:none}
+.trail-n{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
+  text-transform:uppercase;opacity:.5;margin-right:6px;white-space:nowrap;
+}
+.trail-p{
+  flex:1;height:3px;border-radius:2px;background:var(--surface-alt);
+  transition:background .15s;
+}
+.trail-p.on{background:var(--primary)}
+:root[data-theme="dark"] .trail-p.on{background:var(--primary-alt)}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .trail-p.on{background:var(--primary-alt)} }
+
+/* The one question with only two answers gets room to be read rather than a
+   pair of radio buttons to be squinted at. */
+.pick-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
+.pick{
+  display:grid;grid-template-columns:auto minmax(0,1fr);gap:11px;align-items:start;
+  padding:14px 16px;border:1px solid var(--surface-alt);
+  border-radius:10px;cursor:pointer;transition:border-color .12s,background .12s;
+}
+.pick:hover{border-color:var(--primary-alt)}
+/* The radio stays visible: the selected-state highlight below relies on :has(),
+   and a browser without it must still show which of the two is chosen. */
+.pick input{margin:3px 0 0}
+.pick-t{display:block;font-family:var(--body);font-size:15px;font-weight:600}
+.pick-n{display:block;margin-top:5px;font-size:12.5px;opacity:.65;line-height:1.45}
+.pick:has(input:checked){
+  border-color:var(--primary);background:rgba(67,87,94,.05);box-shadow:inset 0 0 0 1px var(--primary);
+}
+
 /* Shows the six spreadsheet columns the calendar derives, so you can confirm
    the retail week without being asked to type it. */
 .retail-readout{
@@ -452,6 +496,12 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
   margin:0 4px 4px 0;
 }
 .tag i{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
+/* Departments along for the ride. Deliberately small: the event reads as one
+   department's, and these say who else turns up. */
+.alsodots{display:inline-flex;gap:2px;margin-left:5px;flex-shrink:0;align-items:center}
+.alsodots i{width:5px;height:5px;border-radius:50%;display:block;opacity:.85}
+.day-item .alsodots{margin-left:7px}
 
 /* Sub-types are grouped under the Event Type they belong to. */
 .flt-sub{margin-bottom:10px}

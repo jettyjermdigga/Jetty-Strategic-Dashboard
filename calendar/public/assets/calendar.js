@@ -24,10 +24,12 @@
     items: [],
     tax: null,
     me: { canEdit: false, email: '' },
-    types: {},   // Event Type key -> shown
-    subs: {},    // sub-type key   -> shown
-    needs: {},   // need key       -> shown
-    stats: {},   // status         -> shown
+    kinds: {},    // Event Type key -> shown
+    depts: {},    // department key -> shown
+    subs: {},     // sub-type key   -> shown
+    needs: {},    // need key       -> shown
+    vehicles: {}, // vehicle key    -> shown
+    stats: {},    // status         -> shown
     open: {},    // sidebar section -> expanded
   };
 
@@ -42,7 +44,10 @@
   // blocked storage all throw, and none of that should stop the calendar
   // rendering.
 
-  var PREFS_KEY = 'jetty-calendar-prefs-v1';
+  var AXES = ['kinds', 'depts', 'subs', 'needs', 'vehicles', 'stats'];
+  // v2: the axes changed name and meaning, so a v1 preference would switch
+  // off the wrong things rather than simply being ignored.
+  var PREFS_KEY = 'jetty-calendar-prefs-v2';
 
   function readPrefs() {
     try {
@@ -54,7 +59,7 @@
   function savePrefs() {
     try {
       var off = {};
-      ['types', 'subs', 'needs', 'stats'].forEach(function (axis) {
+      AXES.forEach(function (axis) {
         off[axis] = Object.keys(state[axis]).filter(function (k) { return state[axis][k] === false; });
       });
       window.localStorage.setItem(PREFS_KEY, JSON.stringify({
@@ -68,7 +73,7 @@
   function applyPrefs() {
     var p = readPrefs();
     if (!p) return;
-    ['types', 'subs', 'needs', 'stats'].forEach(function (axis) {
+    AXES.forEach(function (axis) {
       (p.off && p.off[axis] ? p.off[axis] : []).forEach(function (k) {
         if (k in state[axis]) state[axis][k] = false;
       });
@@ -143,20 +148,30 @@
     for (var i = 0; i < (list || []).length; i++) if (list[i].key === key) return list[i];
     return null;
   }
-  function typeOf(k) { return find(state.tax && state.tax.eventTypes, k); }
-  function subOf(k)  { return find(state.tax && state.tax.subTypes, k); }
-  function needOf(k) { return find(state.tax && state.tax.needs, k); }
+  function tax(axis) { return (state.tax && state.tax[axis]) || []; }
 
   function listOf(item, field) {
     return item[field] ? item[field].split(',').filter(Boolean) : [];
   }
-  function typesOf(item) { return listOf(item, 'event_types'); }
-  function subsOf(item)  { return listOf(item, 'sub_types'); }
-  function needsOf(item) { return listOf(item, 'needs'); }
+  function subsOf(item)     { return listOf(item, 'sub_types'); }
+  function needsOf(item)    { return listOf(item, 'needs'); }
+  function vehiclesOf(item) { return listOf(item, 'vehicles'); }
+
+  // The primary department first, then everyone else along for the ride. The
+  // filters treat all of them alike -- ticking Marketing should surface a store
+  // sale Marketing promotes -- but only the first one gives the event a colour.
+  function extraDeptsOf(item) { return listOf(item, 'departments'); }
+  function deptsOf(item) {
+    return (item.department ? [item.department] : []).concat(extraDeptsOf(item));
+  }
 
   function labelIn(list, key) { var x = find(list, key); return x ? x.label : key; }
-  function typeLabel(k) { return labelIn(state.tax && state.tax.eventTypes, k); }
-  function typeSummary(item) { return typesOf(item).map(typeLabel).join(' + '); }
+  function deptLabel(k) { return labelIn(tax('departments'), k); }
+  function deptSummary(item) {
+    var all = deptsOf(item);
+    if (!all.length) return '';
+    return all.map(deptLabel).join(' + ');
+  }
 
   // Colours live in CSS custom properties so the light and dark steps swap in
   // one place rather than being recomputed per chip. The palette is validated
@@ -164,9 +179,9 @@
   function injectPalette() {
     var light = [];
     var dark = [];
-    state.tax.eventTypes.forEach(function (e) {
-      light.push('--et-' + e.key + ':' + e.color + ';');
-      dark.push('--et-' + e.key + ':' + (e.colorDark || e.color) + ';');
+    state.tax.departments.forEach(function (d) {
+      light.push('--dp-' + d.key + ':' + d.color + ';');
+      dark.push('--dp-' + d.key + ':' + (d.colorDark || d.color) + ';');
     });
     var el = document.createElement('style');
     el.textContent = ':root{' + light.join('') + '}'
@@ -175,22 +190,30 @@
     document.head.appendChild(el);
   }
 
-  function typeVar(key) { return 'var(--et-' + key + ', #8A8F98)'; }
+  function deptVar(key) { return 'var(--dp-' + key + ', #8A8F98)'; }
 
-  // One colour band per Event Type, so an event that is both a JRF event and a
-  // Box Truck event says so rather than being forced into one of them.
-  function bandColors(item) {
-    var cols = typesOf(item).map(typeVar);
-    return cols.length ? cols : ['#8A8F98'];
+  // One colour, the primary department's. An event with no department at all
+  // -- the company meetings that came across without one -- gets grey rather
+  // than borrowing somebody's.
+  function colorFor(item) {
+    return item.department ? deptVar(item.department) : '#8A8F98';
   }
 
   function bandHtml(item) {
-    return '<span class="bar">' + bandColors(item).map(function (c) {
-      return '<i style="background:' + c + '"></i>';
-    }).join('') + '</span>';
+    return '<span class="bar"><i style="background:' + colorFor(item) + '"></i></span>';
   }
 
-  function colorFor(item) { return bandColors(item)[0]; }
+  // The departments along for the ride. Small marks rather than colour, so the
+  // event still reads as one department's at a glance.
+  function extraDotsHtml(item) {
+    var extra = extraDeptsOf(item);
+    if (!extra.length) return '';
+    return '<span class="alsodots" title="Also involved: '
+      + esc(extra.map(deptLabel).join(', ')) + '">'
+      + extra.map(function (k) {
+          return '<i style="background:' + deptVar(k) + '"></i>';
+        }).join('') + '</span>';
+  }
 
   // ── filtering ──────────────────────────────────────────────────────────
 
@@ -205,9 +228,11 @@
 
   function passes(item) {
     if (state.stats[item.status] === false) return false;
-    return passesAxis(typesOf(item), state.types)
+    if (item.event_type && state.kinds[item.event_type] === false) return false;
+    return passesAxis(deptsOf(item), state.depts)
       && passesAxis(subsOf(item), state.subs)
-      && passesAxis(needsOf(item), state.needs);
+      && passesAxis(needsOf(item), state.needs)
+      && passesAxis(vehiclesOf(item), state.vehicles);
   }
 
   function visible() { return state.items.filter(passes); }
@@ -263,16 +288,18 @@
   // ── filter sidebar ─────────────────────────────────────────────────────
 
   function counts() {
-    var by = { types: {}, subs: {}, needs: {}, stats: {} };
+    var by = { kinds: {}, depts: {}, subs: {}, needs: {}, vehicles: {}, stats: {} };
     var tally = function (bucket, values) {
       if (!values.length) { bucket[NONE] = (bucket[NONE] || 0) + 1; return; }
       values.forEach(function (k) { bucket[k] = (bucket[k] || 0) + 1; });
     };
     state.items.forEach(function (it) {
       by.stats[it.status] = (by.stats[it.status] || 0) + 1;
-      tally(by.types, typesOf(it));
+      by.kinds[it.event_type] = (by.kinds[it.event_type] || 0) + 1;
+      tally(by.depts, deptsOf(it));
       tally(by.subs, subsOf(it));
       tally(by.needs, needsOf(it));
+      tally(by.vehicles, vehiclesOf(it));
     });
     return by;
   }
@@ -290,24 +317,37 @@
     if (!state.tax) return;
     var n = counts();
 
-    $('#typeTree').innerHTML = state.tax.eventTypes.map(function (e) {
-      return checkRow('types', e.key, e.label, typeVar(e.key),
-                      n.types[e.key] || 0, state.types[e.key], e.note);
+    $('#kindTree').innerHTML = tax('eventTypes').map(function (e) {
+      return checkRow('kinds', e.key, e.label, null,
+                      n.kinds[e.key] || 0, state.kinds[e.key], e.note);
     }).join('');
 
-    // Sub-types apply to any calendar, so the list is flat.
-    var subRows = state.tax.subTypes.map(function (st) {
+    var deptRows = tax('departments').map(function (d) {
+      return checkRow('depts', d.key, d.label, deptVar(d.key),
+                      n.depts[d.key] || 0, state.depts[d.key], d.note);
+    });
+    if (n.depts[NONE]) {
+      deptRows.push(checkRow('depts', NONE, 'No department', null,
+                             n.depts[NONE], state.depts[NONE]));
+    }
+    $('#deptTree').innerHTML = deptRows.join('');
+
+    // Each sub-type belongs to a department, so the row says which -- otherwise
+    // "Tradeshow" and "Campaign" read as peers when they are not.
+    var subRows = tax('subTypes').map(function (st) {
       return checkRow('subs', st.key, st.label, null,
-                      n.subs[st.key] || 0, state.subs[st.key], st.note);
+                      n.subs[st.key] || 0, state.subs[st.key],
+                      deptLabel(st.department));
     });
     if (n.subs[NONE]) {
       subRows.push(checkRow('subs', NONE, 'No sub-type', null, n.subs[NONE], state.subs[NONE]));
     }
     $('#subTree').innerHTML = subRows.join('');
 
-    var needRows = state.tax.needs.map(function (nd) {
+    var needRows = tax('needs').map(function (nd) {
       return checkRow('needs', nd.key, nd.label, null,
-                      n.needs[nd.key] || 0, state.needs[nd.key], nd.note);
+                      n.needs[nd.key] || 0, state.needs[nd.key],
+                      deptLabel(nd.department));
     });
     if (n.needs[NONE]) {
       needRows.push(checkRow('needs', NONE, 'Nothing needed', null,
@@ -315,10 +355,18 @@
     }
     $('#needTree').innerHTML = needRows.join('');
 
-    $('#statTree').innerHTML = state.tax.statuses.map(function (st) {
-      return checkRow('stats', st, st,
-                      'var(--st-' + (st === 'Booked' ? 'booked' : 'pending') + ')',
-                      n.stats[st] || 0, state.stats[st]);
+    var vehRows = tax('vehicles').map(function (v) {
+      return checkRow('vehicles', v.key, v.label, null,
+                      n.vehicles[v.key] || 0, state.vehicles[v.key]);
+    });
+    if (n.vehicles[NONE]) {
+      vehRows.push(checkRow('vehicles', NONE, 'No vehicle', null,
+                            n.vehicles[NONE], state.vehicles[NONE]));
+    }
+    $('#vehTree').innerHTML = vehRows.join('');
+
+    $('#statTree').innerHTML = tax('statuses').map(function (st) {
+      return checkRow('stats', st, st, null, n.stats[st] || 0, state.stats[st]);
     }).join('');
   }
 
@@ -370,11 +418,12 @@
     var cont = it.start_date < dateStr ? '→ ' : '';
     var time = (!it.all_day && it.start_time && it.start_date === dateStr)
       ? '<span class="t">' + esc(hhmm(it.start_time)) + '</span>' : '';
-    var tip = it.title + ' — ' + (typeSummary(it) || 'no Event Type')
+    var tip = it.title + ' \u2014 ' + (deptSummary(it) || 'no department')
       + ' · ' + it.status + (it.venue ? ' · ' + it.venue : '');
     return '<div class="' + cls + '" style="--chip:' + colorFor(it) + '" data-id="' + esc(it.id) + '" '
       + 'title="' + esc(tip) + '">'
-      + bandHtml(it) + time + '<span class="n">' + esc(cont + it.title) + '</span></div>';
+      + bandHtml(it) + time + '<span class="n">' + esc(cont + it.title) + '</span>'
+      + extraDotsHtml(it) + '</div>';
   }
 
   function placeLabel(it) {
@@ -394,16 +443,18 @@
     var when = it.all_day ? 'All day'
       : hhmm(it.start_time) + (it.end_time ? '–' + hhmm(it.end_time) : '');
     var meta = [];
-    var dl = typeSummary(it);
+    var dl = deptSummary(it);
     if (dl) meta.push(dl);
-    var subs = subsOf(it).map(function (k) { return labelIn(state.tax.subTypes, k); });
+    var subs = subsOf(it).map(function (k) { return labelIn(tax('subTypes'), k); });
     if (subs.length) meta.push(subs.join(', '));
     if (it.status !== 'Booked') meta.push(it.status);
     if (it.start_date !== it.end_date) meta.push(spanLabel(it));
     var where = placeLabel(it);
     if (where) meta.push(where);
-    var nd = needsOf(it).map(function (k) { return labelIn(state.tax.needs, k); });
-    if (nd.length) meta.push('Needs: ' + nd.join(', '));
+    var nd = needsOf(it).map(function (k) { return labelIn(tax('needs'), k); });
+    if (nd.length) meta.push('Needs: ' + nd.join(', ') + (it.staff_count ? ' (' + it.staff_count + ')' : ''));
+    var vh = vehiclesOf(it).map(function (k) { return labelIn(tax('vehicles'), k); });
+    if (vh.length) meta.push(vh.join(', '));
     var rcls = 'day-item' + (it.status === 'Booked' ? '' : ' ' + it.status.toLowerCase());
     return '<div class="' + rcls + '" style="--chip:' + colorFor(it) + '" data-id="' + esc(it.id) + '">'
       + bandHtml(it)
@@ -600,19 +651,27 @@
     var chips = function (keys, list, colored) {
       return keys.map(function (k) {
         return '<span class="tag">'
-          + (colored ? '<i style="background:' + typeVar(k) + '"></i>' : '')
+          + (colored ? '<i style="background:' + deptVar(k) + '"></i>' : '')
           + esc(labelIn(list, k)) + '</span>';
       }).join(' ');
     };
 
-    add('Event Type', chips(typesOf(it), state.tax.eventTypes, true));
-    add('Sub-type', chips(subsOf(it), state.tax.subTypes, false));
+    add('Event Type', esc(labelIn(tax('eventTypes'), it.event_type)));
+    // The primary department is named on its own line: on this event it is not
+    // one of several, it is the one whose calendar this is.
+    add('Department', it.department
+      ? '<span class="tag"><i style="background:' + deptVar(it.department) + '"></i>'
+        + esc(deptLabel(it.department)) + '</span>' : '');
+    add('Also involved', chips(extraDeptsOf(it), tax('departments'), true));
+    add('Sub-type', chips(subsOf(it), tax('subTypes'), false));
     var pillCls = it.status === 'Booked' ? 'ok' : (it.status === 'Cancelled' ? 'off' : 'warn');
     add('Status', '<span class="pill ' + pillCls + '">'
       + esc(it.status) + '</span>');
     if (r) add('Retail week', 'Week ' + r.week + ' of ' + r.year + ' <span class="muted">('
       + esc(weekRangeLabel(r)) + ')</span>');
-    add('Needs', chips(needsOf(it), state.tax.needs, false));
+    add('Needs', chips(needsOf(it), tax('needs'), false)
+      + (it.staff_count ? ' <span class="muted">' + esc(it.staff_count) + ' staff</span>' : ''));
+    add('Vehicles', chips(vehiclesOf(it), tax('vehicles'), false));
 
     var addr = [it.address, [it.city, it.state].filter(Boolean).join(', '), it.zip]
       .filter(Boolean).join('<br>');
@@ -647,109 +706,280 @@
 
   // ── add / edit form ────────────────────────────────────────────────────
 
+  // Adding is an interview: one question at a time, in the order of the
+  // decision tree, with later questions shaped by earlier answers. Editing is
+  // not -- every answer already exists, so the whole form is shown at once and
+  // you go straight to the field you came to change.
   function showForm(existing, defaultDate) {
     var it = existing || {
-      title: '', event_types: '', sub_types: '', needs: '',
+      title: '', event_type: 'events-marketing', department: '', departments: '',
+      sub_types: '', needs: '', staff_count: '', vehicles: '',
       status: 'Booked', start_date: defaultDate || todayYmd(), end_date: defaultDate || todayYmd(),
       all_day: 1, start_time: '', end_time: '',
       venue: '', address: '', city: '', state: '', zip: '', notes: '', url: '',
     };
-    var chosen = typesOf(it);
-    var chosenSubs = subsOf(it);
-    var chosenNeeds = needsOf(it);
-    var timed = !it.all_day;
+    var interview = !existing;
+    var at = 0;
+
+    var sect = function (key, head, note, inner) {
+      return '<section class="step" data-step="' + key + '">'
+        + (head ? '<h4 class="step-q">' + head
+            + (note ? ' <span class="lbl-note">' + note + '</span>' : '') + '</h4>' : '')
+        + inner + '</section>';
+    };
 
     var body = ''
       + '<div class="form-err" id="formErr" hidden></div>'
-      + '<div class="fld"><label for="f-title">Event name</label>'
-      + '<input type="text" id="f-title" value="' + esc(it.title) + '" maxlength="200"></div>'
+      + '<div class="step-trail" id="stepTrail"></div>'
 
-      + '<div class="fld"><label>Event Type '
-      + '<span class="lbl-note">everyone involved; the event shows on each of their calendars</span></label>'
-      + '<div class="chk-grid">'
-      + state.tax.eventTypes.map(function (e) {
-          return '<label class="fld-inline"' + (e.note ? ' title="' + esc(e.note) + '"' : '') + '>'
-            + '<input type="checkbox" class="f-type" value="' + esc(e.key) + '"'
-            + (chosen.indexOf(e.key) >= 0 ? ' checked' : '') + '>'
-            + '<i class="dot" style="background:' + typeVar(e.key) + '"></i>'
-            + esc(e.label) + '</label>';
-        }).join('')
-      + '</div></div>'
+      + sect('kind', 'What kind of item is this?', '',
+          '<div class="pick-grid">'
+          + tax('eventTypes').map(function (e) {
+              return '<label class="pick"><input type="radio" name="f-kind" class="f-kind" value="'
+                + esc(e.key) + '"' + (e.key === it.event_type ? ' checked' : '') + '>'
+                + '<span class="pick-b"><span class="pick-t">' + esc(e.label) + '</span>'
+                + (e.note ? '<span class="pick-n">' + esc(e.note) + '</span>' : '')
+                + '</span></label>';
+            }).join('')
+          + '</div>')
 
-      + '<div class="fld"><label>Sub-type '
-      + '<span class="lbl-note">what kind of item it is</span></label>'
-      + '<div class="chk-grid">'
-      + state.tax.subTypes.map(function (st) {
-          return '<label class="fld-inline"><input type="checkbox" class="f-sub" value="'
-            + esc(st.key) + '"' + (chosenSubs.indexOf(st.key) >= 0 ? ' checked' : '') + '>'
-            + esc(st.label) + '</label>';
-        }).join('')
-      + '</div></div>'
+      + sect('title', 'What is it called?', '',
+          '<div class="fld"><input type="text" id="f-title" value="' + esc(it.title)
+          + '" maxlength="200" placeholder="Coquina Jam"></div>')
 
-      + '<div class="fld"><label>Needs '
-      + '<span class="lbl-note">what this event requires</span></label>'
-      + '<div class="chk-grid">'
-      + state.tax.needs.map(function (nd) {
-          return '<label class="fld-inline" title="' + esc(nd.note || '') + '">'
-            + '<input type="checkbox" class="f-need" value="' + esc(nd.key) + '"'
-            + (chosenNeeds.indexOf(nd.key) >= 0 ? ' checked' : '') + '>'
-            + esc(nd.label) + '</label>';
-        }).join('')
-      + '</div></div>'
+      + sect('dept', 'Whose is it?', 'the department that owns it — this sets the colour',
+          '<div class="chk-grid" id="deptPick"></div>')
 
-      + '<div class="fld"><label for="f-status">Status</label><select id="f-status">'
-      + state.tax.statuses.map(function (st) {
-          return '<option value="' + esc(st) + '"' + (st === it.status ? ' selected' : '') + '>'
-            + esc(st) + '</option>';
-        }).join('')
-      + '</select></div>'
+      + sect('extra', 'Anyone else involved?', 'optional — they show as dots, not colour',
+          '<div class="chk-grid" id="extraPick"></div>')
 
-      + '<div class="fld-row">'
-      + '<div class="fld"><label for="f-start">Starts</label>'
-      + '<input type="date" id="f-start" value="' + esc(it.start_date) + '"></div>'
-      + '<div class="fld"><label for="f-end">Ends</label>'
-      + '<input type="date" id="f-end" value="' + esc(it.end_date) + '">'
-      + '<div class="hint">Same as the start date for a one-day event.</div></div>'
-      + '</div>'
+      + sect('subs', 'What kind of item is it for them?', 'optional',
+          '<div class="chk-grid" id="subPick"></div>')
 
-      + '<div class="fld"><div class="retail-readout" id="retailOut"></div></div>'
+      + sect('when', 'When is it?', '',
+          '<div class="fld-row">'
+          + '<div class="fld"><label for="f-start">Starts</label>'
+          + '<input type="date" id="f-start" value="' + esc(it.start_date) + '"></div>'
+          + '<div class="fld"><label for="f-end">Ends</label>'
+          + '<input type="date" id="f-end" value="' + esc(it.end_date) + '">'
+          + '<div class="hint">Same as the start date for a one-day event.</div></div>'
+          + '</div>'
+          + '<div class="fld"><div class="retail-readout" id="retailOut"></div></div>'
+          + '<div class="fld"><label class="fld-inline"><input type="checkbox" id="f-allday"'
+          + (it.all_day ? ' checked' : '') + '> All day</label></div>'
+          + '<div class="fld-row" id="timeRow"' + (it.all_day ? ' hidden' : '') + '>'
+          + '<div class="fld"><label for="f-stime">Start time</label>'
+          + '<input type="time" id="f-stime" value="' + esc(it.start_time || '') + '"></div>'
+          + '<div class="fld"><label for="f-etime">End time</label>'
+          + '<input type="time" id="f-etime" value="' + esc(it.end_time || '') + '"></div>'
+          + '</div>')
 
-      + '<div class="fld"><label class="fld-inline"><input type="checkbox" id="f-allday"'
-      + (timed ? '' : ' checked') + '> All day</label></div>'
+      + sect('where', 'Where is it?', 'optional',
+          '<div class="fld"><label for="f-venue">Venue</label>'
+          + '<input type="text" id="f-venue" value="' + esc(it.venue || '') + '" maxlength="200"></div>'
+          + '<div class="fld"><label for="f-address">Address</label>'
+          + '<input type="text" id="f-address" value="' + esc(it.address || '') + '" maxlength="200"></div>'
+          + '<div class="fld-row addr-row">'
+          + '<div class="fld"><label for="f-city">City</label>'
+          + '<input type="text" id="f-city" value="' + esc(it.city || '') + '" maxlength="120"></div>'
+          + '<div class="fld"><label for="f-state">State</label>'
+          + '<input type="text" id="f-state" value="' + esc(it.state || '') + '" maxlength="2" '
+          + 'style="text-transform:uppercase"></div>'
+          + '<div class="fld"><label for="f-zip">Zip</label>'
+          + '<input type="text" id="f-zip" value="' + esc(it.zip || '') + '" maxlength="10" '
+          + 'inputmode="numeric"></div>'
+          + '</div>')
 
-      + '<div class="fld-row" id="timeRow"' + (timed ? '' : ' hidden') + '>'
-      + '<div class="fld"><label for="f-stime">Start time</label>'
-      + '<input type="time" id="f-stime" value="' + esc(it.start_time || '') + '"></div>'
-      + '<div class="fld"><label for="f-etime">End time</label>'
-      + '<input type="time" id="f-etime" value="' + esc(it.end_time || '') + '"></div>'
-      + '</div>'
+      + sect('needs', 'What does it need?', 'optional',
+          '<div class="chk-grid" id="needPick"></div>'
+          + '<div class="fld" id="staffRow" hidden><label for="f-staff">How many extra staff?</label>'
+          + '<input type="text" id="f-staff" value="' + esc(it.staff_count || '')
+          + '" maxlength="20" inputmode="numeric" placeholder="e.g. 3"></div>'
+          + '<h4 class="step-q sub">Vehicles <span class="lbl-note">optional</span></h4>'
+          + '<div class="chk-grid">'
+          + tax('vehicles').map(function (v) {
+              return '<label class="fld-inline"><input type="checkbox" class="f-veh" value="'
+                + esc(v.key) + '"' + (vehiclesOf(it).indexOf(v.key) >= 0 ? ' checked' : '') + '>'
+                + esc(v.label) + '</label>';
+            }).join('')
+          + '</div>')
 
-      + '<div class="fld"><label for="f-venue">Venue</label>'
-      + '<input type="text" id="f-venue" value="' + esc(it.venue || '') + '" maxlength="200"></div>'
-      + '<div class="fld"><label for="f-address">Address</label>'
-      + '<input type="text" id="f-address" value="' + esc(it.address || '') + '" maxlength="200"></div>'
-      + '<div class="fld-row addr-row">'
-      + '<div class="fld"><label for="f-city">City</label>'
-      + '<input type="text" id="f-city" value="' + esc(it.city || '') + '" maxlength="120"></div>'
-      + '<div class="fld"><label for="f-state">State</label>'
-      + '<input type="text" id="f-state" value="' + esc(it.state || '') + '" maxlength="2" '
-      + 'style="text-transform:uppercase"></div>'
-      + '<div class="fld"><label for="f-zip">Zip</label>'
-      + '<input type="text" id="f-zip" value="' + esc(it.zip || '') + '" maxlength="10" inputmode="numeric"></div>'
-      + '</div>'
+      + sect('final', 'Anything else?', '',
+          '<div class="fld"><label for="f-status">Status</label><select id="f-status">'
+          + tax('statuses').map(function (st) {
+              return '<option value="' + esc(st) + '"' + (st === it.status ? ' selected' : '') + '>'
+                + esc(st) + '</option>';
+            }).join('')
+          + '</select></div>'
+          + '<div class="fld"><label for="f-url">Link</label>'
+          + '<input type="url" id="f-url" value="' + esc(it.url || '') + '" placeholder="https://"></div>'
+          + '<div class="fld"><label for="f-notes">Notes</label>'
+          + '<textarea id="f-notes" maxlength="4000">' + esc(it.notes || '') + '</textarea></div>');
 
-      + '<div class="fld"><label for="f-url">Link</label>'
-      + '<input type="url" id="f-url" value="' + esc(it.url || '') + '" placeholder="https://"></div>'
-      + '<div class="fld"><label for="f-notes">Notes</label>'
-      + '<textarea id="f-notes" maxlength="4000">' + esc(it.notes || '') + '</textarea></div>';
+    openModal(existing ? 'Edit event' : 'Add event', body, '');
 
-    var foot = '<div class="grow"></div>'
-      + '<button class="cal-btn" data-act="close">Cancel</button>'
-      + '<button class="cal-btn primary" data-act="save"'
-      + (existing ? ' data-id="' + esc(existing.id) + '"' : '') + '>'
-      + (existing ? 'Save changes' : 'Add to calendar') + '</button>';
+    // ── what the answers so far make relevant ────────────────────────────
+    function kind() {
+      var el = document.querySelector('.f-kind:checked');
+      return el ? el.value : 'events-marketing';
+    }
+    function primary() {
+      var el = document.querySelector('.f-dept:checked');
+      return el ? el.value : '';
+    }
+    function extras() {
+      return Array.prototype.map.call(document.querySelectorAll('.f-extra:checked'),
+        function (el) { return el.value; });
+    }
+    function onEvent() {
+      var p = primary();
+      return (p ? [p] : []).concat(extras());
+    }
+    function subsAvailable() {
+      var on = onEvent();
+      return tax('subTypes').filter(function (st) { return on.indexOf(st.department) >= 0; });
+    }
+    function needsAvailable() {
+      var on = onEvent();
+      return tax('needs').filter(function (nd) { return on.indexOf(nd.department) >= 0; });
+    }
 
-    openModal(existing ? 'Edit event' : 'Add event', body, foot);
+    // A meeting takes the short form: who, when, and nothing else. A step with
+    // nothing to ask -- no department on the event has any sub-type -- is not
+    // shown at all rather than shown empty.
+    function activeSteps() {
+      if (kind() === 'meetings-deadlines') return ['kind', 'title', 'dept', 'when', 'final'];
+      var out = ['kind', 'title', 'dept', 'extra'];
+      if (subsAvailable().length) out.push('subs');
+      out.push('when', 'where');
+      if (needsAvailable().length || tax('vehicles').length) out.push('needs');
+      out.push('final');
+      return out;
+    }
+
+    // ── the lists that depend on earlier answers ─────────────────────────
+    function paintDepts() {
+      var p = primary() || it.department;
+      $('#deptPick').innerHTML = tax('departments').map(function (d) {
+        return '<label class="fld-inline"><input type="radio" name="f-dept" class="f-dept" value="'
+          + esc(d.key) + '"' + (d.key === p ? ' checked' : '') + '>'
+          + '<i class="dot" style="background:' + deptVar(d.key) + '"></i>'
+          + esc(d.label) + '</label>';
+      }).join('');
+    }
+
+    function paintExtras() {
+      var p = primary();
+      var chosen = extras().length ? extras() : extraDeptsOf(it);
+      $('#extraPick').innerHTML = tax('departments')
+        .filter(function (d) { return d.key !== p; })
+        .map(function (d) {
+          return '<label class="fld-inline"><input type="checkbox" class="f-extra" value="'
+            + esc(d.key) + '"' + (chosen.indexOf(d.key) >= 0 ? ' checked' : '') + '>'
+            + '<i class="dot" style="background:' + deptVar(d.key) + '"></i>'
+            + esc(d.label) + '</label>';
+        }).join('');
+    }
+
+    // Sub-types and needs belong to departments, so both lists are rebuilt
+    // whenever the departments change. Anything already ticked that no longer
+    // applies drops off with the box it was on.
+    function paintScoped() {
+      var already = Array.prototype.map.call(document.querySelectorAll('.f-sub:checked'),
+        function (el) { return el.value; });
+      var chosenSubs = already.length ? already : subsOf(it);
+      $('#subPick').innerHTML = subsAvailable().map(function (st) {
+        return '<label class="fld-inline" title="' + esc(deptLabel(st.department)) + '">'
+          + '<input type="checkbox" class="f-sub" value="' + esc(st.key) + '"'
+          + (chosenSubs.indexOf(st.key) >= 0 ? ' checked' : '') + '>'
+          + esc(st.label) + '</label>';
+      }).join('') || '<p class="hint">Nothing on this event has sub-types.</p>';
+
+      var hadNeeds = Array.prototype.map.call(document.querySelectorAll('.f-need:checked'),
+        function (el) { return el.value; });
+      var chosenNeeds = hadNeeds.length ? hadNeeds : needsOf(it);
+      $('#needPick').innerHTML = needsAvailable().map(function (nd) {
+        return '<label class="fld-inline" title="' + esc(deptLabel(nd.department)) + '">'
+          + '<input type="checkbox" class="f-need" value="' + esc(nd.key) + '"'
+          + (chosenNeeds.indexOf(nd.key) >= 0 ? ' checked' : '') + '>'
+          + esc(nd.label) + '</label>';
+      }).join('') || '<p class="hint">No department on this event has needs to ask about.</p>';
+      paintStaff();
+    }
+
+    function paintStaff() {
+      var on = document.querySelector('.f-need[value="extra-staff"]:checked');
+      $('#staffRow').hidden = !on;
+    }
+
+    // ── the interview itself ─────────────────────────────────────────────
+    function missing(step) {
+      if (step === 'title' && !$('#f-title').value.trim()) return 'Give it a name first.';
+      if (step === 'dept' && !primary()) return 'Pick the department that owns it.';
+      if (step === 'when' && !$('#f-start').value) return 'Pick a start date.';
+      return '';
+    }
+
+    function paint() {
+      var active = activeSteps();
+      if (at >= active.length) at = active.length - 1;
+      Array.prototype.forEach.call(document.querySelectorAll('.step'), function (el) {
+        var on = active.indexOf(el.dataset.step) >= 0;
+        el.hidden = interview ? !(on && el.dataset.step === active[at]) : !on;
+      });
+
+      $('#stepTrail').innerHTML = !interview ? ''
+        : '<span class="trail-n">Step ' + (at + 1) + ' of ' + active.length + '</span>'
+          + active.map(function (k, i) {
+              return '<i class="trail-p' + (i <= at ? ' on' : '') + '"></i>';
+            }).join('');
+
+      var last = at === active.length - 1;
+      $('#modalFoot').innerHTML = !interview
+        ? '<div class="grow"></div>'
+          + '<button class="cal-btn" data-act="close">Cancel</button>'
+          + '<button class="cal-btn primary" data-act="save" data-id="' + esc(it.id) + '">Save changes</button>'
+        : (at > 0 ? '<button class="cal-btn" data-act="back">Back</button>' : '')
+          + '<div class="grow"></div>'
+          + '<button class="cal-btn" data-act="close">Cancel</button>'
+          + (last
+              ? '<button class="cal-btn primary" data-act="save">Add to calendar</button>'
+              : '<button class="cal-btn primary" data-act="next">Next</button>');
+
+      var first = document.querySelector('.step:not([hidden]) input:not([type=hidden]), '
+        + '.step:not([hidden]) textarea');
+      if (first && first.type !== 'date') first.focus();
+    }
+
+    function step(dir) {
+      var active = activeSteps();
+      if (dir > 0) {
+        var why = missing(active[at]);
+        if (why) { formError(why); return; }
+        $('#formErr').hidden = true;
+      }
+      at = Math.max(0, Math.min(active.length - 1, at + dir));
+      paint();
+    }
+    // wire() reads these off the modal footer, which is rebuilt on every step.
+    showForm.step = step;
+    showForm.atLastStep = function () {
+      var active = activeSteps();
+      return !interview || at === active.length - 1;
+    };
+
+    paintDepts();
+    paintExtras();
+    paintScoped();
+
+    $('#modalBody').addEventListener('change', function (e) {
+      if (e.target.classList.contains('f-kind')) return paint();
+      if (e.target.classList.contains('f-dept')) { paintExtras(); paintScoped(); return paint(); }
+      if (e.target.classList.contains('f-extra')) { paintScoped(); return paint(); }
+      if (e.target.classList.contains('f-need')) return paintStaff();
+      if (e.target.id === 'f-allday') { $('#timeRow').hidden = e.target.checked; return; }
+      if (e.target.id === 'f-start') return startChanged(e.target);
+    });
 
     // Year / Week / Start (Week) / End (Week) / Month / Day are shown as they
     // will be derived, so you can see the retail week without typing it.
@@ -760,52 +990,60 @@
       $('#retailOut').innerHTML = r
         ? '<span class="rl">Retail</span> Week ' + r.week + ' of ' + r.year
           + ' <span class="muted">(' + esc(weekRangeLabel(r)) + ')</span>'
-          + ' \u00b7 ' + MONTHS[d.getMonth()].slice(0, 3).toUpperCase()
-          + ' \u00b7 ' + DOW[d.getDay()].toUpperCase()
+          + ' · ' + MONTHS[d.getMonth()].slice(0, 3).toUpperCase()
+          + ' · ' + DOW[d.getDay()].toUpperCase()
         : '<span class="muted">Pick a start date to see its retail week.</span>';
     }
-    showRetail();
-
-    $('#f-allday').addEventListener('change', function () { $('#timeRow').hidden = this.checked; });
 
     // Move the end date with the start date, keeping whatever span was already
     // set. Without this, picking a start date and leaving the end date on its
     // default silently produces a multi-day event.
     var lastStart = it.start_date;
-    $('#f-start').addEventListener('change', function () {
+    function startChanged(input) {
       var end = $('#f-end');
-      if (this.value && lastStart && end.value) {
+      if (input.value && lastStart && end.value) {
         var span = Math.round((fromYmd(end.value) - fromYmd(lastStart)) / DAY_MS);
-        if (span >= 0) end.value = ymd(addDays(fromYmd(this.value), span));
+        if (span >= 0) end.value = ymd(addDays(fromYmd(input.value), span));
       }
-      if (end.value < this.value) end.value = this.value;
-      lastStart = this.value;
+      if (end.value < input.value) end.value = input.value;
+      lastStart = input.value;
       showRetail();
-    });
-    $('#f-title').focus();
+    }
+
+    showRetail();
+    paint();
   }
 
   function readForm() {
     var allDay = $('#f-allday').checked;
+    var vals = function (sel) {
+      return Array.prototype.map.call(document.querySelectorAll(sel),
+        function (el) { return el.value; });
+    };
+    var one = function (sel) {
+      var el = document.querySelector(sel);
+      return el ? el.value : '';
+    };
     return {
       title: $('#f-title').value,
       status: $('#f-status').value,
-      event_types: Array.prototype.map.call(
-        document.querySelectorAll('.f-type:checked'), function (el) { return el.value; }),
-      sub_types: Array.prototype.map.call(
-        document.querySelectorAll('.f-sub:checked'), function (el) { return el.value; }),
-      needs: Array.prototype.map.call(
-        document.querySelectorAll('.f-need:checked'), function (el) { return el.value; }),
+      event_type: one('.f-kind:checked'),
+      department: one('.f-dept:checked'),
+      departments: vals('.f-extra:checked'),
+      sub_types: vals('.f-sub:checked'),
+      needs: vals('.f-need:checked'),
+      staff_count: $('#f-staff') ? $('#f-staff').value : '',
+      vehicles: vals('.f-veh:checked'),
       start_date: $('#f-start').value,
       end_date: $('#f-end').value || $('#f-start').value,
       all_day: allDay ? 1 : 0,
       start_time: allDay ? '' : $('#f-stime').value,
       end_time: allDay ? '' : $('#f-etime').value,
-      venue: $('#f-venue').value,
-      address: $('#f-address').value,
-      city: $('#f-city').value,
-      state: $('#f-state').value,
-      zip: $('#f-zip').value,
+      venue: $('#f-venue') ? $('#f-venue').value : '',
+      address: $('#f-address') ? $('#f-address').value : '',
+      city: $('#f-city') ? $('#f-city').value : '',
+      state: $('#f-state') ? $('#f-state').value : '',
+      zip: $('#f-zip') ? $('#f-zip').value : '',
       url: $('#f-url').value,
       notes: $('#f-notes').value,
     };
@@ -828,10 +1066,12 @@
       + 'The first row must be the column headers. Everything is checked before anything is '
       + 'written &mdash; if one row is wrong, nothing is imported.</p>'
       + '<div class="fld"><label>Columns it recognises</label>'
-      + '<div class="sub-url">Name, Booked, Type, Event Type, Event \u{1F680}, Event \u{1F6D1}, '
-      + 'Start ⌚, End ⌚, Venue, Address, City, State, Zip, Notes, URL</div>'
-      + '<div class="hint">Only <strong>Name</strong>, <strong>Type</strong> and a '
-      + '<strong>start date</strong> are required. Year, Week, Start (Week), End (Week), Month and '
+      + '<div class="sub-url">Name, Booked, Event Type, Department, Sub-type, Needs, '
+      + 'Vehicles, Event \u{1F680}, Event \u{1F6D1}, Start ⌚, End ⌚, Venue, Address, City, '
+      + 'State, Zip, Notes, URL</div>'
+      + '<div class="hint">Only <strong>Name</strong>, <strong>Department</strong> and a '
+      + '<strong>start date</strong> are required. A Department column may list several; '
+      + 'the first one that owns events becomes the primary. Year, Week, Start (Week), End (Week), Month and '
       + 'Day are read if present and checked against the date, but not stored &mdash; the calendar '
       + 'works them out. Dates are YYYY-MM-DD, times are HH:MM on a 24-hour clock.</div></div>'
       + '<div class="fld"><label for="f-csv">CSV</label>'
@@ -965,7 +1205,7 @@
 
     $('#filterStatus').addEventListener('click', function (e) {
       if (!e.target.closest('#fltReset')) return;
-      ['types', 'subs', 'needs', 'stats'].forEach(function (axis) {
+      AXES.forEach(function (axis) {
         Object.keys(state[axis]).forEach(function (k) { state[axis][k] = true; });
       });
       savePrefs();
@@ -1004,6 +1244,11 @@
       var act = b.dataset.act;
 
       if (act === 'close') return closeModal();
+
+      // The interview rebuilds this footer on every step, so Back and Next are
+      // handled here rather than bound to buttons that stop existing.
+      if (act === 'next') return showForm.step(1);
+      if (act === 'back') return showForm.step(-1);
 
       if (act === 'copy') {
         navigator.clipboard.writeText(state.me.feedUrl || '').then(function () {
@@ -1072,13 +1317,18 @@
   // ── boot ───────────────────────────────────────────────────────────────
 
   function initFilters() {
-    state.tax.eventTypes.forEach(function (e) { state.types[e.key] = true; });
-    state.tax.subTypes.forEach(function (st) { state.subs[st.key] = true; });
-    state.tax.needs.forEach(function (nd) { state.needs[nd.key] = true; });
-    state.tax.statuses.forEach(function (st) { state.stats[st] = true; });
+    tax('eventTypes').forEach(function (e) { state.kinds[e.key] = true; });
+    tax('departments').forEach(function (d) { state.depts[d.key] = true; });
+    tax('subTypes').forEach(function (st) { state.subs[st.key] = true; });
+    tax('needs').forEach(function (nd) { state.needs[nd.key] = true; });
+    tax('vehicles').forEach(function (v) { state.vehicles[v.key] = true; });
+    tax('statuses').forEach(function (st) { state.stats[st] = true; });
+    // The "not set" rows, so an item with nothing on an axis is not silently
+    // filtered out by a section that has nothing to do with it.
+    state.depts[NONE] = true;
     state.subs[NONE] = true;
     state.needs[NONE] = true;
-    state.types[NONE] = true;
+    state.vehicles[NONE] = true;
   }
 
   Promise.all([api('/api/taxonomy'), api('/api/me').catch(function () { return {}; })])

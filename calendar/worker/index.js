@@ -10,8 +10,9 @@
 
 import { identify } from './access.js';
 import { buildIcs } from './ics.js';
-import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, SUB_TYPES, SUB_TYPE_KEYS,
-         NEEDS, NEED_KEYS, STATUSES } from './taxonomy.js';
+import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, DEPARTMENTS, DEPARTMENT_KEYS,
+         SUB_TYPES, SUB_TYPE_KEYS, NEEDS, NEED_KEYS, VEHICLES, VEHICLE_KEYS,
+         STATUSES, PRIMACY } from './taxonomy.js';
 import { retailWeek, retailWeekStart } from './retail.js';
 import SCHEMA from './schema.sql';
 
@@ -44,6 +45,35 @@ able to open it. Add a <strong>Bypass</strong> policy for the single path
 
 let schemaReady = false;
 
+// Columns added after the first release. CREATE TABLE IF NOT EXISTS leaves an
+// existing table alone, so a live database only gets them this way. Re-adding a
+// column that is already there is the expected case, not a failure.
+const ADDED_COLUMNS = [
+  'event_type TEXT', 'department TEXT', 'departments TEXT',
+  'staff_count TEXT', 'vehicles TEXT',
+];
+
+// The pre-decision-tree Event Type keys, and where each one lands now. Eight are
+// departments under a new name; "meetings" was never a department at all -- it
+// described the kind of item, which is what Event Type means now.
+const OLD_TYPE_TO_DEPT = {
+  'box-truck-events': 'box-truck',
+  'flagship-store': 'flagship-store',
+  'long-branch-store': 'long-branch-store',
+  'jrf': 'jrf',
+  'jetty-ink': 'jetty-ink',
+  'wholesale': 'wholesale',
+  'marketing': 'marketing',
+  'logistics': 'logistics',
+  'prodev': 'product-development',
+  'culture': 'culture',
+};
+
+// Two old needs were really vehicles. The rest -- Drifting Buoy, JBC, Insurance
+// and both tent setups -- have no home in the new structure and are dropped, as
+// are the Event, Meeting, Blog Post and Seasonal sub-types.
+const OLD_NEED_TO_VEHICLE = { 'box-truck-rig': 'box-truck', 'van': 'ink-van' };
+
 async function ensureSchema(db) {
   if (schemaReady) return;
   // Statements are idempotent, so running them on each cold start is cheaper
@@ -52,7 +82,85 @@ async function ensureSchema(db) {
     const sql = stmt.trim();
     if (sql) await db.prepare(sql).run();
   }
+  for (const col of ADDED_COLUMNS) {
+    try {
+      await db.prepare('ALTER TABLE items ADD COLUMN ' + col).run();
+    } catch (err) {
+      // "duplicate column name" every time after the first, and on any database
+      // created from the current schema. Anything else is worth surfacing.
+      if (!/duplicate column/i.test(String(err && err.message))) throw err;
+    }
+  }
+  await migrateToDecisionTree(db);
   schemaReady = true;
+}
+
+// One-time: move every stored row off the old no-primary "Event Type" axis onto
+// Event Type + primary department + additional departments. Guarded by a row in
+// meta, so it runs once and never again.
+const MIGRATION_KEY = 'decision-tree-2026-09';
+
+async function migrateToDecisionTree(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?')
+    .bind(MIGRATION_KEY).first();
+  if (done) return;
+
+  const res = await db.prepare(
+    'SELECT id, event_types, sub_types, needs FROM items').all();
+  const rows = res.results || [];
+
+  const stmt = db.prepare(
+    'UPDATE items SET event_type = ?, department = ?, departments = ?, '
+    + 'sub_types = ?, needs = ?, vehicles = ? WHERE id = ?');
+
+  const counts = { rows: rows.length, guessed: 0, noDepartment: 0, vehicles: 0 };
+  const batch = [];
+  for (const row of rows) {
+    const oldTypes = splitList(row.event_types);
+    const isMeeting = oldTypes.some((t) => t === 'meetings');
+    const depts = [];
+    for (const t of oldTypes) {
+      const d = OLD_TYPE_TO_DEPT[t];
+      if (d && !depts.includes(d)) depts.push(d);
+    }
+    // The old model had no primary, so one has to be chosen. PRIMACY encodes
+    // which department is likelier to own an event it shares.
+    depts.sort((a, b) => PRIMACY.indexOf(a) - PRIMACY.indexOf(b));
+    if (depts.length > 1) counts.guessed++;
+    if (!depts.length) counts.noDepartment++;
+
+    const subs = splitList(row.sub_types).filter((k) => SUB_TYPE_KEYS.includes(k));
+
+    const needs = [];
+    const veh = [];
+    for (const n of splitList(row.needs)) {
+      if (OLD_NEED_TO_VEHICLE[n]) {
+        if (!veh.includes(OLD_NEED_TO_VEHICLE[n])) veh.push(OLD_NEED_TO_VEHICLE[n]);
+      } else if (NEED_KEYS.includes(n)) {
+        needs.push(n);
+      }
+    }
+    if (veh.length) counts.vehicles++;
+
+    batch.push(stmt.bind(
+      isMeeting ? 'meetings-deadlines' : 'events-marketing',
+      depts[0] || null,
+      depts.length > 1 ? depts.slice(1).join(',') : null,
+      subs.length ? subs.join(',') : null,
+      needs.length ? needs.join(',') : null,
+      veh.length ? veh.join(',') : null,
+      row.id,
+    ));
+  }
+
+  // D1 caps how much one batch may carry, and a year of events is well past it.
+  const BATCH = 200;
+  for (let i = 0; i < batch.length; i += BATCH) {
+    await db.batch(batch.slice(i, i + BATCH));
+  }
+
+  await db.prepare('INSERT INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(MIGRATION_KEY, JSON.stringify(counts), new Date().toISOString()).run();
 }
 
 const json = (body, status) => new Response(JSON.stringify(body), {
@@ -94,22 +202,69 @@ function normalise(input, existing) {
     return picked;
   };
 
+  // A single-value axis.
+  const one = (field, allowed, label) => {
+    const raw = clean(pick(field), 60);
+    if (!raw) return null;
+    if (!allowed.includes(raw)) { errors.push('Unknown ' + label + ' "' + raw + '".'); return null; }
+    return raw;
+  };
+
   out.title = clean(pick('title'), 200);
   if (!out.title) errors.push('Event name is required.');
 
-  const types = multi('event_types', EVENT_TYPE_KEYS, 'Event Type');
-  if (!types.length) errors.push('Pick at least one Event Type.');
-  out.event_types = types.length ? types.join(',') : null;
+  out.event_type = one('event_type', EVENT_TYPE_KEYS, 'Event Type') || 'events-marketing';
+  const isMeeting = out.event_type === 'meetings-deadlines';
 
-  // Sub-types say what kind of item this is and apply to any calendar, so there
-  // is nothing to scope them against.
+  // The primary department owns the event and gives it its colour. Everything
+  // else on the event is along for the ride.
+  out.department = one('department', DEPARTMENT_KEYS, 'department');
+  if (!out.department) errors.push('Pick a primary department.');
+
+  const extra = multi('departments', DEPARTMENT_KEYS, 'department')
+    .filter((k) => k !== out.department);
+  out.departments = extra.length ? extra.join(',') : null;
+
+  // Every department on the event, primary first: what the scoped axes below
+  // are measured against.
+  const onEvent = (out.department ? [out.department] : []).concat(extra);
+
+  // Sub-types and needs each belong to a department. The decision tree hangs
+  // sub-types off the primary one; they are accepted from any department on the
+  // event instead, because a store sale that Marketing promotes really is a
+  // Promotion without Marketing having to own the event to say so.
   const subs = multi('sub_types', SUB_TYPE_KEYS, 'sub-type');
+  for (const k of subs) {
+    const def = SUB_TYPES.find((x) => x.key === k);
+    if (def && !onEvent.includes(def.department)) {
+      errors.push('"' + def.label + '" belongs to '
+        + (DEPARTMENTS.find((d) => d.key === def.department) || {}).label
+        + ', which is not on this event.');
+    }
+  }
   out.sub_types = subs.length ? subs.join(',') : null;
 
-  out.needs = ((n) => (n.length ? n.join(',') : null))(multi('needs', NEED_KEYS, 'need'));
+  const needs = multi('needs', NEED_KEYS, 'need');
+  for (const k of needs) {
+    const def = NEEDS.find((x) => x.key === k);
+    if (def && !onEvent.includes(def.department)) {
+      errors.push('"' + def.label + '" belongs to '
+        + (DEPARTMENTS.find((d) => d.key === def.department) || {}).label
+        + ', which is not on this event.');
+    }
+  }
+  out.needs = needs.length ? needs.join(',') : null;
 
-  out.status = clean(pick('status'), 20) || 'Pending';
-  if (!STATUSES.includes(out.status)) errors.push('Status must be Booked or Pending.');
+  // Only meaningful alongside the need it details.
+  out.staff_count = needs.includes('extra-staff') ? clean(pick('staff_count'), 20) : null;
+
+  const veh = multi('vehicles', VEHICLE_KEYS, 'vehicle');
+  out.vehicles = veh.length ? veh.join(',') : null;
+
+  out.status = clean(pick('status'), 20) || 'Booked';
+  if (!STATUSES.includes(out.status)) {
+    errors.push('Status must be one of ' + STATUSES.join(', ') + '.');
+  }
 
   out.start_date = clean(pick('start_date'), 10);
   if (!out.start_date || !DATE_RE.test(out.start_date)) errors.push('Start date must be YYYY-MM-DD.');
@@ -155,13 +310,22 @@ function normalise(input, existing) {
   out.url = clean(pick('url'), 500);
   if (out.url && !/^https?:\/\//i.test(out.url)) errors.push('Link must start with http:// or https://.');
 
+  if (isMeeting) for (const k of MEETING_BLANKS) out[k] = null;
+
   return { row: out, errors };
 }
 
 const COLS = [
-  'title', 'event_types', 'sub_types', 'needs', 'status', 'start_date', 'end_date', 'all_day',
-  'start_time', 'end_time', 'venue', 'address', 'city', 'state', 'zip', 'notes', 'url',
+  'title', 'event_type', 'department', 'departments', 'sub_types', 'needs', 'staff_count',
+  'vehicles', 'status', 'start_date', 'end_date', 'all_day', 'start_time', 'end_time',
+  'venue', 'address', 'city', 'state', 'zip', 'notes', 'url',
 ];
+
+// Meetings and deadlines take the short form: who, when, and nothing else. The
+// rest is cleared on write rather than merely hidden, so what is stored matches
+// what the form showed the person who saved it.
+const MEETING_BLANKS = ['sub_types', 'needs', 'staff_count', 'vehicles',
+                        'venue', 'address', 'city', 'state', 'zip'];
 
 // Year / Week / Start (Week) / End (Week) / Month / Day are not stored; they are
 // attached here so every reader sees the same values.
@@ -233,8 +397,11 @@ function parseCsv(text) {
 const IMPORT_ALIASES = {
   'name': 'title', 'title': 'title', 'event name': 'title', 'event': 'title',
   'booked': 'status', 'status': 'status',
-  'event type': 'event_types', 'event types': 'event_types',
-  'departments': 'event_types', 'department': 'event_types', 'tags': 'event_types',
+  'event type': 'event_type', 'event types': 'event_type', 'kind': 'event_type',
+  'departments': 'departments', 'department': 'departments', 'tags': 'departments',
+  'primary department': 'department',
+  'vehicle': 'vehicles', 'vehicles': 'vehicles',
+  'staff': 'staff_count', 'staff needed': 'staff_count', 'staff needed (#)': 'staff_count',
   'sub-type': 'sub_types', 'sub type': 'sub_types', 'subtype': 'sub_types', 'sub-types': 'sub_types',
   'need': 'needs', 'needs': 'needs',
   'event \u{1F680}': 'start_date', 'start': 'start_date', 'start date': 'start_date', 'date': 'start_date',
@@ -306,25 +473,43 @@ function splitList(v) {
 }
 
 function coerceKeys(rec) {
-  // The sheet has one Event Type column, and not everything in it is an Event
-  // Type: "JBC" is a reminder that the event wants our own branded beer. Route
-  // anything that names a Need to the needs axis instead of rejecting the row.
-  const rawTypes = splitList(rec.event_types);
+  // A sheet's department column is one list with no primary, and not everything
+  // in it is a department: a token may name a need, a vehicle or a sub-type.
+  // Sort each one onto its own axis rather than rejecting the row, and let
+  // PRIMACY choose the primary exactly as the migration did.
+  const rawDepts = splitList(rec.departments);
   const rawNeeds = splitList(rec.needs);
-  if (rawTypes.length || rawNeeds.length) {
-    const types = [];
+  const rawVeh = splitList(rec.vehicles);
+  if (rawDepts.length || rawNeeds.length || rawVeh.length) {
+    const depts = [];
     const needs = rawNeeds.map((n) => matchKey(NEEDS, n) || n);
-    for (const token of rawTypes) {
-      const asType = matchKey(EVENT_TYPES, token);
-      if (asType) { types.push(asType); continue; }
+    const veh = rawVeh.map((v) => matchKey(VEHICLES, v) || v);
+    const subs = splitList(rec.sub_types);
+    for (const token of rawDepts) {
+      const asDept = matchKey(DEPARTMENTS, token);
+      if (asDept) { if (!depts.includes(asDept)) depts.push(asDept); continue; }
       const asNeed = matchKey(NEEDS, token);
       if (asNeed) { if (!needs.includes(asNeed)) needs.push(asNeed); continue; }
-      types.push(token);   // unknown: let normalise() name it
+      const asVeh = matchKey(VEHICLES, token);
+      if (asVeh) { if (!veh.includes(asVeh)) veh.push(asVeh); continue; }
+      const asSub = matchKey(SUB_TYPES, token);
+      if (asSub) { if (!subs.includes(asSub)) subs.push(asSub); continue; }
+      depts.push(token);   // unknown: let normalise() name it
     }
-    rec.event_types = types;
+    depts.sort((a, b) => PRIMACY.indexOf(a) - PRIMACY.indexOf(b));
+    if (!rec.department && depts.length) rec.department = depts.shift();
+    rec.departments = depts;
     rec.needs = needs;
+    rec.vehicles = veh;
+    rec.sub_types = subs;
   }
 
+  if (rec.event_type != null) {
+    rec.event_type = matchKey(EVENT_TYPES, rec.event_type) || rec.event_type;
+  }
+  if (rec.department != null) {
+    rec.department = matchKey(DEPARTMENTS, rec.department) || rec.department;
+  }
   if (rec.sub_types != null) {
     rec.sub_types = splitList(rec.sub_types).map((x) => matchKey(SUB_TYPES, x) || x);
   }

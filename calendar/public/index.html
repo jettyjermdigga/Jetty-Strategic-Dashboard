@@ -54,17 +54,30 @@
 
 <div class="cal-shell">
   <aside class="cal-side">
-    <div class="cal-card flt-card" data-axis="types">
+    <div class="cal-card flt-card" data-axis="kinds">
       <button class="flt-toggle" type="button" aria-expanded="false">
         <h3>Event Type</h3><span class="flt-sum"></span><i class="flt-caret"></i>
       </button>
       <div class="flt-body">
-        <p class="flt-note">Everyone involved in each event &mdash; no primary.
-          Toggling one shows everything on that calendar.</p>
-        <div id="typeTree"></div>
+        <p class="flt-note">What kind of item it is. Every item is exactly one.</p>
+        <div id="kindTree"></div>
         <div class="flt-actions">
-          <button data-all="types" data-on="1">All</button>
-          <button data-all="types" data-on="0">None</button>
+          <button data-all="kinds" data-on="1">All</button>
+          <button data-all="kinds" data-on="0">None</button>
+        </div>
+      </div>
+    </div>
+    <div class="cal-card flt-card" data-axis="depts">
+      <button class="flt-toggle" type="button" aria-expanded="false">
+        <h3>Department</h3><span class="flt-sum"></span><i class="flt-caret"></i>
+      </button>
+      <div class="flt-body">
+        <p class="flt-note">Whose calendar it is. Colour follows the department
+          that owns the event; the others show as dots.</p>
+        <div id="deptTree"></div>
+        <div class="flt-actions">
+          <button data-all="depts" data-on="1">All</button>
+          <button data-all="depts" data-on="0">None</button>
         </div>
       </div>
     </div>
@@ -85,11 +98,24 @@
         <h3>Needs</h3><span class="flt-sum"></span><i class="flt-caret"></i>
       </button>
       <div class="flt-body">
-        <p class="flt-note">What an event requires, whichever calendar it is on.</p>
+        <p class="flt-note">What an event requires, asked by the department that
+          answers for it.</p>
         <div id="needTree"></div>
         <div class="flt-actions">
           <button data-all="needs" data-on="1">All</button>
           <button data-all="needs" data-on="0">None</button>
+        </div>
+      </div>
+    </div>
+    <div class="cal-card flt-card" data-axis="vehicles">
+      <button class="flt-toggle" type="button" aria-expanded="false">
+        <h3>Vehicles</h3><span class="flt-sum"></span><i class="flt-caret"></i>
+      </button>
+      <div class="flt-body">
+        <div id="vehTree"></div>
+        <div class="flt-actions">
+          <button data-all="vehicles" data-on="1">All</button>
+          <button data-all="vehicles" data-on="0">None</button>
         </div>
       </div>
     </div>
