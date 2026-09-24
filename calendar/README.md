@@ -362,6 +362,40 @@ trusting the header it sets. Until both are filled in, the page says so.
 *Subscribe* hands out a URL to paste into Google Calendar under
 Other calendars → **+** → **From URL**.
 
+### Why the feed needs a real hostname
+
+`/calendar.ics` is served **before** the sign-in check, because Google's
+fetchers carry no Cloudflare Access session — the unguessable `ICS_KEY` is what
+protects that one path. But Access runs in front of the Worker, so on a
+`workers.dev` hostname it intercepts the request before the Worker ever sees it,
+and a `workers.dev` hostname cannot be carved up by path: Access attaches to the
+whole Worker from the Worker's own **Access** tab, and self-hosted applications
+— the kind that take a path — are built around hostnames in a zone you own.
+
+So the feed only works once the calendar is on a domain in the same Cloudflare
+account. The steps, with `calendar.example.com` standing in:
+
+1. **Add the custom domain.** Worker → **Settings** → **Domains & Routes** →
+   **Add** → **Custom domain** → `calendar.example.com`. Cloudflare creates the
+   DNS record itself. Then **disable the `workers.dev` route** on the same page,
+   so there is one way in rather than two.
+2. **Protect the hostname.** Zero Trust → **Access** → **Applications** → **Add
+   an application** → **Self-hosted**. Hostname `calendar.example.com`, no path.
+   Give it the policy the Worker has now — the `@jettylife.com` and
+   `@jettyrockfoundation.org` domains.
+3. **Bypass the one path.** Add a **second** self-hosted application, hostname
+   `calendar.example.com`, path `calendar.ics`. One policy, action **Bypass**,
+   include **Everyone**. The more specific path wins over the application in
+   step 2.
+4. **Re-issue the key.** The feed URL is about to become publicly reachable to
+   anyone holding it, so set a fresh `ICS_KEY` once the bypass is in place.
+
+`REQUIRE_IDENTITY` stays `"true"` throughout, which is what makes the order
+safe: attach the domain before the Access application and the Worker still
+refuses every request that arrives without an identity, showing the explainer
+page rather than the calendar. The only path that answers without a sign-in is
+`/calendar.ics`, and only with the right key.
+
 Google refreshes subscribed calendars on its own schedule — often a few hours,
 sometimes longer. The feed asks for hourly, but Google treats that as a hint. The
 page is always current; the Google copy lags. Treat the subscribe link like a
