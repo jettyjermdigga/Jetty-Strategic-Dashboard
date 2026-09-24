@@ -425,7 +425,9 @@ async function handleApi(request, env, url, who) {
       return json({ error: 'Send either { csv } or { items }.' }, 400);
     }
 
-    if (records.length > 500) return json({ error: 'Import is capped at 500 items per paste.' }, 400);
+    // A year of a company calendar is legitimately ~600 rows -- the 2026 backfill
+    // alone is 587 -- so the cap has to clear a full year or it bites every January.
+    if (records.length > 2000) return json({ error: 'Import is capped at 2000 items per paste.' }, 400);
 
     // Validate everything before writing anything -- a half-applied import is
     // worse than a rejected one, because you cannot tell what landed.
@@ -451,9 +453,14 @@ async function handleApi(request, env, url, who) {
       'INSERT INTO items (id,' + COLS.join(',') + ',created_by,created_at,updated_by,updated_at) '
       + 'VALUES (?' + ',?'.repeat(COLS.length + 4) + ')',
     );
-    await db.batch(rows.map((row) => stmt.bind(
-      crypto.randomUUID(), ...COLS.map((c) => row[c]), who.email, now, who.email, now,
-    )));
+    // D1 caps how many bound statements one batch may carry, so write in chunks.
+    // Validation already passed for every row, so a chunk cannot fail on bad data.
+    const BATCH = 200;
+    for (let i = 0; i < rows.length; i += BATCH) {
+      await db.batch(rows.slice(i, i + BATCH).map((row) => stmt.bind(
+        crypto.randomUUID(), ...COLS.map((c) => row[c]), who.email, now, who.email, now,
+      )));
+    }
 
     return json({ imported: rows.length, warnings: warnings.slice(0, 40) }, 201);
   }

@@ -183,8 +183,18 @@ def convert(records):
         if clean(f.get("Do we need insurance or an insurance cert?")).lower() == "yes":
             needs.append("Insurance")
 
+        if not types and any(clean(x).lower().startswith("meeting") for x in subs):
+            # 15 records carry no Event Type at all. Eleven of them say
+            # Type = Meeting, which names a calendar outright -- that is the
+            # record telling us where it belongs, not a guess. The rest (an
+            # Event, and some blanks) name no calendar and stay out.
+            types = ["Meetings"]
+            notes.append("%s (%s): no Event Type, but Type says Meeting -- filed under Meetings"
+                         % (rec["id"], name))
+
         if not types:
-            notes.append("%s (%s): no Event Type left after mapping; skipped" % (rec["id"], name))
+            notes.append("%s (%s): no Event Type and nothing to infer one from; skipped"
+                         % (rec["id"], name))
             continue
 
         rows.append({
