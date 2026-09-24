@@ -135,6 +135,25 @@ of them are editors-only.
 | Venue, Address, City, State, Zip | events only |
 | Notes, Link | |
 
+## Filtering
+
+Each section in the sidebar asks one question, and the sections narrow together:
+an event shows when it passes every section that is asking something.
+
+A section with **nothing ticked has stopped asking**, so it stops narrowing — its
+summary reads `any`. Without that, clearing one section blanked the whole
+calendar however much was ticked in the others, which is a dead end you can only
+get out of by guessing which section did it. "Show me the ones with none" is a
+row of its own in each section, so "nothing ticked" has no second job to do.
+
+Within a section, an event passes if **any** of its values is ticked. Untick
+Marketing and you lose the campaigns Marketing owns, but you keep the store sale
+it only promotes — that event is still the store's.
+
+Each person's ticks are remembered in their own browser. What is stored is the
+set of boxes turned **off**, so a department added later starts on for everybody
+rather than being invisible to whoever was here first.
+
 ## The retail calendar
 
 Week 1 of 2026 runs Sunday 4 January to Saturday 10 January, anchored in

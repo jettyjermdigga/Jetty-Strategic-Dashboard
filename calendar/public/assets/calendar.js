@@ -217,19 +217,29 @@
 
   // ── filtering ──────────────────────────────────────────────────────────
 
+  // An axis with nothing ticked has stopped asking a question, so it stops
+  // narrowing. Without this, emptying one section blanks the whole calendar no
+  // matter what is ticked in the others -- and "show me the ones with none"
+  // already has its own row, so "nothing ticked" has no second job to do.
+  function axisActive(shown) {
+    for (var k in shown) if (shown[k] !== false) return true;
+    return false;
+  }
+
   // Each axis narrows independently. An item passes an axis when any of its
   // values on that axis is still shown -- or when it has none and the axis's
   // "not set" row is still shown, so an item without sub-types is not quietly
   // filtered out by a section that has nothing to do with it.
   function passesAxis(values, shown) {
+    if (!axisActive(shown)) return true;
     if (!values.length) return shown[NONE] !== false;
     return values.some(function (k) { return shown[k] !== false; });
   }
 
   function passes(item) {
-    if (state.stats[item.status] === false) return false;
-    if (item.event_type && state.kinds[item.event_type] === false) return false;
-    return passesAxis(deptsOf(item), state.depts)
+    return passesAxis(item.event_type ? [item.event_type] : [], state.kinds)
+      && passesAxis(item.status ? [item.status] : [], state.stats)
+      && passesAxis(deptsOf(item), state.depts)
       && passesAxis(subsOf(item), state.subs)
       && passesAxis(needsOf(item), state.needs)
       && passesAxis(vehiclesOf(item), state.vehicles);
@@ -379,9 +389,12 @@
       var boxes = card.querySelectorAll('.flt-body input[type="checkbox"]');
       var on = card.querySelectorAll('.flt-body input[type="checkbox"]:checked').length;
       var sum = card.querySelector('.flt-sum');
-      var filtered = boxes.length > 0 && on < boxes.length;
+      // Nothing ticked means the section is not narrowing anything, so it says
+      // "any" rather than "0 of 11", which would read as hiding everything.
+      var filtered = boxes.length > 0 && on > 0 && on < boxes.length;
       if (sum) {
         sum.textContent = !boxes.length ? ''
+          : on === 0 ? 'any'
           : filtered ? on + ' of ' + boxes.length
           : 'all ' + boxes.length;
         sum.classList.toggle('on', filtered);
