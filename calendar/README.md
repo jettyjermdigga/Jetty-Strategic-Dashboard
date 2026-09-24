@@ -145,6 +145,22 @@ sorting makes those the same value, which is what they always meant.
 The filter sidebar, the add form, the colour coding and the Google Calendar
 descriptions are all generated from it. Adding a department is one line.
 
+## Airtable after the backfill
+
+The Airtable calendar is retired for **planning**: events, meetings and
+marketing items are entered here from now on, and nothing syncs between the two.
+
+It is **not** retired for **results**. `scripts/build_dashboard.py` reads event
+revenue, orders and fees from the same `Calendar & Events 🗓` table to build the
+Strategic Dashboard's Events tab, so after an event runs, its takings still get
+recorded in Airtable. Planning here, results there.
+
+One thing to watch: the dashboard matches events by name and date, and the
+existing data already spells the same event several ways — *Rocking the Docks*
+and *Rocking The Docks* both appear. With planning and results now in two
+systems, a name typed differently in each is the way they quietly stop lining
+up. Copying the name from the calendar is worth the second it takes.
+
 ## Backfilling from Airtable
 
 `Calendar & Events 🗓` in the JETTY HUB base holds 14,279 records going back to
@@ -211,15 +227,28 @@ rejected one, because you cannot tell what landed.
 ## Who can do what
 
 Cloudflare Access sits in front of the whole Worker, so anyone who loads the
-page is signed in.
+page is signed in. The calendar is meant to be shared beyond staff — SunnySide
+and other outside partners included.
 
-- **Everyone** who gets in can read the whole calendar and subscribe to the feed.
-  The Event Type filters narrow the view; they are not access control.
+- **Everyone** who gets in sees the **whole calendar** and can subscribe to the
+  feed.
 - **Editors** — the emails in `CALENDAR_EDITORS` in `wrangler.toml` — also see
   *Add event* and *Import*, and can edit and delete.
 
-Every event records who created it and who last changed it. Writes are checked on
-the server, not merely hidden in the UI.
+**There is no per-person scoping, and that is a deliberate choice.** The Event
+Type filters are a view, not a permission: they change what is on screen, not
+what the API returns. Anyone you add to the Access application can see every
+calendar — JRF board meetings, staff and culture events, venue addresses, and
+the permit, insurance and equipment needs on every event. The ICS feed is the
+same: one key, the whole calendar, and anyone holding the link needs no sign-in
+at all.
+
+So the control is **who you add**, and adding someone is the whole decision.
+If that ever stops being true — something goes on here that an agency should
+not see — scoping has to be built before the next external login, not after.
+
+Every event records who created it and who last changed it. Writes are checked
+on the server, not merely hidden in the UI.
 
 The Worker **fails closed**: a request that arrives with no Access identity gets
 nothing but a page explaining what is missing. A new `workers.dev` hostname is
