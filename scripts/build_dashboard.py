@@ -1935,6 +1935,17 @@ def build_labor_fun_stats(pr):
 
 EXTRA_CSS = '''
 *{box-sizing:border-box}
+/* Links to the rest of the internal-tools site. The dashboard is no longer the
+   only thing on this domain, so it needs a way back out. */
+.topbar-links{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.topbar-links a{
+  font-family:'Gilroy',sans-serif;font-weight:600;font-size:13px;
+  color:rgba(255,255,255,.72);text-decoration:none;
+  padding:7px 13px;border-radius:999px;white-space:nowrap;
+  transition:background .15s,color .15s;
+}
+.topbar-links a:hover{background:rgba(255,255,255,.12);color:#fff}
+.topbar-links a.here{background:rgba(255,255,255,.18);color:#fff}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 .chart-wrap{position:relative;width:100%}
@@ -3906,6 +3917,11 @@ def build_html(d):
         '    </div>\n'
         '    <div class="qtr-labels">' + qtr_labels_html + '</div>\n'
         '  </div>\n'
+        '  <nav class="topbar-links">\n'
+        '    <a href="/">Home</a>\n'
+        '    <a href="/dashboard" class="here">Dashboard</a>\n'
+        '    <a href="/calendar">Calendar</a>\n'
+        '  </nav>\n'
         '</header>\n'
     )
 
@@ -4040,10 +4056,10 @@ def main():
     print("Building dashboard...")
     html = build_html(d)
     os.makedirs("output", exist_ok=True)
-    with open("output/index.html", "w") as f:
+    with open("output/dashboard.html", "w") as f:
         f.write(html)
-    size = os.path.getsize("output/index.html") / 1024
-    print("Done — output/index.html written (" + str(round(size,1)) + " KB)")
+    size = os.path.getsize("output/dashboard.html") / 1024
+    print("Done — output/dashboard.html written (" + str(round(size,1)) + " KB)")
 
     source_modified = os.environ.get("SOURCE_MODIFIED_TIME", "")
     jrf_modified = os.environ.get("JRF_MODIFIED_TIME", "")
