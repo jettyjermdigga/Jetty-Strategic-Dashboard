@@ -46,8 +46,7 @@ An event carries what the box truck sheet carries:
 | Event name | Name | required |
 | Status | Booked | the checkbox: ticked is **Booked**, blank is **Pending** |
 | Type | Type | the top-level calendar; only Box Truck & Events so far |
-| Event Type | Event Type | the department putting it on the calendar — one |
-| Tag in | Event Type | other departments that should also see it — any number |
+| Event Type | Event Type | everyone involved — any number, all peers |
 | Start / end date | Event 🚀 / Event 🛑 | |
 | Start / end time | Start ⌚ / End ⌚ | 24-hour on the way in |
 | Venue, Address, City, State, Zip | same | |
@@ -70,25 +69,25 @@ places: one week number off by one, and two weekday labels that do not match
 their own dates. That is what happens when the same fact is entered twice. An
 import reports such disagreements and then ignores those columns.
 
-## Owners, tags and colour
+## Event Types and colour
 
-One department **owns** an event — the one that put it on the calendar — and any
-others are **tagged in**, which is what puts the event on their calendar too.
-Box Truck adds Coquina Jam and tags in JRF and INK: all three departments see it
-in their own filtered view, and it stays a Box Truck & Events item throughout.
+Event Types are **peers**. There is no primary and no owner: Coquina Jam is a JRF
+event that the Box Truck always works, and naming either one the owner would
+misdescribe how the event runs. An event carries every Event Type involved and
+shows on each of their calendars — filtering to JRF returns every event JRF is on,
+whoever else is there.
 
-**Colour says which calendar an event belongs to, not who is on it.** Every Box
-Truck & Events item is the same colour, so the month reads as one calendar
-rather than a mosaic. Tags show as a small dot each on the event's chip, so a
-cross-department event is still visible at a glance without changing colour.
-*Colour by* can be switched to Status or Event Type when that is what you want
-to see.
+Each event's chip carries **one colour band per Event Type**, so an event that is
+both a JRF event and a Box Truck event says so instead of being forced into one
+colour. Events with a single Event Type — 96 of the 112 on the 2026 sheet — get a
+solid band, so the month still reads as one calendar. *Colour by* can be switched
+to Status or Type when that is what you want to see, and the chip collapses to a
+single band.
 
-The sheet has a single Event Type column listing every department involved, in
-no reliable order — both `Box Truck,JRF` and `JRF,Box Truck` appear. On import
-the department that owns this calendar (`defaultOwner` on the Type in
-`worker/taxonomy.js`) is taken as the owner and the rest become tags, so list
-order does not matter.
+Event Types are stored in the order they appear in `worker/taxonomy.js`, not the
+order the sheet lists them. That matters because the sheet has both
+`Box Truck,JRF` and `JRF,Box Truck`; sorting makes those the same value, which is
+what they always meant.
 
 ## Changing the structure
 

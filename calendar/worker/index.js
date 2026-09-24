@@ -10,8 +10,7 @@
 
 import { identify } from './access.js';
 import { buildIcs } from './ics.js';
-import { TAXONOMY, CATEGORY_KEYS, DEPARTMENT_KEYS, STATUSES, CATEGORIES, DEPARTMENTS,
-         categoryByKey } from './taxonomy.js';
+import { TAXONOMY, CATEGORY_KEYS, DEPARTMENT_KEYS, STATUSES, CATEGORIES, DEPARTMENTS } from './taxonomy.js';
 import { retailWeek, retailWeekStart } from './retail.js';
 import SCHEMA from './schema.sql';
 
@@ -86,31 +85,22 @@ function normalise(input, existing) {
     errors.push('Type must be one of: ' + CATEGORY_KEYS.join(', ') + '.');
   }
 
-  // One department owns the event -- the one that put it on the calendar -- and
-  // any others are tagged in so it shows on their calendar too.
-  const cat = categoryByKey(out.category);
-  out.owner_dept = clean(pick('owner_dept'), 40) || (cat ? cat.defaultOwner : null);
-  if (out.owner_dept && !DEPARTMENT_KEYS.includes(out.owner_dept)) {
-    errors.push('Unknown Event Type "' + out.owner_dept + '".');
-    out.owner_dept = null;
-  }
-
-  const rawTags = pick('tags');
-  const tagList = Array.isArray(rawTags)
-    ? rawTags
-    : String(rawTags == null ? '' : rawTags).split(',');
-  const tags = [];
-  for (const t of tagList) {
+  // Event Types are peers -- an event can be a JRF event that the Box Truck works,
+  // with neither one primary. Stored in taxonomy order so the sheet's two
+  // spellings, "Box Truck,JRF" and "JRF,Box Truck", become the same value.
+  const rawTypes = pick('event_types');
+  const typeList = Array.isArray(rawTypes)
+    ? rawTypes
+    : String(rawTypes == null ? '' : rawTypes).split(',');
+  const picked = [];
+  for (const t of typeList) {
     const key = clean(t, 40);
     if (!key) continue;
-    if (!DEPARTMENT_KEYS.includes(key)) {
-      errors.push('Unknown Event Type tag "' + key + '".');
-    } else if (key !== out.owner_dept && !tags.includes(key)) {
-      // Tagging the owner in as well would double-count it everywhere.
-      tags.push(key);
-    }
+    if (!DEPARTMENT_KEYS.includes(key)) errors.push('Unknown Event Type "' + key + '".');
+    else if (!picked.includes(key)) picked.push(key);
   }
-  out.tags = tags.length ? tags.join(',') : null;
+  picked.sort((a, b) => DEPARTMENT_KEYS.indexOf(a) - DEPARTMENT_KEYS.indexOf(b));
+  out.event_types = picked.length ? picked.join(',') : null;
 
   out.status = clean(pick('status'), 20) || 'Pending';
   if (!STATUSES.includes(out.status)) errors.push('Status must be Booked or Pending.');
@@ -163,7 +153,7 @@ function normalise(input, existing) {
 }
 
 const COLS = [
-  'title', 'category', 'owner_dept', 'tags', 'status', 'start_date', 'end_date', 'all_day',
+  'title', 'category', 'event_types', 'status', 'start_date', 'end_date', 'all_day',
   'start_time', 'end_time', 'venue', 'address', 'city', 'state', 'zip', 'notes', 'url',
 ];
 
@@ -238,8 +228,8 @@ const IMPORT_ALIASES = {
   'name': 'title', 'title': 'title', 'event name': 'title', 'event': 'title',
   'booked': 'status', 'status': 'status',
   'type': 'category', 'category': 'category',
-  'event type': 'departments', 'departments': 'departments', 'department': 'departments',
-  'primary': 'owner_dept', 'owner': 'owner_dept', 'tagged in': 'tags', 'tags': 'tags',
+  'event type': 'event_types', 'event types': 'event_types',
+  'departments': 'event_types', 'department': 'event_types', 'tags': 'event_types',
   'event \u{1F680}': 'start_date', 'start': 'start_date', 'start date': 'start_date', 'date': 'start_date',
   'event \u{1F6D1}': 'end_date', 'end': 'end_date', 'end date': 'end_date',
   'start \u{231A}': 'start_time', 'start time': 'start_time', 'event start time': 'start_time',
@@ -297,30 +287,19 @@ function coerceKeys(rec) {
     if (c) rec.category = c.key;
   }
 
-  // The sheet has one Event Type column holding every department involved, in no
-  // reliable order -- both "Box Truck,JRF" and "JRF,Box Truck" appear. Whichever
-  // department owns this calendar is the owner; the rest are tagged in.
+  // The sheet's Event Type column lists everyone involved, in no reliable order.
+  // Accept the label or the key; normalise() puts them in taxonomy order.
   const toKey = (raw) => {
     const want = slugify(raw);
     if (!want) return '';
     const d = DEPARTMENTS.find((x) => x.key === want || slugify(x.label) === want);
     return d ? d.key : String(raw).trim();
   };
-  if (rec.departments != null && rec.owner_dept == null && rec.tags == null) {
-    const parts = (Array.isArray(rec.departments)
-      ? rec.departments
-      : String(rec.departments).split(/[,;/]+/)).map(toKey).filter(Boolean);
-    const home = (categoryByKey(rec.category) || {}).defaultOwner;
-    const owner = (home && parts.includes(home)) ? home : parts[0];
-    rec.owner_dept = owner || null;
-    rec.tags = parts.filter((k) => k !== owner);
+  const rawTypes = rec.event_types != null ? rec.event_types : rec.departments;
+  if (rawTypes != null) {
+    rec.event_types = (Array.isArray(rawTypes) ? rawTypes : String(rawTypes).split(/[,;/]+/))
+      .map(toKey).filter(Boolean);
     delete rec.departments;
-  } else {
-    if (rec.owner_dept != null) rec.owner_dept = toKey(rec.owner_dept);
-    if (rec.tags != null) {
-      rec.tags = (Array.isArray(rec.tags) ? rec.tags : String(rec.tags).split(/[,;/]+/))
-        .map(toKey).filter(Boolean);
-    }
   }
 
   if (rec.status != null) {
