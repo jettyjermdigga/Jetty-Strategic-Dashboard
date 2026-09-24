@@ -438,3 +438,53 @@
   flex-direction:row;border-radius:3px;
 }
 .det-bands .bar i{flex:1;height:6px}
+
+/* ── Collapsible filter sections ────────────────────────────────────────── */
+
+/* Collapsed by default: eleven Event Types, fourteen sub-types, nine needs and
+   two statuses is 36 ticked boxes of furniture, and "everything on" carries no
+   information. The header summary is what makes collapsing safe -- a shut panel
+   still says whether it is hiding anything. */
+.flt-card{padding:0}
+.flt-card .flt-toggle{
+  display:flex;align-items:center;gap:10px;width:100%;
+  background:transparent;border:0;cursor:pointer;text-align:left;
+  padding:14px 18px;
+}
+.flt-card .flt-toggle h3{margin:0;flex:1}
+.flt-card .flt-toggle:hover h3{opacity:.85}
+.flt-sum{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;
+  opacity:.45;white-space:nowrap;
+}
+.flt-sum.on{
+  opacity:1;color:var(--primary);font-weight:600;
+}
+:root[data-theme="dark"] .flt-sum.on{color:#8fb3c4}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .flt-sum.on{color:#8fb3c4} }
+.flt-caret{
+  width:0;height:0;flex-shrink:0;
+  border-left:5px solid currentColor;
+  border-top:4px solid transparent;border-bottom:4px solid transparent;
+  opacity:.4;transition:transform .15s;
+}
+.flt-card.open .flt-caret{transform:rotate(90deg)}
+
+.flt-body{display:none;padding:0 18px 16px}
+.flt-card.open .flt-body{display:block}
+.flt-body .flt-note{margin-top:0}
+
+/* ── Filter status ──────────────────────────────────────────────────────── */
+
+.flt-status{
+  font-family:var(--body);font-size:13.5px;line-height:1.5;
+  background:rgba(67,87,94,.07);border:1px solid var(--surface-alt);
+  border-radius:6px;padding:9px 14px;margin-bottom:14px;
+}
+.flt-status button{
+  background:transparent;border:0;padding:0;cursor:pointer;
+  font-family:var(--display);font-weight:600;font-size:13.5px;
+  color:var(--primary);text-decoration:underline;
+}
+:root[data-theme="dark"] .flt-status button{color:#8fb3c4}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .flt-status button{color:#8fb3c4} }
