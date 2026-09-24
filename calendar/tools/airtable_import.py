@@ -26,6 +26,8 @@ What it does handle:
 * **Four Event Type values are retired** -- Brand, Deadline, Window and Women's.
   They carry one 2026 record between them, and that record is also tagged JRF, so
   dropping them loses nothing. Each drop is reported.
+* **--booked-only** keeps just the events with Booked ticked. Anything still
+  tentative is left behind entirely, not imported as Pending.
 * **Needs live in three different Airtable fields**: Setup Needs, plus a Yes/No
   for the social permit and another for insurance. They are merged into one.
 """
@@ -93,13 +95,16 @@ def get(path, token, params):
     sys.exit("Airtable kept rate-limiting the request.")
 
 
-def fetch(token, from_year):
+def fetch(token, from_year, booked_only):
     records = []
+    clauses = ["{%s} != BLANK()" % DATE_START,
+               "YEAR({%s}) >= %d" % (DATE_START, from_year)]
+    if booked_only:
+        clauses.append("{Booked}")
     params = {
         "pageSize": 100,
         "fields[]": FIELDS,
-        "filterByFormula": "AND({%s} != BLANK(), YEAR({%s}) >= %d)"
-                           % (DATE_START, DATE_START, from_year),
+        "filterByFormula": "AND(" + ", ".join(clauses) + ")",
     }
     offset = None
     while True:
@@ -125,14 +130,19 @@ def as_list(v):
     return v if isinstance(v, list) else [v]
 
 
-def convert(records):
+def convert(records, booked_only=False):
     rows, problems, notes = [], [], []
+    blanks = [0]
 
     for rec in records:
         f = rec.get("fields", {})
+        if booked_only and not f.get("Booked"):
+            continue
         name = clean(f.get("Name"))
         if not name:
-            problems.append("%s: no name" % rec["id"])
+            # Blank rows in Airtable. Counted, not listed -- there is nothing to
+            # act on and naming each one only makes the report harder to read.
+            blanks[0] += 1
             continue
 
         start = clean(f.get(DATE_START))
@@ -216,6 +226,8 @@ def convert(records):
             "URL": clean(f.get("Link")),
         })
 
+    if blanks[0]:
+        notes.append("%d record(s) had no name and were ignored." % blanks[0])
     rows.sort(key=lambda r: (r[DATE_START], r["Name"]))
     return rows, problems, notes
 
@@ -226,17 +238,20 @@ def main():
     ap.add_argument("--from-year", type=int, default=2026,
                     help="earliest calendar year to pull (default 2026)")
     ap.add_argument("-o", "--out", help="write CSV here instead of stdout")
+    ap.add_argument("--booked-only", action="store_true",
+                    help="only events with Booked ticked; skips everything still tentative")
     args = ap.parse_args()
 
     token = os.environ.get("AIRTABLE_API_KEY", "").strip()
     if not token:
         sys.exit("AIRTABLE_API_KEY is not set.")
 
-    records = fetch(token, args.from_year)
-    print("Fetched %d records dated %d or later." % (len(records), args.from_year),
+    records = fetch(token, args.from_year, args.booked_only)
+    print("Fetched %d records dated %d or later%s."
+          % (len(records), args.from_year, ", booked only" if args.booked_only else ""),
           file=sys.stderr)
 
-    rows, problems, notes = convert(records)
+    rows, problems, notes = convert(records, args.booked_only)
 
     handle = open(args.out, "w", newline="", encoding="utf-8") if args.out else sys.stdout
     writer = csv.DictWriter(handle, fieldnames=OUT_COLUMNS)
