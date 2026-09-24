@@ -101,8 +101,15 @@ export function buildIcs(items, opts) {
     ...VTIMEZONE,
   ];
 
+  // A cancelled event stays on the calendar here, struck through, because the
+  // day it was meant to happen still has to answer "what happened to that?".
+  // A subscriber's own Google or Apple calendar is a different question: they
+  // want what is happening. STATUS:CANCELLED is honoured by some clients and
+  // ignored by others, so drop them rather than rely on it.
+  const feed = o.includeCancelled ? items : items.filter((it) => it.status !== 'Cancelled');
+
   const now = stamp();
-  for (const it of items) {
+  for (const it of feed) {
     lines.push('BEGIN:VEVENT');
     lines.push('UID:' + esc(it.id) + '@jetty-calendar');
     lines.push('DTSTAMP:' + now);
