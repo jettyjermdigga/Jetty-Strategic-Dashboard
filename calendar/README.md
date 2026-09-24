@@ -66,6 +66,7 @@ store event that Marketing promotes, not a joint one.
 | Logistics | |
 | Product Development | |
 | Culture | Team-building |
+| Finance | |
 
 Meetings is no longer a department: a meeting is an Event Type, and it still
 belongs to whichever department called it.
@@ -184,7 +185,9 @@ sorting makes those the same value, which is what they always meant.
 filter sidebar, the add form's questions, the colour coding and the Google
 Calendar descriptions are all generated from it. Adding a department is one line
 — though a new department also needs a colour, and the palette is a validated
-set, so run it back through the validator rather than picking one by eye.
+set, so run it back through the validator rather than picking one by eye. The
+order of `DEPARTMENTS` is load-bearing: separation is measured between
+neighbours in that list, and at eleven colours only a few positions are free.
 
 Scoping is data, not code: a sub-type or need names its `department`, and the
 form works out which questions to ask from that.

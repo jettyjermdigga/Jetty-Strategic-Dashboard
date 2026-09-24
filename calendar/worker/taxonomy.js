@@ -20,8 +20,17 @@
 
 // Colours are a validated categorical palette: both modes pass the lightness
 // band, the chroma floor and the normal-vision separation floor, and dark mode
-// clears 3:1 against the surface. Reordering or adding one means revalidating
-// the set -- see the dataviz palette validator.
+// clears 3:1 against the surface.
+//
+// The ORDER below is load-bearing. Separation is checked between neighbours in
+// this list, and only three positions in it can take an eleventh colour without
+// dropping a pair under the floor -- Finance is in one of them. Reordering the
+// list, or adding a twelfth department, means running the set back through the
+// dataviz palette validator in both modes rather than picking a colour by eye.
+//
+// Eleven categorical colours is past the point where colour alone separates
+// every pair, which is why nothing here relies on colour by itself: every chip
+// carries its name, and the detail panel names the department outright.
 export const EVENT_TYPES = [
   { key: 'events-marketing', label: 'Events & Marketing',
     note: 'Anything that happens in the world, and the marketing around it.' },
@@ -48,6 +57,7 @@ export const DEPARTMENTS = [
     sheetValues: ['ProDev'] },
   { key: 'culture',             label: 'Culture',                  color: '#7d8a3c', colorDark: '#8b9645',
     sheetValues: ['Team Building / Culture / Building', 'Team Building / Culture', 'Team Building'] },
+  { key: 'finance',             label: 'Finance',                  color: '#a34a8f', colorDark: '#c06aab' },
 ];
 
 // Scoped: the form offers a department's sub-types once that department is the
@@ -109,7 +119,7 @@ export function needsFor(depts) { return NEEDS.filter((n) => depts.includes(n.de
 // is one dropdown to fix, and every event it touched is listed in the commit.
 export const PRIMACY = [
   'jrf', 'box-truck', 'flagship-store', 'long-branch-store', 'wholesale',
-  'jetty-ink', 'culture', 'logistics', 'product-development', 'marketing',
+  'jetty-ink', 'culture', 'logistics', 'product-development', 'finance', 'marketing',
 ];
 
 export const TAXONOMY = {
