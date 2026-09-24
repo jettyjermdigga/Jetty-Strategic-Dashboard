@@ -5,7 +5,7 @@
 // text values, and a real VTIMEZONE so timed items land at the right hour
 // rather than drifting by the viewer's offset.
 
-import { CATEGORIES, DEPARTMENTS } from './taxonomy.js';
+import { EVENT_TYPES, SUB_TYPES, NEEDS } from './taxonomy.js';
 
 const TZID = 'America/New_York';
 
@@ -121,12 +121,12 @@ export function buildIcs(items, opts) {
     lines.push('SUMMARY:' + esc(prefix + it.title));
 
     const descParts = [];
-    if (it.category) descParts.push('Type: ' + label(CATEGORIES, it.category));
-    if (it.event_types) {
-      descParts.push('Event Type: ' + it.event_types.split(',')
-        .map((d) => label(DEPARTMENTS, d.trim())).join(', '));
-    }
+    const names = (list, csv) => (csv || '').split(',')
+      .map((k) => label(list, k.trim())).filter(Boolean).join(', ');
+    if (it.event_types) descParts.push('Event Type: ' + names(EVENT_TYPES, it.event_types));
+    if (it.sub_types) descParts.push('Sub-type: ' + names(SUB_TYPES, it.sub_types));
     if (it.status) descParts.push('Status: ' + it.status);
+    if (it.needs) descParts.push('Needs: ' + names(NEEDS, it.needs));
     const where = [it.venue, it.address,
                    [it.city, it.state].filter(Boolean).join(', '), it.zip]
       .filter(Boolean).join(' \u00b7 ');
@@ -139,8 +139,8 @@ export function buildIcs(items, opts) {
     if (loc) lines.push('LOCATION:' + esc(loc));
     if (it.url) lines.push('URL:' + esc(it.url));
     lines.push('CATEGORIES:' + esc([
-      it.category && label(CATEGORIES, it.category),
-      ...(it.event_types ? it.event_types.split(',').map((d) => label(DEPARTMENTS, d.trim())) : []),
+      ...(it.event_types ? it.event_types.split(',').map((k) => label(EVENT_TYPES, k.trim())) : []),
+      ...(it.sub_types ? it.sub_types.split(',').map((k) => label(SUB_TYPES, k.trim())) : []),
     ].filter(Boolean).join(',')));
     lines.push('STATUS:' + (it.status === 'Booked' ? 'CONFIRMED' : 'TENTATIVE'));
     lines.push('TRANSP:TRANSPARENT');

@@ -421,3 +421,20 @@
   margin:0 4px 4px 0;
 }
 .tag i{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
+/* Sub-types are grouped under the Event Type they belong to. */
+.flt-sub{margin-bottom:10px}
+.flt-sub:last-child{margin-bottom:0}
+.flt-sub h4{
+  font-family:var(--display);font-weight:600;font-size:12px;
+  margin:0 0 4px;opacity:.75;
+}
+.flt-sub .flt-row{padding-left:4px}
+
+/* The detail modal leads with the event's colour bands. */
+.det-bands{position:relative;height:6px;margin-bottom:14px}
+.det-bands .bar{
+  position:static;width:auto;height:6px;
+  flex-direction:row;border-radius:3px;
+}
+.det-bands .bar i{flex:1;height:6px}

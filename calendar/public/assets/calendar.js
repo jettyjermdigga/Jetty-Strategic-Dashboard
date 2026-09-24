@@ -12,7 +12,7 @@
                 'July', 'August', 'September', 'October', 'November', 'December'];
   var DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  var NO_DEPT = '—none—';
+  var NONE = '\u2014none\u2014';
 
   // A month grid is unreadable at phone width -- there is no room for titles.
   // Agenda shows the same information in a form that survives the narrow column.
@@ -25,9 +25,10 @@
     tax: null,
     me: { canEdit: false, email: '' },
     colorBy: 'event-type',
-    cats: {},     // category key -> bool
-    depts: {},    // department key (or NO_DEPT) -> bool
-    stats: {},    // status -> bool
+    types: {},   // Event Type key -> shown
+    subs: {},    // sub-type key   -> shown
+    needs: {},   // need key       -> shown
+    stats: {},   // status         -> shown
   };
 
   // ── small helpers ──────────────────────────────────────────────────────
@@ -90,41 +91,54 @@
 
   // ── taxonomy lookups ───────────────────────────────────────────────────
 
-  function catOf(key) {
-    var list = state.tax ? state.tax.categories : [];
-    for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
+  function find(list, key) {
+    for (var i = 0; i < (list || []).length; i++) if (list[i].key === key) return list[i];
     return null;
   }
-  function deptOf(key) {
-    var list = state.tax ? state.tax.departments : [];
-    for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
-    return null;
+  function typeOf(k) { return find(state.tax && state.tax.eventTypes, k); }
+  function subOf(k)  { return find(state.tax && state.tax.subTypes, k); }
+  function needOf(k) { return find(state.tax && state.tax.needs, k); }
+
+  function listOf(item, field) {
+    return item[field] ? item[field].split(',').filter(Boolean) : [];
   }
-  // Event Types are peers: no primary. An event carries every one involved and
-  // shows on each of their calendars.
-  function typesOf(item) {
-    return item.event_types ? item.event_types.split(',').filter(Boolean) : [];
+  function typesOf(item) { return listOf(item, 'event_types'); }
+  function subsOf(item)  { return listOf(item, 'sub_types'); }
+  function needsOf(item) { return listOf(item, 'needs'); }
+
+  function labelIn(list, key) { var x = find(list, key); return x ? x.label : key; }
+  function typeLabel(k) { return labelIn(state.tax && state.tax.eventTypes, k); }
+  function typeSummary(item) { return typesOf(item).map(typeLabel).join(' + '); }
+
+  // Colours live in CSS custom properties so the light and dark steps swap in
+  // one place rather than being recomputed per chip. The palette is validated
+  // in both modes -- see worker/taxonomy.js.
+  function injectPalette() {
+    var light = [];
+    var dark = [];
+    state.tax.eventTypes.forEach(function (e) {
+      light.push('--et-' + e.key + ':' + e.color + ';');
+      dark.push('--et-' + e.key + ':' + (e.colorDark || e.color) + ';');
+    });
+    light.push('--st-booked:#2F7A5C;--st-pending:#C6803B;');
+    dark.push('--st-booked:#3d9670;--st-pending:#d9a05a;');
+    var el = document.createElement('style');
+    el.textContent = ':root{' + light.join('') + '}'
+      + '@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){' + dark.join('') + '}}'
+      + ':root[data-theme="dark"]{' + dark.join('') + '}';
+    document.head.appendChild(el);
   }
-  function deptLabel(key) { var d = deptOf(key); return d ? d.label : key; }
-  function typeSummary(item) { return typesOf(item).map(deptLabel).join(' + '); }
+
+  function typeVar(key) { return 'var(--et-' + key + ', #8A8F98)'; }
 
   // One colour band per Event Type, so an event that is both a JRF event and a
-  // Box Truck event says so rather than being forced into one of them. Falls
-  // back to the calendar's colour when nothing is set, and collapses to a single
-  // band when colouring by something other than Event Type.
+  // Box Truck event says so rather than being forced into one of them.
   function bandColors(item) {
-    if (state.colorBy === 'status') return [item.status === 'Booked' ? '#2F7A5C' : '#C6803B'];
-    if (state.colorBy === 'category') {
-      var c = catOf(item.category);
-      return [c ? c.color : '#8A8F98'];
+    if (state.colorBy === 'status') {
+      return ['var(--st-' + (item.status === 'Booked' ? 'booked' : 'pending') + ')'];
     }
-    var cols = typesOf(item).map(function (k) {
-      var d = deptOf(k);
-      return d ? d.color : '#8A8F98';
-    });
-    if (cols.length) return cols;
-    var cat = catOf(item.category);
-    return [cat ? cat.color : '#8A8F98'];
+    var cols = typesOf(item).map(typeVar);
+    return cols.length ? cols : ['#8A8F98'];
   }
 
   function bandHtml(item) {
@@ -133,21 +147,24 @@
     }).join('') + '</span>';
   }
 
-  // The faint background wash. The bands carry the detail, so this only has to
-  // keep the event legible -- first band, which is stable because Event Types
-  // are stored in taxonomy order.
   function colorFor(item) { return bandColors(item)[0]; }
 
   // ── filtering ──────────────────────────────────────────────────────────
 
+  // Each axis narrows independently. An item passes an axis when any of its
+  // values on that axis is still shown -- or when it has none and the axis's
+  // "not set" row is still shown, so an item without sub-types is not quietly
+  // filtered out by a section that has nothing to do with it.
+  function passesAxis(values, shown) {
+    if (!values.length) return shown[NONE] !== false;
+    return values.some(function (k) { return shown[k] !== false; });
+  }
+
   function passes(item) {
-    if (state.cats[item.category] === false) return false;
     if (state.stats[item.status] === false) return false;
-    // An event shows on the calendar of every Event Type on it, so any one of
-    // them being on is enough.
-    var ds = typesOf(item);
-    if (!ds.length) return state.depts[NO_DEPT] !== false;
-    return ds.some(function (k) { return state.depts[k] !== false; });
+    return passesAxis(typesOf(item), state.types)
+      && passesAxis(subsOf(item), state.subs)
+      && passesAxis(needsOf(item), state.needs);
   }
 
   function visible() { return state.items.filter(passes); }
@@ -203,20 +220,24 @@
   // ── filter sidebar ─────────────────────────────────────────────────────
 
   function counts() {
-    var byCat = {}, byDept = {}, byStat = {};
+    var by = { types: {}, subs: {}, needs: {}, stats: {} };
+    var tally = function (bucket, values) {
+      if (!values.length) { bucket[NONE] = (bucket[NONE] || 0) + 1; return; }
+      values.forEach(function (k) { bucket[k] = (bucket[k] || 0) + 1; });
+    };
     state.items.forEach(function (it) {
-      byCat[it.category] = (byCat[it.category] || 0) + 1;
-      byStat[it.status] = (byStat[it.status] || 0) + 1;
-      var ds = typesOf(it);
-      if (!ds.length) byDept[NO_DEPT] = (byDept[NO_DEPT] || 0) + 1;
-      ds.forEach(function (k) { byDept[k] = (byDept[k] || 0) + 1; });
+      by.stats[it.status] = (by.stats[it.status] || 0) + 1;
+      tally(by.types, typesOf(it));
+      tally(by.subs, subsOf(it));
+      tally(by.needs, needsOf(it));
     });
-    return { byCat: byCat, byDept: byDept, byStat: byStat };
+    return by;
   }
 
-  function checkRow(attr, key, label, color, count, on) {
-    return '<label class="flt-row"><input type="checkbox" data-' + attr + '="' + esc(key) + '"'
-      + (on === false ? '' : ' checked') + '>'
+  function checkRow(axis, key, label, color, count, shown, title) {
+    return '<label class="flt-row"' + (title ? ' title="' + esc(title) + '"' : '') + '>'
+      + '<input type="checkbox" data-axis="' + axis + '" value="' + esc(key) + '"'
+      + (shown === false ? '' : ' checked') + '>'
       + (color ? '<i class="dot" style="background:' + color + '"></i>' : '')
       + '<span>' + esc(label) + '</span>'
       + (count == null ? '' : '<span class="count">' + count + '</span>') + '</label>';
@@ -226,21 +247,43 @@
     if (!state.tax) return;
     var n = counts();
 
-    $('#catTree').innerHTML = state.tax.categories.map(function (c) {
-      return checkRow('cat', c.key, c.label, c.color, n.byCat[c.key] || 0, state.cats[c.key]);
+    $('#typeTree').innerHTML = state.tax.eventTypes.map(function (e) {
+      return checkRow('types', e.key, e.label, typeVar(e.key),
+                      n.types[e.key] || 0, state.types[e.key], e.note);
     }).join('');
 
-    var rows = state.tax.departments.map(function (d) {
-      return checkRow('dept', d.key, d.label, d.color, n.byDept[d.key] || 0, state.depts[d.key]);
+    // Sub-types are grouped under the Event Type they belong to, since that is
+    // the only place they mean anything.
+    var groups = [];
+    state.tax.eventTypes.forEach(function (e) {
+      var kids = state.tax.subTypes.filter(function (st) { return st.parent === e.key; });
+      if (!kids.length) return;
+      groups.push('<div class="flt-sub"><h4>' + esc(e.label) + '</h4>'
+        + kids.map(function (st) {
+            return checkRow('subs', st.key, st.label, null,
+                            n.subs[st.key] || 0, state.subs[st.key], st.note);
+          }).join('')
+        + '</div>');
     });
-    if (n.byDept[NO_DEPT]) {
-      rows.push(checkRow('dept', NO_DEPT, 'None set', '#8A8F98', n.byDept[NO_DEPT], state.depts[NO_DEPT]));
+    if (n.subs[NONE]) {
+      groups.push(checkRow('subs', NONE, 'No sub-type', null, n.subs[NONE], state.subs[NONE]));
     }
-    $('#deptTree').innerHTML = rows.join('');
+    $('#subTree').innerHTML = groups.join('');
 
-    $('#statTree').innerHTML = state.tax.statuses.map(function (s) {
-      return checkRow('stat', s, s, s === 'Booked' ? '#2F7A5C' : '#C6803B',
-                      n.byStat[s] || 0, state.stats[s]);
+    var needRows = state.tax.needs.map(function (nd) {
+      return checkRow('needs', nd.key, nd.label, null,
+                      n.needs[nd.key] || 0, state.needs[nd.key], nd.note);
+    });
+    if (n.needs[NONE]) {
+      needRows.push(checkRow('needs', NONE, 'Nothing needed', null,
+                             n.needs[NONE], state.needs[NONE]));
+    }
+    $('#needTree').innerHTML = needRows.join('');
+
+    $('#statTree').innerHTML = state.tax.statuses.map(function (st) {
+      return checkRow('stats', st, st,
+                      'var(--st-' + (st === 'Booked' ? 'booked' : 'pending') + ')',
+                      n.stats[st] || 0, state.stats[st]);
     }).join('');
   }
 
@@ -281,10 +324,14 @@
     var meta = [];
     var dl = typeSummary(it);
     if (dl) meta.push(dl);
+    var subs = subsOf(it).map(function (k) { return labelIn(state.tax.subTypes, k); });
+    if (subs.length) meta.push(subs.join(', '));
     if (it.status !== 'Booked') meta.push(it.status);
     if (it.start_date !== it.end_date) meta.push(spanLabel(it));
     var where = placeLabel(it);
     if (where) meta.push(where);
+    var nd = needsOf(it).map(function (k) { return labelIn(state.tax.needs, k); });
+    if (nd.length) meta.push('Needs: ' + nd.join(', '));
     return '<div class="day-item" style="--chip:' + colorFor(it) + '" data-id="' + esc(it.id) + '">'
       + bandHtml(it)
       + '<div class="day-when">' + esc(when) + '</div>'
@@ -463,28 +510,31 @@
   function showDetail(id) {
     var it = state.items.filter(function (x) { return x.id === id; })[0];
     if (!it) return;
-    var c = catOf(it.category);
     var r = it.retail || retailWeek(it.start_date);
     var rows = '';
     var add = function (k, v) { if (v) rows += '<dt>' + k + '</dt><dd>' + v + '</dd>'; };
+    var chips = function (keys, list, colored) {
+      return keys.map(function (k) {
+        return '<span class="tag">'
+          + (colored ? '<i style="background:' + typeVar(k) + '"></i>' : '')
+          + esc(labelIn(list, k)) + '</span>';
+      }).join(' ');
+    };
 
-    add('Event Type', typesOf(it).length
-      ? typesOf(it).map(function (k) {
-          var d = deptOf(k);
-          return '<span class="tag"><i style="background:' + (d ? d.color : '#8A8F98') + '"></i>'
-            + esc(deptLabel(k)) + '</span>';
-        }).join(' ')
-      : '');
+    add('Event Type', chips(typesOf(it), state.tax.eventTypes, true));
+    add('Sub-type', chips(subsOf(it), state.tax.subTypes, false));
     add('Status', '<span class="pill ' + (it.status === 'Booked' ? 'ok' : 'warn') + '">'
       + esc(it.status) + '</span>');
     if (r) add('Retail week', 'Week ' + r.week + ' of ' + r.year + ' <span class="muted">('
       + esc(weekRangeLabel(r)) + ')</span>');
+    add('Needs', chips(needsOf(it), state.tax.needs, false));
 
     var addr = [it.address, [it.city, it.state].filter(Boolean).join(', '), it.zip]
       .filter(Boolean).join('<br>');
     add('Venue', esc(it.venue || ''));
     add('Address', addr);
-    add('Link', it.url ? '<a href="' + esc(it.url) + '" target="_blank" rel="noopener">' + esc(it.url) + '</a>' : '');
+    add('Link', it.url ? '<a href="' + esc(it.url) + '" target="_blank" rel="noopener">'
+      + esc(it.url) + '</a>' : '');
     add('Notes', it.notes ? '<span class="det-notes">' + esc(it.notes) + '</span>' : '');
 
     var stamp = '';
@@ -494,8 +544,7 @@
       stamp += '<br>Last edited by ' + esc(it.updated_by || '') + ' on ' + esc(it.updated_at.slice(0, 10));
     }
 
-    var body = '<div class="det-cat" style="--chip:' + colorFor(it) + '"><i></i>'
-      + esc(c ? c.label : it.category) + '</div>'
+    var body = '<div class="det-bands">' + bandHtml(it) + '</div>'
       + '<h3 class="det-title">' + esc(it.title) + '</h3>'
       + '<div class="det-when">' + esc(whenText(it)) + '</div>'
       + (rows ? '<dl class="det-grid">' + rows + '</dl>' : '')
@@ -515,12 +564,14 @@
 
   function showForm(existing, defaultDate) {
     var it = existing || {
-      title: '', category: state.tax.categories[0].key, event_types: '',
+      title: '', event_types: '', sub_types: '', needs: '',
       status: 'Pending', start_date: defaultDate || todayYmd(), end_date: defaultDate || todayYmd(),
       all_day: 1, start_time: '', end_time: '',
       venue: '', address: '', city: '', state: '', zip: '', notes: '', url: '',
     };
     var chosen = typesOf(it);
+    var chosenSubs = subsOf(it);
+    var chosenNeeds = needsOf(it);
     var timed = !it.all_day;
 
     var body = ''
@@ -528,30 +579,40 @@
       + '<div class="fld"><label for="f-title">Event name</label>'
       + '<input type="text" id="f-title" value="' + esc(it.title) + '" maxlength="200"></div>'
 
-      + '<div class="fld-row">'
-      + '<div class="fld"><label for="f-cat">Type</label><select id="f-cat">'
-      + state.tax.categories.map(function (c) {
-          return '<option value="' + esc(c.key) + '"' + (c.key === it.category ? ' selected' : '') + '>'
-            + esc(c.label) + '</option>';
-        }).join('')
-      + '</select></div>'
-      + '<div class="fld"><label for="f-status">Status</label><select id="f-status">'
-      + state.tax.statuses.map(function (s) {
-          return '<option value="' + esc(s) + '"' + (s === it.status ? ' selected' : '') + '>'
-            + esc(s) + '</option>';
-        }).join('')
-      + '</select></div>'
-      + '</div>'
-
       + '<div class="fld"><label>Event Type '
       + '<span class="lbl-note">everyone involved; the event shows on each of their calendars</span></label>'
       + '<div class="chk-grid">'
-      + state.tax.departments.map(function (d) {
-          return '<label class="fld-inline"><input type="checkbox" class="f-type" value="' + esc(d.key) + '"'
-            + (chosen.indexOf(d.key) >= 0 ? ' checked' : '') + '>'
-            + '<i class="dot" style="background:' + d.color + '"></i>' + esc(d.label) + '</label>';
+      + state.tax.eventTypes.map(function (e) {
+          return '<label class="fld-inline"' + (e.note ? ' title="' + esc(e.note) + '"' : '') + '>'
+            + '<input type="checkbox" class="f-type" value="' + esc(e.key) + '"'
+            + (chosen.indexOf(e.key) >= 0 ? ' checked' : '') + '>'
+            + '<i class="dot" style="background:' + typeVar(e.key) + '"></i>'
+            + esc(e.label) + '</label>';
         }).join('')
       + '</div></div>'
+
+      // Sub-types only exist under one Event Type, so each group appears only
+      // once that Event Type is ticked.
+      + '<div class="fld" id="subWrap"' + '><label>Sub-type</label>'
+      + '<div id="subGrid"></div></div>'
+
+      + '<div class="fld"><label>Needs '
+      + '<span class="lbl-note">what this event requires</span></label>'
+      + '<div class="chk-grid">'
+      + state.tax.needs.map(function (nd) {
+          return '<label class="fld-inline" title="' + esc(nd.note || '') + '">'
+            + '<input type="checkbox" class="f-need" value="' + esc(nd.key) + '"'
+            + (chosenNeeds.indexOf(nd.key) >= 0 ? ' checked' : '') + '>'
+            + esc(nd.label) + '</label>';
+        }).join('')
+      + '</div></div>'
+
+      + '<div class="fld"><label for="f-status">Status</label><select id="f-status">'
+      + state.tax.statuses.map(function (st) {
+          return '<option value="' + esc(st) + '"' + (st === it.status ? ' selected' : '') + '>'
+            + esc(st) + '</option>';
+        }).join('')
+      + '</select></div>'
 
       + '<div class="fld-row">'
       + '<div class="fld"><label for="f-start">Starts</label>'
@@ -617,6 +678,32 @@
 
     $('#f-allday').addEventListener('change', function () { $('#timeRow').hidden = this.checked; });
 
+    // Only offer the sub-types belonging to the Event Types actually ticked.
+    function renderSubs() {
+      var on = Array.prototype.map.call(
+        document.querySelectorAll('.f-type:checked'), function (el) { return el.value; });
+      var kept = Array.prototype.map.call(
+        document.querySelectorAll('.f-sub:checked'), function (el) { return el.value; });
+      var html = '';
+      state.tax.eventTypes.forEach(function (e) {
+        if (on.indexOf(e.key) < 0) return;
+        var kids = state.tax.subTypes.filter(function (st) { return st.parent === e.key; });
+        if (!kids.length) return;
+        html += '<div class="chk-grid">' + kids.map(function (st) {
+          var was = kept.indexOf(st.key) >= 0 || chosenSubs.indexOf(st.key) >= 0;
+          return '<label class="fld-inline" title="' + esc(st.note || '') + '">'
+            + '<input type="checkbox" class="f-sub" value="' + esc(st.key) + '"'
+            + (was ? ' checked' : '') + '>' + esc(st.label) + '</label>';
+        }).join('') + '</div>';
+      });
+      $('#subGrid').innerHTML = html;
+      $('#subWrap').hidden = !html;
+    }
+    renderSubs();
+    Array.prototype.forEach.call(document.querySelectorAll('.f-type'), function (el) {
+      el.addEventListener('change', renderSubs);
+    });
+
     // Year / Week / Start (Week) / End (Week) / Month / Day are shown as they
     // will be derived, so you can see the retail week without typing it.
     function showRetail() {
@@ -633,6 +720,32 @@
     showRetail();
 
     $('#f-allday').addEventListener('change', function () { $('#timeRow').hidden = this.checked; });
+
+    // Only offer the sub-types belonging to the Event Types actually ticked.
+    function renderSubs() {
+      var on = Array.prototype.map.call(
+        document.querySelectorAll('.f-type:checked'), function (el) { return el.value; });
+      var kept = Array.prototype.map.call(
+        document.querySelectorAll('.f-sub:checked'), function (el) { return el.value; });
+      var html = '';
+      state.tax.eventTypes.forEach(function (e) {
+        if (on.indexOf(e.key) < 0) return;
+        var kids = state.tax.subTypes.filter(function (st) { return st.parent === e.key; });
+        if (!kids.length) return;
+        html += '<div class="chk-grid">' + kids.map(function (st) {
+          var was = kept.indexOf(st.key) >= 0 || chosenSubs.indexOf(st.key) >= 0;
+          return '<label class="fld-inline" title="' + esc(st.note || '') + '">'
+            + '<input type="checkbox" class="f-sub" value="' + esc(st.key) + '"'
+            + (was ? ' checked' : '') + '>' + esc(st.label) + '</label>';
+        }).join('') + '</div>';
+      });
+      $('#subGrid').innerHTML = html;
+      $('#subWrap').hidden = !html;
+    }
+    renderSubs();
+    Array.prototype.forEach.call(document.querySelectorAll('.f-type'), function (el) {
+      el.addEventListener('change', renderSubs);
+    });
 
     // Move the end date with the start date, keeping whatever span was already
     // set. Without this, picking a start date and leaving the end date on its
@@ -655,10 +768,13 @@
     var allDay = $('#f-allday').checked;
     return {
       title: $('#f-title').value,
-      category: $('#f-cat').value,
       status: $('#f-status').value,
       event_types: Array.prototype.map.call(
         document.querySelectorAll('.f-type:checked'), function (el) { return el.value; }),
+      sub_types: Array.prototype.map.call(
+        document.querySelectorAll('.f-sub:checked'), function (el) { return el.value; }),
+      needs: Array.prototype.map.call(
+        document.querySelectorAll('.f-need:checked'), function (el) { return el.value; }),
       start_date: $('#f-start').value,
       end_date: $('#f-end').value || $('#f-start').value,
       all_day: allDay ? 1 : 0,
@@ -800,19 +916,19 @@
     var side = document.querySelector('.cal-side');
     side.addEventListener('change', function (e) {
       var el = e.target;
-      if (el.dataset.cat) state.cats[el.dataset.cat] = el.checked;
-      else if (el.dataset.dept) state.depts[el.dataset.dept] = el.checked;
-      else if (el.dataset.stat) state.stats[el.dataset.stat] = el.checked;
-      else return;
+      var axis = el.dataset.axis;
+      if (!axis || !state[axis]) return;
+      state[axis][el.value] = el.checked;
       render();
     });
-    $('#deptAll').addEventListener('click', function () {
-      Object.keys(state.depts).forEach(function (k) { state.depts[k] = true; });
-      renderAll();
-    });
-    $('#deptNone').addEventListener('click', function () {
-      Object.keys(state.depts).forEach(function (k) { state.depts[k] = false; });
-      renderAll();
+    // Each section's All/None acts on that section only.
+    Array.prototype.forEach.call(side.querySelectorAll('[data-all]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var axis = btn.dataset.all;
+        var on = btn.dataset.on === '1';
+        Object.keys(state[axis]).forEach(function (k) { state[axis][k] = on; });
+        renderAll();
+      });
     });
 
     $('#view').addEventListener('click', function (e) {
@@ -913,16 +1029,20 @@
   // ── boot ───────────────────────────────────────────────────────────────
 
   function initFilters() {
-    state.tax.categories.forEach(function (c) { state.cats[c.key] = true; });
-    state.tax.departments.forEach(function (d) { state.depts[d.key] = true; });
-    state.depts[NO_DEPT] = true;
-    state.tax.statuses.forEach(function (s) { state.stats[s] = true; });
+    state.tax.eventTypes.forEach(function (e) { state.types[e.key] = true; });
+    state.tax.subTypes.forEach(function (st) { state.subs[st.key] = true; });
+    state.tax.needs.forEach(function (nd) { state.needs[nd.key] = true; });
+    state.tax.statuses.forEach(function (st) { state.stats[st] = true; });
+    state.subs[NONE] = true;
+    state.needs[NONE] = true;
+    state.types[NONE] = true;
   }
 
   Promise.all([api('/api/taxonomy'), api('/api/me').catch(function () { return {}; })])
     .then(function (r) {
       state.tax = r[0];
       state.me = r[1] || {};
+      injectPalette();
       initFilters();
       renderWho();
       renderNotice();

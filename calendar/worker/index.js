@@ -10,7 +10,8 @@
 
 import { identify } from './access.js';
 import { buildIcs } from './ics.js';
-import { TAXONOMY, CATEGORY_KEYS, DEPARTMENT_KEYS, STATUSES, CATEGORIES, DEPARTMENTS } from './taxonomy.js';
+import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, SUB_TYPES, SUB_TYPE_KEYS,
+         NEEDS, NEED_KEYS, STATUSES, subTypeByKey } from './taxonomy.js';
 import { retailWeek, retailWeekStart } from './retail.js';
 import SCHEMA from './schema.sql';
 
@@ -77,30 +78,43 @@ function normalise(input, existing) {
   const errors = [];
   const pick = (k) => (input[k] != null ? input[k] : base[k]);
 
+  // A multi-value axis: validate every key, drop duplicates, and store in
+  // taxonomy order so two spellings of the same set become the same value.
+  const multi = (field, allowed, label) => {
+    const raw = pick(field);
+    const list = Array.isArray(raw) ? raw : String(raw == null ? '' : raw).split(',');
+    const picked = [];
+    for (const item of list) {
+      const key = clean(item, 60);
+      if (!key) continue;
+      if (!allowed.includes(key)) errors.push('Unknown ' + label + ' "' + key + '".');
+      else if (!picked.includes(key)) picked.push(key);
+    }
+    picked.sort((a, b) => allowed.indexOf(a) - allowed.indexOf(b));
+    return picked;
+  };
+
   out.title = clean(pick('title'), 200);
   if (!out.title) errors.push('Event name is required.');
 
-  out.category = clean(pick('category'), 60) || CATEGORY_KEYS[0];
-  if (!CATEGORY_KEYS.includes(out.category)) {
-    errors.push('Type must be one of: ' + CATEGORY_KEYS.join(', ') + '.');
-  }
+  const types = multi('event_types', EVENT_TYPE_KEYS, 'Event Type');
+  if (!types.length) errors.push('Pick at least one Event Type.');
+  out.event_types = types.length ? types.join(',') : null;
 
-  // Event Types are peers -- an event can be a JRF event that the Box Truck works,
-  // with neither one primary. Stored in taxonomy order so the sheet's two
-  // spellings, "Box Truck,JRF" and "JRF,Box Truck", become the same value.
-  const rawTypes = pick('event_types');
-  const typeList = Array.isArray(rawTypes)
-    ? rawTypes
-    : String(rawTypes == null ? '' : rawTypes).split(',');
-  const picked = [];
-  for (const t of typeList) {
-    const key = clean(t, 40);
-    if (!key) continue;
-    if (!DEPARTMENT_KEYS.includes(key)) errors.push('Unknown Event Type "' + key + '".');
-    else if (!picked.includes(key)) picked.push(key);
-  }
-  picked.sort((a, b) => DEPARTMENT_KEYS.indexOf(a) - DEPARTMENT_KEYS.indexOf(b));
-  out.event_types = picked.length ? picked.join(',') : null;
+  // A sub-type only means something under its own Event Type -- an Email/SMS on
+  // an event that is not a Marketing event is a mistake worth naming.
+  const subs = multi('sub_types', SUB_TYPE_KEYS, 'sub-type').filter((k) => {
+    const st = subTypeByKey(k);
+    if (st && !types.includes(st.parent)) {
+      errors.push('"' + st.label + '" only applies to '
+        + (EVENT_TYPES.find((e) => e.key === st.parent) || {}).label + ' events.');
+      return false;
+    }
+    return true;
+  });
+  out.sub_types = subs.length ? subs.join(',') : null;
+
+  out.needs = ((n) => (n.length ? n.join(',') : null))(multi('needs', NEED_KEYS, 'need'));
 
   out.status = clean(pick('status'), 20) || 'Pending';
   if (!STATUSES.includes(out.status)) errors.push('Status must be Booked or Pending.');
@@ -153,7 +167,7 @@ function normalise(input, existing) {
 }
 
 const COLS = [
-  'title', 'category', 'event_types', 'status', 'start_date', 'end_date', 'all_day',
+  'title', 'event_types', 'sub_types', 'needs', 'status', 'start_date', 'end_date', 'all_day',
   'start_time', 'end_time', 'venue', 'address', 'city', 'state', 'zip', 'notes', 'url',
 ];
 
@@ -227,9 +241,10 @@ function parseCsv(text) {
 const IMPORT_ALIASES = {
   'name': 'title', 'title': 'title', 'event name': 'title', 'event': 'title',
   'booked': 'status', 'status': 'status',
-  'type': 'category', 'category': 'category',
   'event type': 'event_types', 'event types': 'event_types',
   'departments': 'event_types', 'department': 'event_types', 'tags': 'event_types',
+  'sub-type': 'sub_types', 'sub type': 'sub_types', 'subtype': 'sub_types', 'sub-types': 'sub_types',
+  'need': 'needs', 'needs': 'needs',
   'event \u{1F680}': 'start_date', 'start': 'start_date', 'start date': 'start_date', 'date': 'start_date',
   'event \u{1F6D1}': 'end_date', 'end': 'end_date', 'end date': 'end_date',
   'start \u{231A}': 'start_time', 'start time': 'start_time', 'event start time': 'start_time',
@@ -241,6 +256,10 @@ const IMPORT_ALIASES = {
   'year': '_year', 'week': '_week',
   'start (week)': '_week_start', 'end (week)': '_week_end',
   'month': '_month', 'day': '_day',
+  // The sheet's Type column held one value ("Event") for the whole calendar.
+  // Event Type carries that now, so the column is read and discarded rather
+  // than reported as unrecognised.
+  'type': '_type', 'category': '_type',
 };
 
 const MONTH_ABBR = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
@@ -278,28 +297,42 @@ function slugify(v) {
 
 // Import files are written by people, not machines: accept the label, the key
 // and the spelling the sheet actually uses.
+function matchKey(list, raw) {
+  const want = slugify(raw);
+  if (!want) return null;
+  const hit = list.find((x) => x.key === want
+    || slugify(x.label) === want
+    || (x.sheetValues || []).some((v) => slugify(v) === want));
+  return hit ? hit.key : null;
+}
+
+function splitList(v) {
+  if (v == null) return [];
+  return (Array.isArray(v) ? v : String(v).split(/[,;/]+/)).map((x) => String(x).trim()).filter(Boolean);
+}
+
 function coerceKeys(rec) {
-  if (rec.category) {
-    const want = slugify(rec.category);
-    const c = CATEGORIES.find((x) => x.key === want
-      || slugify(x.label) === want
-      || (x.sheetValues || []).some((v) => slugify(v) === want || v === String(rec.category).trim()));
-    if (c) rec.category = c.key;
+  // The sheet has one Event Type column, and not everything in it is an Event
+  // Type: "JBC" is a reminder that the event wants our own branded beer. Route
+  // anything that names a Need to the needs axis instead of rejecting the row.
+  const rawTypes = splitList(rec.event_types);
+  const rawNeeds = splitList(rec.needs);
+  if (rawTypes.length || rawNeeds.length) {
+    const types = [];
+    const needs = rawNeeds.map((n) => matchKey(NEEDS, n) || n);
+    for (const token of rawTypes) {
+      const asType = matchKey(EVENT_TYPES, token);
+      if (asType) { types.push(asType); continue; }
+      const asNeed = matchKey(NEEDS, token);
+      if (asNeed) { if (!needs.includes(asNeed)) needs.push(asNeed); continue; }
+      types.push(token);   // unknown: let normalise() name it
+    }
+    rec.event_types = types;
+    rec.needs = needs;
   }
 
-  // The sheet's Event Type column lists everyone involved, in no reliable order.
-  // Accept the label or the key; normalise() puts them in taxonomy order.
-  const toKey = (raw) => {
-    const want = slugify(raw);
-    if (!want) return '';
-    const d = DEPARTMENTS.find((x) => x.key === want || slugify(x.label) === want);
-    return d ? d.key : String(raw).trim();
-  };
-  const rawTypes = rec.event_types != null ? rec.event_types : rec.departments;
-  if (rawTypes != null) {
-    rec.event_types = (Array.isArray(rawTypes) ? rawTypes : String(rawTypes).split(/[,;/]+/))
-      .map(toKey).filter(Boolean);
-    delete rec.departments;
+  if (rec.sub_types != null) {
+    rec.sub_types = splitList(rec.sub_types).map((x) => matchKey(SUB_TYPES, x) || x);
   }
 
   if (rec.status != null) {

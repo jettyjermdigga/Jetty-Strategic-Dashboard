@@ -37,20 +37,62 @@ calendar/
 
 There is no build step. `public/` is deployed as-is.
 
-## Fields
+## Structure
 
-An event carries what the box truck sheet carries:
+Three axes, because the menu spreadsheet's second level held three different
+kinds of thing.
+
+**Event Types** are the calendars themselves, and they are **peers** — no
+primary, no owner. Coquina Jam is a JRF event that the Box Truck always works,
+and naming either one the owner would misdescribe how it runs. An event carries
+every Event Type involved and shows on each of their calendars.
+
+| | |
+|---|---|
+| Box Truck & Events | Mobile store and/or tent setup selling Jetty/JRF apparel |
+| Flagship Store | Events at our brick-and-mortar store |
+| Long Branch Store | Events at our brick-and-mortar store |
+| Jetty Rock Foundation (JRF) | Fundraising events/initiatives involving our nonprofit |
+| Jetty INK | Live screenprinting and/or non-brand apparel sales |
+| Wholesale | Tradeshows, sales trips and other industry events |
+| Marketing | MKG-specific events the team plans against |
+| Meetings | Milestone meetings with mixed departments |
+| Logistics, ProDev | from the menu's Meetings sub-list |
+| Culture | Team-building |
+
+A meeting for one department is tagged **Meetings + that department**, so it
+lands on both calendars. That is why the menu's Meetings sub-list has no separate
+existence here: six of its eight entries were already Event Types.
+
+**Sub-types** say what kind of item it is and are scoped to one Event Type.
+Only Marketing has them so far — Ambassador, Influencer, Promotion, Campaign,
+Email/SMS, Photo/Video, Collab — and they are only offered once Marketing is
+ticked.
+
+**Needs** are what an event requires, and cut across every calendar: Drifting
+Buoy, Social Permit, Sound, Jetty Brewing Company. "Do we need the mobile bar?"
+is a fair question of a box truck event and a JRF event alike, which is why
+Drifting Buoy appeared under two parents on the menu sheet. JBC arrived in the
+sheet's Event Type column but is a need too — a reminder that the event wants our
+own branded beer — so the import routes it here rather than making it a calendar.
+
+## Fields
 
 | Field | Sheet column | Notes |
 |---|---|---|
 | Event name | Name | required |
 | Status | Booked | the checkbox: ticked is **Booked**, blank is **Pending** |
-| Type | Type | the top-level calendar; only Box Truck & Events so far |
-| Event Type | Event Type | everyone involved — any number, all peers |
+| Event Type | Event Type | one or more, all peers — at least one required |
+| Sub-type | — | scoped to its Event Type |
+| Needs | — | cross-cutting |
 | Start / end date | Event 🚀 / Event 🛑 | |
 | Start / end time | Start ⌚ / End ⌚ | 24-hour on the way in |
 | Venue, Address, City, State, Zip | same | |
 | Notes, Link | — | additions, not on the sheet |
+
+The sheet's `Type` column held one value for the whole calendar; Event Type
+carries that now, so the column is read and discarded rather than reported as an
+unrecognised header.
 
 ## The retail calendar
 
@@ -69,25 +111,29 @@ places: one week number off by one, and two weekday labels that do not match
 their own dates. That is what happens when the same fact is entered twice. An
 import reports such disagreements and then ignores those columns.
 
-## Event Types and colour
-
-Event Types are **peers**. There is no primary and no owner: Coquina Jam is a JRF
-event that the Box Truck always works, and naming either one the owner would
-misdescribe how the event runs. An event carries every Event Type involved and
-shows on each of their calendars — filtering to JRF returns every event JRF is on,
-whoever else is there.
+## Colour
 
 Each event's chip carries **one colour band per Event Type**, so an event that is
 both a JRF event and a Box Truck event says so instead of being forced into one
-colour. Events with a single Event Type — 96 of the 112 on the 2026 sheet — get a
-solid band, so the month still reads as one calendar. *Colour by* can be switched
-to Status or Type when that is what you want to see, and the chip collapses to a
-single band.
+colour. Events with a single Event Type get a solid band, so a calendar still
+reads as one thing. *Colour by* can be switched to Status.
 
-Event Types are stored in the order they appear in `worker/taxonomy.js`, not the
-order the sheet lists them. That matters because the sheet has both
-`Box Truck,JRF` and `JRF,Box Truck`; sorting makes those the same value, which is
-what they always meant.
+The palette is a validated categorical set, not a hand-picked one. Both modes
+pass the lightness band, the chroma floor, the normal-vision separation floor and
+— in dark — 3:1 contrast against the surface. Two adjacent pairs sit in the 6–8
+CVD separation band, which is only legal because colour is never the sole
+encoding here: every day, week and agenda row prints the Event Type names, the
+sidebar pairs each dot with its label, and the detail view lists them as labelled
+chips.
+
+The light and dark steps are declared as CSS custom properties, so the two modes
+swap in one place. **The order of `EVENT_TYPES` is the order bands stack in, and
+the palette was validated on exactly that adjacency — reordering that array means
+revalidating it.**
+
+Event Types are stored in taxonomy order, not the order the sheet lists them.
+That matters because the sheet has both `Box Truck,JRF` and `JRF,Box Truck`;
+sorting makes those the same value, which is what they always meant.
 
 ## Changing the structure
 

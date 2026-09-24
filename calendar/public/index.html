@@ -52,7 +52,6 @@
     <select id="colorBy">
       <option value="event-type" selected>Event Type</option>
       <option value="status">Status</option>
-      <option value="category">Type</option>
     </select>
   </label>
 
@@ -64,17 +63,26 @@
 <div class="cal-shell">
   <aside class="cal-side">
     <div class="cal-card">
-      <h3>Type</h3>
-      <div id="catTree"></div>
-    </div>
-    <div class="cal-card">
       <h3>Event Type</h3>
       <p class="flt-note">Everyone involved in each event &mdash; no primary.
-        Toggling one shows everything on that department's calendar.</p>
-      <div id="deptTree"></div>
+        Toggling one shows everything on that calendar.</p>
+      <div id="typeTree"></div>
       <div class="flt-actions">
-        <button id="deptAll">All</button>
-        <button id="deptNone">None</button>
+        <button data-all="types" data-on="1">All</button>
+        <button data-all="types" data-on="0">None</button>
+      </div>
+    </div>
+    <div class="cal-card" id="subCard">
+      <h3>Sub-type</h3>
+      <div id="subTree"></div>
+    </div>
+    <div class="cal-card">
+      <h3>Needs</h3>
+      <p class="flt-note">What an event requires, whichever calendar it is on.</p>
+      <div id="needTree"></div>
+      <div class="flt-actions">
+        <button data-all="needs" data-on="1">All</button>
+        <button data-all="needs" data-on="0">None</button>
       </div>
     </div>
     <div class="cal-card">
