@@ -3,17 +3,6 @@ name: Update Jetty Dashboard
 on:
   schedule:
     - cron: '*/5 * * * *'
-  # The repo now carries the Worker and the static site, not just the build
-  # script, so a merge to main has to redeploy even when the budget sheet is
-  # untouched -- otherwise site changes sit undeployed until the sheet moves.
-  push:
-    branches: [main]
-    paths:
-      - 'worker/**'
-      - 'site/**'
-      - 'scripts/**'
-      - 'wrangler.toml'
-      - '.github/workflows/update.yml'
   workflow_dispatch:
     inputs:
       force:
@@ -45,7 +34,7 @@ jobs:
       - name: Should rebuild?
         id: gate
         run: |
-          if [ "${{ steps.check.outputs.changed }}" = "true" ] || [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name == 'workflow_dispatch' && inputs.force }}" = "true" ]; then
+          if [ "${{ steps.check.outputs.changed }}" = "true" ] || [ "${{ github.event_name == 'workflow_dispatch' && inputs.force }}" = "true" ]; then
             echo "rebuild=true" >> "$GITHUB_OUTPUT"
           else
             echo "rebuild=false" >> "$GITHUB_OUTPUT"
@@ -64,9 +53,6 @@ jobs:
           JRF_MODIFIED_TIME: ${{ steps.check.outputs.jrf_modified_time }}
           AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
         run: python scripts/build_dashboard.py
-      - name: Assemble landing page, calendar and shared assets
-        if: steps.gate.outputs.rebuild == 'true'
-        run: python scripts/build_site.py
       # The dashboard itself now deploys only to Cloudflare Workers (behind
       # Access). gh-pages no longer serves the site, but check_modified.py
       # still reads meta.json off that branch to skip unnecessary rebuilds —
@@ -83,14 +69,6 @@ jobs:
           publish_dir: ./meta_only
           publish_branch: gh-pages
           force_orphan: true
-      # Creates the calendar's D1 database the first time and writes its id into
-      # wrangler.toml on every run, so the committed config never carries one.
-      - name: Provision calendar database
-        if: steps.gate.outputs.rebuild == 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: python scripts/provision_d1.py
       - name: Deploy to Cloudflare Workers
         if: steps.gate.outputs.rebuild == 'true'
         uses: cloudflare/wrangler-action@v3

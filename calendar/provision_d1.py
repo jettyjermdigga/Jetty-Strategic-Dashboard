@@ -10,10 +10,9 @@ Needs CLOUDFLARE_API_TOKEN (with D1:Edit) and CLOUDFLARE_ACCOUNT_ID.
 
 If provisioning fails -- most likely because the deploy token predates the
 calendar and has no D1 permission -- the D1 binding is stripped from the config
-rather than left pointing at a placeholder. A deploy with no binding still ships
-the dashboard and the site, and the calendar reports that its database is not
-connected. Taking the whole deploy down over one new feature is the worse
-failure.
+rather than left pointing at a placeholder. The calendar then deploys and says
+plainly that its database is not connected, which is easier to diagnose than a
+deploy that dies on a malformed config.
 """
 
 import json
@@ -50,8 +49,8 @@ def drop_binding(reason):
     with open(CONFIG, "w") as fh:
         fh.write("\n".join(out))
     print("::warning::Calendar database not provisioned (%s). Deploying without it -- "
-          "the dashboard and site are unaffected, but the calendar will report that "
-          "its database is not connected." % reason)
+          "the calendar will load and report that its database is not connected."
+          % reason)
 
 
 def call(method, path, token, body=None):

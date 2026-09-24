@@ -1,6 +1,5 @@
-/* Shared chrome for the non-dashboard pages. The dashboard ships as one
-   self-contained file for printing, so it keeps its own inlined copy of the
-   design system; the landing page and calendar link to it instead. */
+/* Page chrome. The calendar links to the design system rather than inlining
+   it, so the font bundle is fetched once and cached. */
 
 .site-top{
   background:var(--primary);
@@ -12,15 +11,6 @@
 .site-top .divider{width:1px;align-self:stretch;background:rgba(255,255,255,.22);margin:2px 0}
 .site-top .title-main{font-family:var(--display);font-weight:800;font-size:20px;color:#fff;white-space:nowrap}
 .site-top .title-sub{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.62);margin-top:2px}
-
-.site-nav{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.site-nav a{
-  font-family:var(--display);font-weight:600;font-size:13px;
-  color:rgba(255,255,255,.72);text-decoration:none;
-  padding:8px 14px;border-radius:999px;transition:background .15s,color .15s;
-}
-.site-nav a:hover{background:rgba(255,255,255,.12);color:#fff}
-.site-nav a[aria-current="page"]{background:rgba(255,255,255,.18);color:#fff}
 
 .site-who{
   font-family:var(--mono);font-size:11px;letter-spacing:.04em;
@@ -45,8 +35,6 @@ button,select,input,textarea{font-family:inherit;color:inherit}
   .site-top{flex-wrap:wrap;gap:10px;padding:14px 18px}
   .site-top .brand{width:100%}
   .site-top .title-main{font-size:18px}
-  .site-nav{width:100%;order:3}
-  .site-nav a{padding:7px 11px;font-size:12.5px}
   .site-who{width:100%;order:4}
   .site-main{padding:22px 16px}
 }

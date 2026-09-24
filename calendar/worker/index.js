@@ -1,14 +1,44 @@
-// Jetty site Worker.
+// Jetty Company Calendar Worker.
 //
-// Static pages (landing, dashboard, calendar shell) are served straight from the
-// build output by the assets binding. This script exists for the parts that
-// cannot be static: the calendar's read/write API on D1, and the ICS feed that
-// Google Calendar subscribes to.
+// Standalone: its own Worker, its own hostname, its own deploy. It shares
+// nothing with the Strategic Dashboard.
+//
+// The page itself is a static asset. This script exists for the parts that
+// cannot be static: the read/write API on D1, the ICS feed Google Calendar
+// subscribes to, and the check that nobody reaches any of it without having
+// come through Cloudflare Access.
 
 import { identify } from './access.js';
 import { buildIcs } from './ics.js';
 import { TAXONOMY, CATEGORY_KEYS, DIVISION_KEYS, STATUSES, categoryByKey } from './taxonomy.js';
 import SCHEMA from './schema.sql';
+
+// Shown instead of the calendar when a request arrives with no Cloudflare
+// Access identity. Self-contained on purpose: it has to render before any of
+// this Worker's assets are allowed to load.
+const NOT_PROTECTED_HTML = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Not available</title>
+<style>
+  :root{color-scheme:light dark}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:#F6F7F7;color:#252933;font:16px/1.65 ui-serif,Georgia,serif;padding:24px}
+  @media (prefers-color-scheme:dark){body{background:#1b1e24;color:#EDECED}}
+  .box{max-width:52ch}
+  h1{font:700 22px/1.3 ui-sans-serif,system-ui,sans-serif;margin:0 0 12px}
+  p{margin:0 0 12px}
+  code{font:13px ui-monospace,monospace;background:rgba(127,127,127,.18);
+    padding:1px 5px;border-radius:4px}
+</style></head><body><div class="box">
+<h1>This calendar is not available</h1>
+<p>It is waiting on a Cloudflare Access application in front of this hostname.
+Until one exists, no request carries a signed-in identity and nothing is served.</p>
+<p>To switch it on: Zero Trust &rarr; Access &rarr; Applications &rarr; add a
+self-hosted application for this hostname, then add the people who should be
+able to open it. Add a <strong>Bypass</strong> policy for the single path
+<code>/calendar.ics</code> so Google Calendar can still read the feed.</p>
+</div></body></html>`;
 
 let schemaReady = false;
 
@@ -354,9 +384,25 @@ export default {
       });
     }
 
-    if (url.pathname.startsWith('/api/')) {
-      const who = await identify(request, env);
+    const who = await identify(request, env);
 
+    // A new workers.dev hostname is reachable by anyone until an Access
+    // application is put in front of it. Rather than depend on that happening
+    // before anybody finds the URL, refuse every request that arrives without
+    // an Access identity and explain what is missing. /calendar.ics is handled
+    // above and is deliberately exempt -- Google's fetchers carry no session,
+    // so the unguessable key is what protects that one path.
+    if (env.REQUIRE_IDENTITY !== 'false' && !who.email) {
+      if (url.pathname.startsWith('/api/')) {
+        return json({ error: 'This request did not come through Cloudflare Access.' }, 403);
+      }
+      return new Response(NOT_PROTECTED_HTML, {
+        status: 403,
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+      });
+    }
+
+    if (url.pathname.startsWith('/api/')) {
       if (url.pathname === '/api/taxonomy') return json(TAXONOMY);
       if (url.pathname === '/api/me') {
         return json({
