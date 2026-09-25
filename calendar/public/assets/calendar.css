@@ -86,6 +86,35 @@
 /* Used on the filter chips and in the form, so it is not scoped to either. */
 .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;display:inline-block}
 
+/* ── Attachments ────────────────────────────────────────────────────────── */
+
+.att-box{border:1px solid var(--surface-alt);border-radius:8px;padding:12px 14px}
+.att-row{
+  display:flex;align-items:center;gap:8px;
+  padding:5px 0;font-family:var(--body);font-size:13.5px;
+}
+.att-name{color:inherit;text-decoration:underline;text-underline-offset:2px;word-break:break-all}
+.att-name:hover{color:var(--primary)}
+.att-size{font-family:var(--mono);font-size:10.5px;opacity:.45;white-space:nowrap}
+.att-x{
+  margin-left:auto;background:transparent;border:0;cursor:pointer;
+  font-size:17px;line-height:1;opacity:.45;color:inherit;padding:0 2px;
+}
+.att-x:hover{opacity:1;color:var(--watch)}
+.att-list:not(:empty){margin-bottom:8px}
+
+.att-pick{display:inline-flex;align-items:center;cursor:pointer}
+.att-pick input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.att-pick span{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
+  border:1px solid var(--surface-alt);border-radius:5px;padding:6px 10px;
+}
+.att-pick:hover span{border-color:var(--primary-alt)}
+.att-pick:focus-within span{border-color:var(--primary)}
+
+/* On the event itself, where the files are read rather than managed. */
+.att-slot .att-row{padding:3px 0}
+
 /* ── Filter bar ─────────────────────────────────────────────────────────── */
 
 /* Two rows of chips replaced six collapsible sections and forty checkboxes.

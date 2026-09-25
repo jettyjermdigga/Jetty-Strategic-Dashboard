@@ -42,6 +42,20 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE INDEX IF NOT EXISTS idx_items_start ON items(start_date);
 CREATE INDEX IF NOT EXISTS idx_items_end   ON items(end_date);
 
+-- Files attached to an event. The bytes live in R2; this is the index, so the
+-- calendar can list and name them without reaching for object storage.
+CREATE TABLE IF NOT EXISTS attachments (
+  id           TEXT PRIMARY KEY,
+  item_id      TEXT NOT NULL,
+  name         TEXT NOT NULL,          -- as uploaded, shown on the event
+  size         INTEGER,
+  content_type TEXT,                   -- what the browser claimed; NOT what we serve back
+  r2_key       TEXT NOT NULL,          -- object key, never derived from the filename
+  uploaded_by  TEXT,
+  uploaded_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_att_item ON attachments(item_id);
+
 -- One row per applied migration, so a backfill that rewrites data runs once and
 -- not on every cold start.
 CREATE TABLE IF NOT EXISTS meta (

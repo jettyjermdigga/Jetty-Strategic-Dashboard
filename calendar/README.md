@@ -182,6 +182,46 @@ Each person's chips are remembered in their own browser — what is **lit**, so 
 department added next month simply appears rather than being hidden by an old
 preference.
 
+## Attachments
+
+Files hang off an event: permits, site maps, a signed contract. The bytes live
+in a Cloudflare **R2** bucket bound as `FILES`; the `attachments` table is the
+index, so the calendar can name and list them without reaching for storage.
+
+Nothing here breaks when the bucket is missing. Uploading answers "file storage
+is not set up for this calendar yet" and everything else carries on, which is
+why the code could ship before the bucket existed.
+
+To switch it on: R2 → **Create bucket** → `jetty-calendar-files`, then add to
+`wrangler.toml`:
+
+```toml
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "jetty-calendar-files"
+```
+
+Add the binding only once the bucket exists — `wrangler deploy` fails on a
+binding it cannot resolve, and that takes the whole calendar's deploy with it.
+
+**Who can do what.** Anyone Access lets in can download. Only editors can add or
+remove. Removing is immediate rather than on Save, so a file someone deleted
+cannot come back by cancelling.
+
+**Downloads are always downloads.** An uploaded `.html` or `.svg` served inline
+would run on the calendar's own origin, carrying the reader's Access session, so
+every file comes back as `application/octet-stream` with
+`Content-Disposition: attachment`, `nosniff`, and a sandboxing CSP. The
+browser's own content type is recorded but never trusted on the way out.
+
+**The object key is generated, never taken from the filename** — a name can
+carry a slash, a traversal, or another event's key. Deleting an event deletes
+its objects first and its rows second: a row without its file is a broken link,
+a file without its row is storage nobody can reach.
+
+10 MB a file, uploaded one at a time so a handful of large ones cannot get the
+Worker rate-limited.
+
 ## The retail calendar
 
 Week 1 of 2026 runs Sunday 4 January to Saturday 10 January, anchored in

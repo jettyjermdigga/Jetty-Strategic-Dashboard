@@ -26,6 +26,7 @@
     // question, which is why an untouched calendar shows everything and why
     // clicking one chip cannot be vetoed by an axis nobody has touched.
     sel: { kinds: [], depts: [], subs: [], vehicles: [], stats: [] },
+    attachments: [],   // of the event currently open, fetched on demand
   };
 
   // ── remembered preferences ─────────────────────────────────────────────
@@ -610,9 +611,43 @@
       + (Math.round((e - s) / DAY_MS) + 1) + ' days' + times;
   }
 
+  function fileSize(n) {
+    if (!n && n !== 0) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return Math.round(n / 1024) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+
+  // Shown on the event and in the form. Downloads are links rather than
+  // fetches, so the browser's own save dialog does the work.
+  function attachHtml(list, withRemove) {
+    if (!list || !list.length) return '';
+    return list.map(function (a) {
+      return '<div class="att-row">'
+        + '<a class="att-name" href="/api/attachments/' + esc(a.id) + '" download>'
+        + esc(a.name) + '</a>'
+        + '<span class="att-size">' + fileSize(a.size) + '</span>'
+        + (withRemove
+            ? '<button type="button" class="att-x" data-att="' + esc(a.id)
+              + '" title="Remove">\u00d7</button>'
+            : '')
+        + '</div>';
+    }).join('');
+  }
+
+  // The attachment list is not carried on every event in the month -- only a
+  // count is -- so the one being opened is fetched when it is opened.
   function showDetail(id) {
     var it = state.items.filter(function (x) { return x.id === id; })[0];
     if (!it) return;
+    state.attachments = [];
+    if (it.attachment_count) {
+      api('/api/items/' + id).then(function (r) {
+        state.attachments = r.attachments || [];
+        var slot = document.querySelector('#modalBody .att-slot');
+        if (slot) slot.innerHTML = attachHtml(state.attachments);
+      }).catch(function () {});
+    }
     var r = it.retail || retailWeek(it.start_date);
     var rows = '';
     var add = function (k, v) { if (v) rows += '<dt>' + k + '</dt><dd>' + v + '</dd>'; };
@@ -647,7 +682,10 @@
     add('Address', addr);
     add('Link', it.url ? '<a href="' + esc(it.url) + '" target="_blank" rel="noopener">'
       + esc(it.url) + '</a>' : '');
-    add('Notes', it.notes ? '<span class="det-notes">' + esc(it.notes) + '</span>' : '');
+    add('Description / Notes', it.notes ? '<span class="det-notes">' + esc(it.notes) + '</span>' : '');
+    if (it.attachment_count) {
+      add('Attachments', '<div class="att-slot"><span class="muted">Loading\u2026</span></div>');
+    }
 
     var stamp = '';
     if (it.created_by) stamp += 'Added by ' + esc(it.created_by)
@@ -781,8 +819,22 @@
           + '</select></div>'
           + '<div class="fld"><label for="f-url">Link</label>'
           + '<input type="url" id="f-url" value="' + esc(it.url || '') + '" placeholder="https://"></div>'
-          + '<div class="fld"><label for="f-notes">Notes</label>'
-          + '<textarea id="f-notes" maxlength="4000">' + esc(it.notes || '') + '</textarea></div>');
+          + '<div class="fld"><label for="f-notes">Description / Notes</label>'
+          + '<textarea id="f-notes" maxlength="4000" placeholder="What is it, what has to happen, '
+          + 'anything the next person needs to know.">' + esc(it.notes || '') + '</textarea></div>'
+
+          // Uploading needs an id to hang the file off, so a new event holds its
+          // files until it has been saved and says so rather than failing.
+          + '<div class="fld"><label>Attachments</label>'
+          + '<div class="att-box" id="attBox">'
+          + (existing
+              ? '<div class="att-list" id="attList"></div>'
+              : '<p class="hint" id="attPending">Files are attached once the event is saved.</p>')
+          + '<label class="att-pick"><input type="file" id="f-files" multiple>'
+          + '<span>Choose files\u2026</span></label>'
+          + '<div class="hint">Up to 10 MB each. Everyone who can open the calendar can '
+          + 'download them; only editors can add or remove.</div>'
+          + '</div></div>');
 
     openModal(existing ? 'Edit event' : 'Add event', body, '');
 
@@ -940,6 +992,41 @@
     paintExtras();
     paintScoped();
 
+    // Editing shows what is already attached, and removes one on the spot --
+    // waiting for Save would mean a file the person has "deleted" coming back
+    // if they then cancel.
+    function paintFiles() {
+      var box = $('#attList');
+      if (!box) return;
+      box.innerHTML = state.attachments.length
+        ? attachHtml(state.attachments, true)
+        : '<p class="hint">Nothing attached yet.</p>';
+    }
+    if (existing) {
+      state.attachments = [];
+      paintFiles();
+      api('/api/items/' + existing.id).then(function (r) {
+        state.attachments = r.attachments || [];
+        paintFiles();
+      }).catch(function () {});
+    }
+
+    $('#modalBody').addEventListener('click', function (e) {
+      var x = e.target.closest('.att-x');
+      if (!x) return;
+      e.preventDefault();
+      if (!confirm('Remove this file? It cannot be undone.')) return;
+      x.disabled = true;
+      api('/api/attachments/' + x.dataset.att, { method: 'DELETE' })
+        .then(function () {
+          state.attachments = state.attachments.filter(function (a) {
+            return a.id !== x.dataset.att;
+          });
+          paintFiles();
+        })
+        .catch(function (err) { x.disabled = false; formError(err.message); });
+    });
+
     $('#modalBody').addEventListener('change', function (e) {
       if (e.target.classList.contains('f-kind')) return paint();
       if (e.target.classList.contains('f-dept')) { paintExtras(); paintScoped(); return paint(); }
@@ -1096,6 +1183,29 @@
       });
   }
 
+  // One at a time rather than in parallel: a handful of 10 MB files fired at
+  // once is the sort of thing that gets a Worker rate-limited, and the order
+  // they arrive in is the order they were picked.
+  function uploadFiles(itemId, files) {
+    return files.reduce(function (chain, file) {
+      return chain.then(function () {
+        return fetch('/api/items/' + itemId + '/attachments', {
+          method: 'POST',
+          headers: {
+            'X-File-Name': encodeURIComponent(file.name).replace(/%20/g, ' '),
+            'content-type': file.type || 'application/octet-stream',
+          },
+          body: file,
+        }).then(function (res) {
+          if (res.ok) return res.json();
+          return res.json().catch(function () { return {}; }).then(function (body) {
+            throw new Error(body.error || ('Could not upload ' + file.name));
+          });
+        });
+      });
+    }, Promise.resolve());
+  }
+
   function loadItems() {
     return api('/api/items').then(function (r) {
       state.items = r.items || [];
@@ -1223,14 +1333,22 @@
       if (act === 'save') {
         b.disabled = true;
         var id = b.dataset.id;
+        var picked = $('#f-files') ? Array.prototype.slice.call($('#f-files').files) : [];
         api(id ? '/api/items/' + id : '/api/items', {
           method: id ? 'PATCH' : 'POST',
           body: JSON.stringify(readForm()),
+        }).then(function (r) {
+          // A new event has no id until now, which is why its files wait.
+          var target = id || (r.item && r.item.id);
+          if (!picked.length || !target) return null;
+          b.textContent = 'Uploading\u2026';
+          return uploadFiles(target, picked);
         }).then(function () {
           closeModal();
           return loadItems();
         }).catch(function (err) {
           b.disabled = false;
+          b.textContent = id ? 'Save changes' : 'Add to calendar';
           formError(err.message, err.problems);
         });
         return;

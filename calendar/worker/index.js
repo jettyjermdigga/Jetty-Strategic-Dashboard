@@ -396,7 +396,10 @@ async function listItems(db, from, to) {
   // An item overlaps the window when it starts before the window ends and ends
   // after the window starts -- a plain start-date filter would drop multi-day
   // items already running when the month opened.
-  let sql = 'SELECT * FROM items';
+  // The count comes along so the calendar can mark an event that has files
+  // without a query per event.
+  let sql = 'SELECT items.*, (SELECT COUNT(*) FROM attachments a WHERE a.item_id = items.id)'
+    + ' AS attachment_count FROM items';
   const binds = [];
   if (from && to) {
     sql += ' WHERE start_date <= ? AND end_date >= ?';
@@ -591,6 +594,23 @@ function coerceKeys(rec) {
   return rec;
 }
 
+// Workers cap a request body well above this; the limit is about what is
+// sensible to hang off a calendar event, not what the platform allows.
+const MAX_UPLOAD = 10 * 1024 * 1024;
+
+// Content-Disposition is a header, and a header cannot carry a newline or a
+// quote without changing what it means.
+function asciiName(name) {
+  return String(name).replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+}
+
+async function listAttachments(db, itemId) {
+  const res = await db.prepare(
+    'SELECT id, name, size, uploaded_by, uploaded_at FROM attachments '
+    + 'WHERE item_id = ? ORDER BY uploaded_at ASC').bind(itemId).all();
+  return res.results || [];
+}
+
 async function handleApi(request, env, url, who) {
   const db = env.DB;
   if (!db) {
@@ -709,19 +729,109 @@ async function handleApi(request, env, url, who) {
     return json({ imported: rows.length, warnings: warnings.slice(0, 40) }, 201);
   }
 
-  const idMatch = path.match(
-    /^\/api\/items\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
-  );
+  const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+  // Files attached to one event. Everything here is a no-op until an R2 bucket
+  // is bound, rather than a 500 -- the calendar works without attachments and
+  // should say so plainly.
+  const attMatch = path.match(new RegExp('^/api/items/(' + UUID + ')/attachments$', 'i'));
+  if (attMatch) {
+    const itemId = attMatch[1];
+    if (method === 'GET') return json({ attachments: await listAttachments(db, itemId) });
+
+    if (method === 'POST') {
+      const denied = requireEditor(); if (denied) return denied;
+      if (!env.FILES) {
+        return json({ error: 'File storage is not set up for this calendar yet.' }, 503);
+      }
+      const owner = await db.prepare('SELECT id FROM items WHERE id = ?').bind(itemId).first();
+      if (!owner) return json({ error: 'No calendar item with that id.' }, 404);
+
+      const name = clean(request.headers.get('X-File-Name'), 200) || 'file';
+      const size = Number(request.headers.get('content-length') || 0);
+      if (size > MAX_UPLOAD) {
+        return json({ error: 'That file is larger than ' + (MAX_UPLOAD / 1048576) + ' MB.' }, 413);
+      }
+
+      const id = crypto.randomUUID();
+      // The object key is generated, never taken from the filename: a name can
+      // contain a slash, a traversal or another event's key.
+      const r2Key = 'items/' + itemId + '/' + id;
+      const body = await request.arrayBuffer();
+      if (body.byteLength > MAX_UPLOAD) {
+        return json({ error: 'That file is larger than ' + (MAX_UPLOAD / 1048576) + ' MB.' }, 413);
+      }
+      await env.FILES.put(r2Key, body);
+
+      const now = new Date().toISOString();
+      await db.prepare(
+        'INSERT INTO attachments (id, item_id, name, size, content_type, r2_key, uploaded_by, uploaded_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).bind(id, itemId, name, body.byteLength,
+             clean(request.headers.get('content-type'), 120), r2Key, who.email, now).run();
+
+      return json({ attachment: { id, name, size: body.byteLength, uploaded_by: who.email, uploaded_at: now } }, 201);
+    }
+    return json({ error: 'Method not allowed.' }, 405);
+  }
+
+  const fileMatch = path.match(new RegExp('^/api/attachments/(' + UUID + ')$', 'i'));
+  if (fileMatch) {
+    const row = await db.prepare('SELECT * FROM attachments WHERE id = ?')
+      .bind(fileMatch[1]).first();
+    if (!row) return json({ error: 'No such attachment.' }, 404);
+
+    if (method === 'DELETE') {
+      const denied = requireEditor(); if (denied) return denied;
+      if (env.FILES) await env.FILES.delete(row.r2_key);
+      await db.prepare('DELETE FROM attachments WHERE id = ?').bind(row.id).run();
+      return json({ deleted: row.id });
+    }
+
+    if (method === 'GET') {
+      if (!env.FILES) return json({ error: 'File storage is not bound.' }, 503);
+      const obj = await env.FILES.get(row.r2_key);
+      if (!obj) return json({ error: 'That file is no longer in storage.' }, 404);
+      // Always a download, never a page. An uploaded .html or .svg served inline
+      // would run on the calendar's own origin, with the uploader's Access
+      // session -- so the browser is told to save it and not to sniff.
+      return new Response(obj.body, {
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-disposition': 'attachment; filename="' + asciiName(row.name) + '"',
+          'x-content-type-options': 'nosniff',
+          'content-security-policy': "default-src 'none'; sandbox",
+          'cache-control': 'private, max-age=300',
+        },
+      });
+    }
+    return json({ error: 'Method not allowed.' }, 405);
+  }
+
+  const idMatch = path.match(new RegExp('^/api/items/(' + UUID + ')$', 'i'));
   if (idMatch) {
     const id = idMatch[1];
     const existing = await db.prepare('SELECT * FROM items WHERE id = ?').bind(id).first();
     if (!existing) return json({ error: 'No calendar item with that id.' }, 404);
 
-    if (method === 'GET') return json({ item: withRetail(existing) });
+    if (method === 'GET') {
+      return json({
+        item: withRetail(existing),
+        attachments: await listAttachments(db, id),
+      });
+    }
 
     const denied = requireEditor(); if (denied) return denied;
 
     if (method === 'DELETE') {
+      // The objects go first: a row left without its file is a broken link on
+      // the page, a file left without its row is storage nobody can ever reach.
+      const files = await db.prepare('SELECT r2_key FROM attachments WHERE item_id = ?')
+        .bind(id).all();
+      if (env.FILES) {
+        for (const f of (files.results || [])) await env.FILES.delete(f.r2_key);
+      }
+      await db.prepare('DELETE FROM attachments WHERE item_id = ?').bind(id).run();
       await db.prepare('DELETE FROM items WHERE id = ?').bind(id).run();
       return json({ deleted: id });
     }
