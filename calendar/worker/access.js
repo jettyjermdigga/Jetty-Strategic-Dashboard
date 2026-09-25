@@ -40,7 +40,7 @@ async function loadKeys(teamDomain) {
   return keys;
 }
 
-async function verifyJwt(token, teamDomain, aud) {
+async function verifyJwt(token, teamDomain, auds) {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
 
@@ -67,10 +67,24 @@ async function verifyJwt(token, teamDomain, aud) {
   if (typeof claims.exp === 'number' && claims.exp < now) return null;
   if (typeof claims.nbf === 'number' && claims.nbf > now + 60) return null;
 
+  // One Worker can sit behind more than one Access application -- a hostname
+  // application and the Worker-level one during a move, and eventually one per
+  // tool behind the same front door. Each stamps its own AUD, so accept any of
+  // the configured ones rather than a single value. An AUD that is not on the
+  // list is still refused: this widens what we accept, it does not skip it.
   const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-  if (aud && !audience.includes(aud)) return null;
+  if (auds.length && !auds.some((a) => audience.includes(a))) return null;
 
   return claims;
+}
+
+// Comma-separated, so the calendar keeps working while an Access application
+// is being replaced rather than going dark between the two.
+function audList(env) {
+  return String(env.ACCESS_AUD || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function editorList(env) {
@@ -84,14 +98,14 @@ export async function identify(request, env) {
   const headerEmail = request.headers.get('Cf-Access-Authenticated-User-Email') || '';
   const token = request.headers.get('Cf-Access-Jwt-Assertion') || '';
   const teamDomain = env.ACCESS_TEAM_DOMAIN || '';
-  const aud = env.ACCESS_AUD || '';
+  const auds = audList(env);
 
   let email = headerEmail;
   let verified = false;
 
-  if (teamDomain && aud && token) {
+  if (teamDomain && auds.length && token) {
     try {
-      const claims = await verifyJwt(token, teamDomain, aud);
+      const claims = await verifyJwt(token, teamDomain, auds);
       if (claims) {
         email = claims.email || headerEmail;
         verified = true;
@@ -118,8 +132,8 @@ export async function identify(request, env) {
   return {
     email,
     verified,
-    canEdit: canEdit || (wouldEdit && !teamDomain && !aud),
+    canEdit: canEdit || (wouldEdit && !teamDomain && !auds.length),
     editorsConfigured: editors.length > 0,
-    accessConfigured: Boolean(teamDomain && aud),
+    accessConfigured: Boolean(teamDomain && auds.length),
   };
 }
