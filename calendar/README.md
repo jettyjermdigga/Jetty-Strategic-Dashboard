@@ -146,11 +146,23 @@ taxonomy, which turned out not to be the same thing as a way to read a calendar.
 together. **Row three** — the crosscutting questions: *Meetings*, the three
 vehicles, and *Pending*. *Everything* clears the lot.
 
-Chips of the same kind are alternatives; different kinds narrow together. Box
-Truck plus Wholesale shows both departments' events; Long Branch plus Pending
-shows only what is tentative at Long Branch. A chip with nothing selected on its
-axis is not asking a question, so it never hides anything — clicking one chip
-can never be vetoed by an axis nobody has touched.
+Departments are **one at a time**: picking a second replaces the first, and
+clicking the lit one clears it. Two departments at once is a question almost
+nobody asks, and allowing it made the bar read as a mistake. *Marketing (All)*
+is a department too, so it swaps with the rest despite sitting on row two.
+
+Everything else is multi-select. Chips of the same kind are alternatives;
+different kinds narrow together — Long Branch plus Pending shows only what is
+tentative at Long Branch. A chip with nothing selected on its axis is not asking
+a question, so it never hides anything.
+
+**Whatever is selected is spelled out underneath**, one removable token each,
+with a plain "nothing matches all of these" when the combination is empty. That
+bar is not decoration: three rows of chips make a lit one easy to miss, and a
+missed one makes the counts look broken rather than conditional. Leave a
+Marketing sub-type on, and every department reads 0 — correctly, since no
+department's events are also an Email — which is indistinguishable from a bug
+until you can see what else is on.
 
 Within a department, an event shows while **any** of its departments is lit. Pick
 Marketing and you get the store sale Marketing only promotes, because that event

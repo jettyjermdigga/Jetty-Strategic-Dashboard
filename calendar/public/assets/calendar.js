@@ -40,6 +40,12 @@
   // rendering.
 
   var AXES = ['kinds', 'depts', 'subs', 'vehicles', 'stats'];
+  // Picking a second department is rare and reads as a mistake -- the
+  // question is almost always "what is Wholesale doing", not "what are
+  // Wholesale and Culture doing". Choosing one replaces the last, and
+  // clicking the lit one still clears it. Marketing (All) sits on the second
+  // row but is a department too, so it swaps with the rest.
+  var SINGLE = ['depts'];
   // v3: preferences used to record what was switched OFF, which only made
   // sense when everything started on. Chips record what is switched ON, so an
   // older preference would mean the opposite of what it said.
@@ -407,18 +413,46 @@
       + '<div class="frow">' + row(rows[2]) + '</div>';
   }
 
-  // Persisted filters are silent by nature: someone narrows the view, comes back
-  // a month later and concludes events are missing. This says so, and offers the
-  // way back.
+  // What is selected, spelled out. Chips are spread over three rows and a lit
+  // one is easy to miss, which makes the counts look wrong rather than
+  // conditional: pick a Marketing sub-type, forget it is on, and every
+  // department reads 0 because no department's events are also an Email. This
+  // bar names every active filter, lets each be taken off on its own, and says
+  // plainly when the combination matches nothing.
+  function selLabel(axis, key) {
+    if (axis === 'depts') return deptLabel(key);
+    if (axis === 'kinds') return labelIn(tax('eventTypes'), key);
+    if (axis === 'subs') return labelIn(tax('subTypes'), key);
+    if (axis === 'vehicles') return labelIn(tax('vehicles'), key);
+    return key;
+  }
+
   function renderFilterStatus() {
     var el = $('#filterStatus');
     if (!el) return;
-    var total = state.items.length;
+    var active = [];
+    AXES.forEach(function (axis) {
+      state.sel[axis].forEach(function (key) {
+        active.push({ axis: axis, key: key, label: selLabel(axis, key) });
+      });
+    });
+    if (!active.length) { el.innerHTML = ''; return; }
+
     var shown = visible().length;
-    if (!total || shown === total) { el.innerHTML = ''; return; }
-    el.innerHTML = '<div class="flt-status">Filters are hiding '
-      + (total - shown) + ' of ' + total + ' events. '
-      + '<button type="button" id="fltReset">Show everything</button></div>';
+    var total = state.items.length;
+    el.innerHTML = '<div class="flt-status' + (shown ? '' : ' none') + '">'
+      + '<span class="fs-lead">Showing</span>'
+      + active.map(function (a) {
+          return '<button type="button" class="fs-tok" data-axis="' + a.axis + '"'
+            + ' data-key="' + esc(a.key) + '" title="Remove this filter">'
+            + esc(a.label) + '<span class="fs-x">\u00d7</span></button>';
+        }).join('')
+      + '<span class="fs-count">'
+      + (shown ? shown + ' of ' + total + ' events'
+               : 'nothing matches all of these')
+      + '</span>'
+      + '<button type="button" class="fs-clear" id="fltReset">Clear all</button>'
+      + '</div>';
   }
 
   // ── views ──────────────────────────────────────────────────────────────
@@ -1200,6 +1234,7 @@
         if (!axis || !state.sel[axis]) return;
         var at = state.sel[axis].indexOf(key);
         if (at >= 0) state.sel[axis].splice(at, 1);
+        else if (SINGLE.indexOf(axis) >= 0) state.sel[axis] = [key];
         else state.sel[axis].push(key);
       }
       savePrefs();
@@ -1207,8 +1242,16 @@
     });
 
     $('#filterStatus').addEventListener('click', function (e) {
-      if (!e.target.closest('#fltReset')) return;
-      AXES.forEach(function (axis) { state.sel[axis] = []; });
+      if (e.target.closest('#fltReset')) {
+        AXES.forEach(function (axis) { state.sel[axis] = []; });
+      } else {
+        var tok = e.target.closest('.fs-tok');
+        if (!tok) return;
+        var list = state.sel[tok.dataset.axis];
+        var at = list ? list.indexOf(tok.dataset.key) : -1;
+        if (at < 0) return;
+        list.splice(at, 1);
+      }
       savePrefs();
       renderAll();
     });
