@@ -25,43 +25,34 @@
 </header>
 
 <div class="cal-bar">
-  <div class="cal-nav">
-    <button id="prev" title="Previous" aria-label="Previous">&#8249;</button>
-    <button id="next" title="Next" aria-label="Next">&#8250;</button>
-  </div>
-  <button class="cal-btn" id="today">Today</button>
-  <div class="cal-period" id="period">&nbsp;</div>
-
-  <div class="cal-seg" id="views" role="group" aria-label="Calendar view">
-    <button data-view="day">Day</button>
-    <button data-view="week">Week</button>
-    <button data-view="month" aria-pressed="true">Month</button>
-    <button data-view="year">Year</button>
-    <button data-view="agenda">Agenda</button>
+  <div class="cal-left">
+    <button class="cal-btn" id="today">Today</button>
   </div>
 
-  <label class="wk-jump" title="Jump to a retail week">
-    <span>Wk</span>
-    <input type="number" id="wkNum" min="1" max="53" inputmode="numeric">
-  </label>
+  <div class="cal-mid">
+    <button class="cal-arrow" id="prev" title="Previous month" aria-label="Previous month">&#8249;</button>
+    <div class="cal-period" id="period">&nbsp;</div>
+    <button class="cal-arrow" id="next" title="Next month" aria-label="Next month">&#8250;</button>
+  </div>
 
-  <div class="cal-spacer"></div>
-
-  <button class="cal-btn" id="subscribe">Subscribe</button>
-  <button class="cal-btn" id="importBtn" hidden>Import</button>
-  <button class="cal-btn primary" id="addBtn" hidden>+ Add event</button>
+  <div class="cal-right">
+    <button class="cal-btn" id="subscribe">Subscribe</button>
+    <button class="cal-btn" id="importBtn" hidden>Import</button>
+    <button class="cal-btn primary" id="addBtn" hidden>+ Add event</button>
+  </div>
 </div>
 
 <div class="filterbar" id="filterBar"></div>
 <div id="filterStatus"></div>
 
-<div class="cal-shell">
+<div class="cal-shell" id="shell">
   <main>
     <div id="notice"></div>
     <div class="cal-card" style="padding:0;overflow:hidden">
       <div id="view"><div class="cal-empty">Loading the calendar&hellip;</div></div>
     </div>
   </main>
+  <aside class="cal-list" id="listPanel" hidden></aside>
 </div>
 
 <div class="modal-back" id="modal" hidden>

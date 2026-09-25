@@ -135,51 +135,52 @@ of them are editors-only.
 | Venue, Address, City, State, Zip | events only |
 | Notes, Link | |
 
+## Reading the calendar
+
+One month grid, and nothing to switch between. The arrows, the month and *Today*
+sit in the middle of the bar; the day, week, year and agenda views are gone, as
+is the retail-week jump box. Each was another decision to make before answering
+a question the month already answers.
+
+**Picking anything opens a list beside the grid**, in date order for the month in
+view, and the grid gives up the width to it. Once you have narrowed to one
+department the grid stops being the useful shape — the answer is a handful of
+events scattered over six rows of mostly empty cells — and the list is what you
+actually wanted. Clear the filters and the list closes again.
+
+At phone width there is no grid at all, only the list. A month grid is
+unreadable there, and that was what the agenda view used to be for.
+
 ## Filtering
 
-Two rows of chips above the calendar. Nothing else — the sidebar of six
-collapsible sections and forty checkboxes was a faithful rendering of the
-taxonomy, which turned out not to be the same thing as a way to read a calendar.
+Three rows of chips above the calendar.
 
-**Row one** — a chip per department, Marketing excepted. **Row two** — *Marketing
-(All)* with its nine sub-types beside it, since they are only ever asked about
-together. **Row three** — the crosscutting questions: *Meetings*, the three
-vehicles, and *Pending*. *Everything* clears the lot.
+**Row one** — a chip per department, plus **Unassigned** for events that have
+none. **Row two** — *Marketing (All)* with its nine sub-types beside it. **Row
+three** — *Meetings*, the three vehicles, and *Pending*. *Everything* clears the
+lot.
 
-Departments are **one at a time**: picking a second replaces the first, and
-clicking the lit one clears it. Two departments at once is a question almost
-nobody asks, and allowing it made the bar read as a mistake. *Marketing (All)*
-is a department too, so it swaps with the rest despite sitting on row two.
+**A department is a whole view, not one term in a query.** "What is Wholesale
+doing" means everything Wholesale is on — its events, its marketing, its
+meetings, whatever it has to drive there. So picking a department clears
+everything else, and picking anything else lets the department go. Combining
+them silently subtracted from the answer, which is how a Finance count of zero
+came to look like missing data when it was an Email filter left on three rows up.
 
-Everything else is multi-select. Chips of the same kind are alternatives;
-different kinds narrow together — Long Branch plus Pending shows only what is
-tentative at Long Branch. A chip with nothing selected on its axis is not asking
-a question, so it never hides anything.
+Chips on rows two and three still combine: Email plus Pending is a fair
+question. Same row means alternatives, different rows narrow.
 
 **Whatever is selected is spelled out underneath**, one removable token each,
-with a plain "nothing matches all of these" when the combination is empty. That
-bar is not decoration: three rows of chips make a lit one easy to miss, and a
-missed one makes the counts look broken rather than conditional. Leave a
-Marketing sub-type on, and every department reads 0 — correctly, since no
-department's events are also an Email — which is indistinguishable from a bug
-until you can see what else is on.
-
-Within a department, an event shows while **any** of its departments is lit. Pick
-Marketing and you get the store sale Marketing only promotes, because that event
-is still the store's — the primary is what gives it colour, not what makes it
-findable.
-
-Counts are worked out with the chip's own axis ignored, so each number is what
-you would get by clicking it rather than what you already have. Without that,
-every chip on an active axis reads 0 and the bar looks broken.
+with a plain "nothing matches all of these" when the combination is empty.
+Counts are worked out with the chip's own axis ignored, so each number says what
+clicking it would give rather than what you already have.
 
 Needs, Tradeshow, Cancelled and *Events & Marketing* have no chips. They are
-still on the form when adding or editing, and still shown on an event — they
-just did not earn a place in the reading view. Say so and they are one line each.
+still on the form when adding or editing, and still shown on an event.
 
-Each person's chips are remembered in their own browser. What is stored is what
-is **lit**, and nothing lit is the default, so a department added next month
-simply appears rather than being hidden by an old preference.
+Each person's chips are remembered in their own browser — what is **lit**, so a
+department added next month simply appears rather than being hidden by an old
+preference.
 
 ## The retail calendar
 

@@ -18,7 +18,6 @@
   var NARROW = window.matchMedia('(max-width: 820px)').matches;
 
   var state = {
-    view: NARROW ? 'agenda' : 'month',
     cursor: new Date(),
     items: [],
     tax: null,
@@ -40,12 +39,16 @@
   // rendering.
 
   var AXES = ['kinds', 'depts', 'subs', 'vehicles', 'stats'];
-  // Picking a second department is rare and reads as a mistake -- the
-  // question is almost always "what is Wholesale doing", not "what are
-  // Wholesale and Culture doing". Choosing one replaces the last, and
-  // clicking the lit one still clears it. Marketing (All) sits on the second
-  // row but is a department too, so it swaps with the rest.
-  var SINGLE = ['depts'];
+  // A department is a whole view, not one term in a query. "What is Wholesale
+  // doing" means everything Wholesale is on -- its events, its marketing, its
+  // meetings, whatever it has to drive there. Combining it with a chip from
+  // another row silently subtracts from that, which is how a Finance count of
+  // zero came to look like missing data instead of an active Email filter.
+  //
+  // So a department clears everything else, and anything else clears the
+  // department. Chips on rows two and three still combine among themselves.
+  var DEPT_AXIS = 'depts';
+  var NO_DEPT = '\u2014none\u2014';
   // v3: preferences used to record what was switched OFF, which only made
   // sense when everything started on. Chips record what is switched ON, so an
   // older preference would mean the opposite of what it said.
@@ -60,10 +63,7 @@
 
   function savePrefs() {
     try {
-      window.localStorage.setItem(PREFS_KEY, JSON.stringify({
-        sel: state.sel,
-        view: state.view,
-      }));
+      window.localStorage.setItem(PREFS_KEY, JSON.stringify({ sel: state.sel }));
     } catch (e) { /* storage unavailable; the calendar still works */ }
   }
 
@@ -74,9 +74,6 @@
       var saved = p.sel && p.sel[axis];
       if (Array.isArray(saved)) state.sel[axis] = saved.slice();
     });
-    // A view saved on a desktop should not land someone on a month grid at
-    // phone width, where it is unreadable.
-    if (p.view && !NARROW) state.view = p.view;
   }
 
   // ── small helpers ──────────────────────────────────────────────────────
@@ -126,11 +123,7 @@
       end: ymd(addDays(start, 6)),
     };
   }
-  function retailWeekStart(year, week) {
-    if (!state.tax) return null;
-    var idx = (Number(year) - state.tax.retailEpochYear) * 52 + (Number(week) - 1);
-    return addDays(fromYmd(state.tax.retailEpoch), idx * 7);
-  }
+
   function weekRangeLabel(r) {
     var s = fromYmd(r.start), e = fromYmd(r.end);
     return MONTHS[s.getMonth()].slice(0, 3) + ' ' + s.getDate() + ' – '
@@ -219,6 +212,9 @@
   // store sale Marketing only promotes, because that event is still the store's.
   function passesAxis(values, picked) {
     if (!picked.length) return true;
+    // The "Unassigned" chip asks for the events with nothing on this axis,
+    // which is the one question a list of values cannot express.
+    if (!values.length) return picked.indexOf(NO_DEPT) >= 0;
     return values.some(function (k) { return picked.indexOf(k) >= 0; });
   }
 
@@ -266,17 +262,6 @@
 
   function periodLabel() {
     var c = state.cursor;
-    if (state.view === 'day') {
-      var r = retailWeek(ymd(c));
-      return DOW_LONG[c.getDay()] + ', ' + MONTHS[c.getMonth()] + ' ' + c.getDate()
-        + (r ? '  ·  Wk ' + r.week : '');
-    }
-    if (state.view === 'week') {
-      var w = retailWeek(ymd(c));
-      return w ? 'Week ' + w.week + '  ·  ' + weekRangeLabel(w) : '';
-    }
-    if (state.view === 'year') return String(c.getFullYear());
-    if (state.view === 'agenda') return 'Next 6 months';
     return MONTHS[c.getMonth()] + ' ' + c.getFullYear();
   }
 
@@ -318,6 +303,9 @@
     var depts = tax('departments').map(function (d) {
       return { axis: 'depts', key: d.key, label: d.label, color: deptVar(d.key) };
     });
+    // Without this there is no way to find an event that has no department, and
+    // no way to tell "nothing is tagged Finance" from "Finance is broken".
+    depts.push({ axis: 'depts', key: NO_DEPT, label: 'Unassigned' });
 
     var meetings = tax('eventTypes')
       .filter(function (e) { return e.key === 'meetings-deadlines'; })
@@ -370,7 +358,9 @@
           : axis === 'depts' ? deptsOf(it)
           : axis === 'subs' ? subsOf(it)
           : vehiclesOf(it);
-        vals.filter(Boolean).forEach(function (k) { bucket[k] = (bucket[k] || 0) + 1; });
+        vals = vals.filter(Boolean);
+        if (!vals.length) vals = [NO_DEPT];
+        vals.forEach(function (k) { bucket[k] = (bucket[k] || 0) + 1; });
       });
       out[axis] = bucket;
     });
@@ -405,6 +395,7 @@
 
     el.innerHTML =
       '<div class="frow">'
+      + '<span class="fhint">Choose one department</span>'
       + '<button type="button" class="fchip all' + (anyOn ? '' : ' on') + '" data-all="1">'
       + 'Everything<span class="fn">' + state.items.length + '</span></button>'
       + row(rows[0])
@@ -420,7 +411,7 @@
   // bar names every active filter, lets each be taken off on its own, and says
   // plainly when the combination matches nothing.
   function selLabel(axis, key) {
-    if (axis === 'depts') return deptLabel(key);
+    if (axis === 'depts') return key === NO_DEPT ? 'Unassigned' : deptLabel(key);
     if (axis === 'kinds') return labelIn(tax('eventTypes'), key);
     if (axis === 'subs') return labelIn(tax('subTypes'), key);
     if (axis === 'vehicles') return labelIn(tax('vehicles'), key);
@@ -540,129 +531,59 @@
     return head + '<div class="mo-grid">' + cells + '</div>';
   }
 
-  // Shown only to editors -- everyone else sees the day as it is.
-  function addRowHtml(ds, label) {
-    if (!state.me.canEdit) return '';
-    return '<div class="add-row" data-add="' + esc(ds) + '">+ ' + (label || 'Add an event') + '</div>';
-  }
+  // The month grid answers "what is happening"; once you have narrowed to one
+  // department it stops being the useful shape, because the answer is a handful
+  // of events scattered over six rows of mostly empty cells. So a selection
+  // opens a list beside it, in date order, and the grid gives up the width.
+  function renderList() {
+    var panel = $('#listPanel');
+    if (!panel) return;
+    var any = AXES.some(function (a) { return state.sel[a].length; });
+    if (!any && !NARROW) { panel.hidden = true; $('#shell').classList.remove('split'); return; }
 
-  function renderDay() {
-    var ds = ymd(state.cursor);
-    var on = itemsOn(ds);
-    if (!on.length) {
-      return '<div class="day-wrap">'
-        + emptyHtml('Nothing scheduled', 'No calendar items on this day match the current filters.')
-        + addRowHtml(ds, 'Add an event on this day') + '</div>';
-    }
-    return '<div class="day-wrap"><div class="day-sub">' + on.length
-      + (on.length === 1 ? ' item' : ' items') + '</div><div class="day-list">'
-      + on.map(rowHtml).join('') + '</div>'
-      + addRowHtml(ds, 'Add an event on this day') + '</div>';
-  }
-
-  // Retail weeks run Sunday to Saturday and are how the business plans, so they
-  // get a view of their own rather than only a label.
-  function renderWeek() {
-    var r = retailWeek(ymd(state.cursor));
-    if (!r) return emptyHtml('No week', '');
-    var pool = visible();
-    var today = todayYmd();
-    var total = 0;
-    var days = '';
-    for (var i = 0; i < 7; i++) {
-      var day = addDays(fromYmd(r.start), i);
-      var ds = ymd(day);
-      var on = itemsOn(ds, pool);
-      total += on.length;
-      days += '<div class="wk-day' + (ds === today ? ' is-today' : '') + '">'
-        + '<div class="wk-date" data-day="' + ds + '"><span class="d">' + day.getDate() + '</span>'
-        + DOW[day.getDay()] + ' · ' + MONTHS[day.getMonth()].slice(0, 3) + '</div>'
-        + '<div class="wk-items">'
-        + (on.length ? on.map(rowHtml).join('')
-                     : (state.me.canEdit ? '' : '<div class="wk-none">—</div>'))
-        + addRowHtml(ds) + '</div></div>';
-    }
-    return '<div class="wk-wrap"><div class="day-sub">Retail week ' + r.week + ' of ' + r.year
-      + ' · ' + weekRangeLabel(r) + ' · ' + total
-      + (total === 1 ? ' item' : ' items') + '</div>' + days + '</div>';
-  }
-
-  function renderYear() {
-    var year = state.cursor.getFullYear();
-    var pool = visible();
-    var today = todayYmd();
-    var out = '';
-    for (var m = 0; m < 12; m++) {
-      var first = new Date(year, m, 1);
-      var start = addDays(first, -first.getDay());
-      var count = 0;
-      var days = DOW.map(function (d) { return '<div class="yr-dow">' + d[0] + '</div>'; }).join('');
-      for (var i = 0; i < 42; i++) {
-        var day = addDays(start, i);
-        if (i >= 35 && day.getMonth() !== m) continue;
-        var ds = ymd(day);
-        var outside = day.getMonth() !== m;
-        var on = outside ? [] : itemsOn(ds, pool);
-        if (!outside) count += on.length;
-        var seen = {}, dots = '';
-        on.forEach(function (it) {
-          var col = colorFor(it);
-          if (seen[col]) return;
-          seen[col] = 1;
-          if (Object.keys(seen).length <= 4) dots += '<i style="background:' + col + '"></i>';
-        });
-        days += '<div class="yr-day' + (outside ? ' out' : '') + (ds === today ? ' today' : '')
-          + '" data-day="' + ds + '">' + (outside ? '' : day.getDate())
-          + '<span class="yr-dots">' + dots + '</span></div>';
-      }
-      out += '<div class="yr-mo"><h4 data-month="' + m + '">' + MONTHS[m]
-        + '<span class="c">' + (count || '') + '</span></h4>'
-        + '<div class="yr-days">' + days + '</div></div>';
-    }
-    return '<div class="yr-grid">' + out + '</div>';
-  }
-
-  function renderAgenda() {
-    var from = ymd(state.cursor);
-    var to = ymd(addMonths(state.cursor, 6));
-    var pool = visible().filter(function (it) { return it.end_date >= from && it.start_date <= to; });
-    if (!pool.length) {
-      return emptyHtml('Nothing coming up', 'No items in the next six months match the current filters.');
-    }
-    var byDay = {};
-    pool.forEach(function (it) {
-      var key = it.start_date < from ? from : it.start_date;
-      (byDay[key] = byDay[key] || []).push(it);
-    });
-    var today = todayYmd();
-    return '<div class="ag-wrap">' + Object.keys(byDay).sort().map(function (ds) {
-      var d = fromYmd(ds);
-      var r = retailWeek(ds);
-      var items = byDay[ds].sort(function (a, b) {
-        if (a.all_day !== b.all_day) return b.all_day - a.all_day;
-        return (a.start_time || '').localeCompare(b.start_time || '');
+    var c = state.cursor;
+    var from = ymd(new Date(c.getFullYear(), c.getMonth(), 1));
+    var to = ymd(new Date(c.getFullYear(), c.getMonth() + 1, 0));
+    var pool = visible()
+      .filter(function (it) { return it.end_date >= from && it.start_date <= to; })
+      .sort(function (a, b) {
+        return a.start_date.localeCompare(b.start_date)
+          || (b.all_day - a.all_day)
+          || (a.start_time || '').localeCompare(b.start_time || '')
+          || a.title.localeCompare(b.title);
       });
-      return '<div class="ag-day"><div class="ag-date' + (ds === today ? ' is-today' : '') + '">'
-        + '<span class="d">' + d.getDate() + '</span>'
-        + DOW[d.getDay()] + ' · ' + MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getFullYear()
-        + (r ? '<span class="wk">Wk ' + r.week + '</span>' : '')
-        + '</div><div class="ag-items">' + items.map(rowHtml).join('') + '</div></div>';
+
+    panel.hidden = false;
+    $('#shell').classList.toggle('split', !NARROW);
+
+    var head = '<div class="cl-head">' + esc(periodLabel()) + '<span>'
+      + pool.length + (pool.length === 1 ? ' event' : ' events') + '</span></div>';
+
+    if (!pool.length) {
+      panel.innerHTML = head
+        + '<p class="cl-empty">Nothing this month matches what you have picked. '
+        + 'Try another month, or take a filter off.</p>';
+      return;
+    }
+
+    var last = '';
+    panel.innerHTML = head + '<div class="cl-body">' + pool.map(function (it) {
+      var d = fromYmd(it.start_date < from ? from : it.start_date);
+      var key = ymd(d);
+      var day = key === last ? '' : '<div class="cl-day">' + DOW[d.getDay()] + ' '
+        + MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getDate() + '</div>';
+      last = key;
+      return day + rowHtml(it);
     }).join('') + '</div>';
   }
 
   function render() {
     $('#period').textContent = periodLabel();
-    Array.prototype.forEach.call($('#views').children, function (b) {
-      b.setAttribute('aria-pressed', b.dataset.view === state.view ? 'true' : 'false');
-    });
-    var r = retailWeek(ymd(state.cursor));
-    if (r && $('#wkNum') !== document.activeElement) $('#wkNum').value = r.week;
     renderFilterStatus();
-    $('#view').innerHTML = state.view === 'day' ? renderDay()
-      : state.view === 'week' ? renderWeek()
-      : state.view === 'year' ? renderYear()
-      : state.view === 'agenda' ? renderAgenda()
-      : renderMonth();
+    // A phone cannot read a month grid, so it gets the list on its own.
+    $('#view').innerHTML = NARROW ? '' : renderMonth();
+    $('#view').hidden = NARROW;
+    renderList();
   }
 
   function renderAll() { renderFilters(); render(); }
@@ -1185,40 +1106,19 @@
   // ── wiring ─────────────────────────────────────────────────────────────
 
   function shift(dir) {
-    var c = state.cursor;
-    if (state.view === 'day') state.cursor = addDays(c, dir);
-    else if (state.view === 'week') state.cursor = addDays(c, 7 * dir);
-    else if (state.view === 'year') state.cursor = new Date(c.getFullYear() + dir, c.getMonth(), 1);
-    else state.cursor = addMonths(c, dir);
+    state.cursor = addMonths(state.cursor, dir);
     render();
   }
-
-  function setView(v) { state.view = v; savePrefs(); render(); }
 
   function wire() {
     $('#prev').addEventListener('click', function () { shift(-1); });
     $('#next').addEventListener('click', function () { shift(1); });
     $('#today').addEventListener('click', function () { state.cursor = new Date(); render(); });
-    $('#views').addEventListener('click', function (e) {
-      var b = e.target.closest('button[data-view]');
-      if (b) setView(b.dataset.view);
-    });
     $('#subscribe').addEventListener('click', showSubscribe);
     $('#addBtn').addEventListener('click', function () {
-      showForm(null, (state.view === 'day' || state.view === 'week') ? ymd(state.cursor) : null);
+      showForm(null, null);
     });
     $('#importBtn').addEventListener('click', showImport);
-
-    // Jump straight to a retail week -- the number people actually quote.
-    function jumpWeek() {
-      var wk = Number($('#wkNum').value);
-      if (!wk || wk < 1 || wk > 53) return;
-      var cur = retailWeek(ymd(state.cursor));
-      var d = retailWeekStart(cur ? cur.year : state.tax.retailEpochYear, wk);
-      if (d) { state.cursor = d; setView('week'); }
-    }
-    $('#wkNum').addEventListener('change', jumpWeek);
-    $('#wkNum').addEventListener('keydown', function (e) { if (e.key === 'Enter') jumpWeek(); });
 
     // One handler for every chip: each carries the axis it belongs to and the
     // value it selects, so there are no special cases and a new chip is a line
@@ -1233,9 +1133,18 @@
         var key = btn.dataset.key;
         if (!axis || !state.sel[axis]) return;
         var at = state.sel[axis].indexOf(key);
-        if (at >= 0) state.sel[axis].splice(at, 1);
-        else if (SINGLE.indexOf(axis) >= 0) state.sel[axis] = [key];
-        else state.sel[axis].push(key);
+        if (at >= 0) {
+          state.sel[axis].splice(at, 1);
+        } else if (axis === DEPT_AXIS) {
+          // A department replaces everything, including another department.
+          AXES.forEach(function (a) { state.sel[a] = []; });
+          state.sel[axis] = [key];
+        } else {
+          // And anything else lets the department go, rather than quietly
+          // subtracting from it.
+          state.sel[DEPT_AXIS] = [];
+          state.sel[axis].push(key);
+        }
       }
       savePrefs();
       renderAll();
@@ -1256,27 +1165,19 @@
       renderAll();
     });
 
-    $('#view').addEventListener('click', function (e) {
+    // The grid and the list both render events, so both open them. Bound
+    // separately rather than on the document, so a stray [data-id] elsewhere --
+    // the modal's own buttons, say -- cannot open an event behind the modal.
+    function openFromClick(e) {
       var adder = e.target.closest('[data-add]');
       if (adder && state.me.canEdit) { showForm(null, adder.dataset.add); return; }
       var chip = e.target.closest('[data-id]');
       if (chip) { showDetail(chip.dataset.id); return; }
-      var more = e.target.closest('.mo-more');
-      if (more) { state.cursor = fromYmd(more.dataset.day); setView('day'); return; }
-      var mo = e.target.closest('h4[data-month]');
-      if (mo) {
-        state.cursor = new Date(state.cursor.getFullYear(), Number(mo.dataset.month), 1);
-        setView('month');
-        return;
-      }
       var cell = e.target.closest('[data-day]');
-      if (cell) {
-        if (state.view === 'year') { state.cursor = fromYmd(cell.dataset.day); setView('day'); return; }
-        if (state.me.canEdit && state.view === 'month') { showForm(null, cell.dataset.day); return; }
-        state.cursor = fromYmd(cell.dataset.day);
-        setView('day');
-      }
-    });
+      if (cell && state.me.canEdit) showForm(null, cell.dataset.day);
+    }
+    $('#view').addEventListener('click', openFromClick);
+    $('#listPanel').addEventListener('click', openFromClick);
 
     $('#modalX').addEventListener('click', closeModal);
     $('#modal').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
