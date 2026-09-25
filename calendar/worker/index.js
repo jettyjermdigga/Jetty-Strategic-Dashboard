@@ -157,8 +157,14 @@ async function migrateToDecisionTree(db) {
     .bind(MIGRATION_KEY).first();
   if (done) return;
 
+  // Only rows that have never been through this. The meta guard already says
+  // "done", but a guard is a single point of failure and this one rewrites
+  // department on every row it touches -- so a re-run would silently undo any
+  // department set by hand afterwards, which is a far worse failure than
+  // running twice. Selecting on event_type makes a re-run a no-op instead.
   const res = await db.prepare(
-    'SELECT id, event_types, sub_types, needs FROM items').all();
+    "SELECT id, event_types, sub_types, needs FROM items "
+    + "WHERE event_type IS NULL OR event_type = ''").all();
   const rows = res.results || [];
 
   const stmt = db.prepare(
@@ -211,7 +217,8 @@ async function migrateToDecisionTree(db) {
     await db.batch(batch.slice(i, i + BATCH));
   }
 
-  await db.prepare('INSERT INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+  await db.prepare(
+    'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
     .bind(MIGRATION_KEY, JSON.stringify(counts), new Date().toISOString()).run();
 }
 
