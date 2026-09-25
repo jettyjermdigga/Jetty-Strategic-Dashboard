@@ -362,49 +362,39 @@ trusting the header it sets. Until both are filled in, the page says so.
 *Subscribe* hands out a URL to paste into Google Calendar under
 Other calendars → **+** → **From URL**.
 
-### Why the feed needs a real hostname
+### How Access is attached, and why it took three tries
 
-`/calendar.ics` is served **before** the sign-in check, because Google's
-fetchers carry no Cloudflare Access session — the unguessable `ICS_KEY` is what
-protects that one path. But Access runs in front of the Worker, so on a
-`workers.dev` hostname it intercepts the request before the Worker ever sees it,
-and a `workers.dev` hostname cannot be carved up by path: Access attaches to the
-whole Worker from the Worker's own **Access** tab, and self-hosted applications
-— the kind that take a path — are built around hostnames in a zone you own.
+Access is set on the **Worker's own Access tab** — Workers & Pages →
+`jetty-calendar` → **Access** → *Protect this Worker behind Access*, scoped to
+**all traffic** rather than the "Previews only" default, which leaves production
+public and is easy to miss.
 
-So the feed only works once the calendar is on a domain in the same Cloudflare
-account. That domain is **jettycalendar.com**, registered through Cloudflare so
-its DNS is in the same account — the company domains stay at Squarespace,
-untouched.
+A self-hosted application matched to the `jettycalendar.com` **hostname** does
+not do this job. It authenticates the visitor perfectly well — Cloudflare's own
+`/cdn-cgi/access/get-identity` returns their identity — but no
+`Cf-Access-Jwt-Assertion` or `Cf-Access-Authenticated-User-Email` header reaches
+the Worker, so the Worker has nothing to verify and refuses everyone. Adding the
+Worker as a *destination* on such an application does not fix it either.
 
-1. **Add the custom domain.** Worker → **Settings** → **Domains & Routes** →
-   **Add** → **Custom domain** → `jettycalendar.com`. Cloudflare writes the DNS
-   record itself. Do this from the dashboard rather than `wrangler.toml`: the
-   deploy token has no zone permissions, so a route in the config would fail
-   every deploy.
-2. **Protect the hostname.** Zero Trust → **Access** → **Applications** → **Add
-   an application** → **Self-hosted**. Hostname `jettycalendar.com`, no path.
-   Give it the policy the Worker has now — the `@jettylife.com` and
-   `@jettyrockfoundation.org` email domains.
-3. **Bypass the one path.** Add a **second** self-hosted application, hostname
-   `jettycalendar.com`, path `calendar.ics`. One policy, action **Bypass**,
-   include **Everyone**. The more specific path wins over the application in
-   step 2.
-4. **Turn off `workers.dev`** on the same page as step 1, so there is one way in
-   rather than two — and set `workers_dev = false` in `wrangler.toml` at the
-   same time, or the next deploy turns it back on.
-5. **Re-issue the key.** The feed URL is now publicly reachable to anyone
-   holding it, so set a fresh `ICS_KEY`.
+That failure is invisible from the Cloudflare side and looks exactly like "no
+Access application exists", which is why the fail-closed page reports what the
+Worker actually saw rather than asserting a cause.
 
-The feed URL follows whatever hostname the page was loaded on — it is built from
-the request origin — so *Subscribe* starts handing out `jettycalendar.com` by
-itself once step 1 is done.
+The Worker's Access tab also states the precedence, which is documented nowhere
+else this repo could reach:
 
-`REQUIRE_IDENTITY` stays `"true"` throughout, which is what makes the order
-safe: attach the domain before the Access application and the Worker still
-refuses every request that arrives without an identity, showing the explainer
-page rather than the calendar. The only path that answers without a sign-in is
-`/calendar.ics`, and only with the right key.
+1. Hostname policies
+2. Worker policies
+3. Account policies
+
+Most specific wins. That is what makes the feed possible: a **hostname** policy
+on `jettycalendar.com/calendar.ics` with action **Bypass** and include
+**Everyone** beats the Worker-wide policy, so Google's fetchers get the feed
+while everything else still needs a sign-in.
+
+Do not use the account-wide Access toggle on the Workers & Pages sidebar. It
+applies one policy across every Worker in the account, including the Strategic
+Dashboard, which has its own.
 
 Google refreshes subscribed calendars on its own schedule — often a few hours,
 sometimes longer. The feed asks for hourly, but Google treats that as a hint. The
