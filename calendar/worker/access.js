@@ -40,16 +40,20 @@ async function loadKeys(teamDomain) {
   return keys;
 }
 
+// Returns { claims } on success, or { problem, detail } saying what was wrong.
+// "It did not verify" is not a diagnosis, and the difference between a missing
+// token, a stale signing key and an audience meant for a different application
+// is the difference between five minutes and an afternoon.
 async function verifyJwt(token, teamDomain, auds) {
   const parts = token.split('.');
-  if (parts.length !== 3) return null;
+  if (parts.length !== 3) return { problem: 'malformed' };
 
   const header = b64urlToJson(parts[0]);
-  if (header.alg !== 'RS256') return null;
+  if (header.alg !== 'RS256') return { problem: 'algorithm', detail: String(header.alg) };
 
   const keys = await loadKeys(teamDomain);
   const jwk = keys.find((k) => k.kid === header.kid);
-  if (!jwk) return null;
+  if (!jwk) return { problem: 'signing key', detail: 'no key matching kid ' + String(header.kid) };
 
   const key = await crypto.subtle.importKey(
     'jwk', jwk,
@@ -60,12 +64,12 @@ async function verifyJwt(token, teamDomain, auds) {
   const ok = await crypto.subtle.verify(
     'RSASSA-PKCS1-v1_5', key, b64urlToBytes(parts[2]), signed,
   );
-  if (!ok) return null;
+  if (!ok) return { problem: 'signature' };
 
   const claims = b64urlToJson(parts[1]);
   const now = Math.floor(Date.now() / 1000);
-  if (typeof claims.exp === 'number' && claims.exp < now) return null;
-  if (typeof claims.nbf === 'number' && claims.nbf > now + 60) return null;
+  if (typeof claims.exp === 'number' && claims.exp < now) return { problem: 'expired' };
+  if (typeof claims.nbf === 'number' && claims.nbf > now + 60) return { problem: 'not yet valid' };
 
   // One Worker can sit behind more than one Access application -- a hostname
   // application and the Worker-level one during a move, and eventually one per
@@ -73,9 +77,17 @@ async function verifyJwt(token, teamDomain, auds) {
   // the configured ones rather than a single value. An AUD that is not on the
   // list is still refused: this widens what we accept, it does not skip it.
   const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-  if (auds.length && !auds.some((a) => audience.includes(a))) return null;
+  if (auds.length && !auds.some((a) => audience.includes(a))) {
+    // An AUD tag names an Access application; it is not a secret and is on
+    // screen in the dashboard. Naming both sides is what makes this fixable.
+    return {
+      problem: 'audience',
+      detail: 'token is for ' + audience.join(', ')
+        + '; this Worker accepts ' + auds.join(', '),
+    };
+  }
 
-  return claims;
+  return { claims };
 }
 
 // Comma-separated, so the calendar keeps working while an Access application
@@ -103,22 +115,31 @@ export async function identify(request, env) {
   let email = headerEmail;
   let verified = false;
 
+  let reason = '';
+
   if (teamDomain && auds.length && token) {
     try {
-      const claims = await verifyJwt(token, teamDomain, auds);
-      if (claims) {
-        email = claims.email || headerEmail;
+      const out = await verifyJwt(token, teamDomain, auds);
+      if (out.claims) {
+        email = out.claims.email || headerEmail;
         verified = true;
       } else {
         // A token was presented and did not check out. Trusting the header
         // here would defeat the point of verifying at all.
         email = '';
+        reason = 'The Access token failed on its ' + out.problem + '.'
+          + (out.detail ? ' ' + out.detail + '.' : '');
       }
     } catch (err) {
       // Certs unreachable. Stay in unverified mode rather than locking the
       // calendar for everyone over a transient fetch failure.
       verified = false;
+      reason = 'Could not reach ' + teamDomain + ' to check the token.';
     }
+  } else if (teamDomain && auds.length && !token) {
+    reason = headerEmail
+      ? 'Access set the email header but no token, so nothing could be verified.'
+      : 'No Cloudflare Access headers reached this Worker at all.';
   }
 
   const editors = editorList(env);
@@ -132,6 +153,7 @@ export async function identify(request, env) {
   return {
     email,
     verified,
+    reason,
     canEdit: canEdit || (wouldEdit && !teamDomain && !auds.length),
     editorsConfigured: editors.length > 0,
     accessConfigured: Boolean(teamDomain && auds.length),

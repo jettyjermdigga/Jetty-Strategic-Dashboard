@@ -19,6 +19,21 @@ import SCHEMA from './schema.sql';
 // Shown instead of the calendar when a request arrives with no Cloudflare
 // Access identity. Self-contained on purpose: it has to render before any of
 // this Worker's assets are allowed to load.
+// Shown when a request arrives with no verified identity. It takes the reason
+// from identify() rather than asserting one: this page used to state flatly
+// that no Access application existed, which sent an afternoon into the wrong
+// dashboard while the real cause was a token the Worker was refusing.
+function notAvailableHtml(reason) {
+  return NOT_PROTECTED_HTML.replace('<!--REASON-->', reason
+    ? '<p class="why"><strong>What this Worker saw:</strong> ' + escHtml(reason) + '</p>'
+    : '');
+}
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
 const NOT_PROTECTED_HTML = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -32,15 +47,20 @@ const NOT_PROTECTED_HTML = `<!DOCTYPE html>
   h1{font:700 22px/1.3 ui-sans-serif,system-ui,sans-serif;margin:0 0 12px}
   p{margin:0 0 12px}
   code{font:13px ui-monospace,monospace;background:rgba(127,127,127,.18);
-    padding:1px 5px;border-radius:4px}
+    padding:1px 5px;border-radius:4px;word-break:break-all}
+  .why{font:13.5px/1.6 ui-monospace,monospace;background:rgba(127,127,127,.12);
+    padding:10px 12px;border-radius:6px;word-break:break-word}
 </style></head><body><div class="box">
 <h1>This calendar is not available</h1>
-<p>It is waiting on a Cloudflare Access application in front of this hostname.
-Until one exists, no request carries a signed-in identity and nothing is served.</p>
-<p>To switch it on: Zero Trust &rarr; Access &rarr; Applications &rarr; add a
-self-hosted application for this hostname, then add the people who should be
-able to open it. Add a <strong>Bypass</strong> policy for the single path
-<code>/calendar.ics</code> so Google Calendar can still read the feed.</p>
+<p>No request reaching this Worker carried a signed-in identity, so nothing is
+served.</p>
+<!--REASON-->
+<p>Usually that means there is no Cloudflare Access application in front of this
+hostname: Zero Trust &rarr; Access &rarr; Applications &rarr; add a self-hosted
+application for it, then add the people who should be able to open it. If one
+already exists, the line above says what the Worker made of what it was sent.</p>
+<p>The feed at <code>/calendar.ics</code> needs a <strong>Bypass</strong> policy
+on that single path, since Google Calendar cannot sign in.</p>
 </div></body></html>`;
 
 let schemaReady = false;
@@ -754,9 +774,12 @@ export default {
     // so the unguessable key is what protects that one path.
     if (env.REQUIRE_IDENTITY !== 'false' && !who.email) {
       if (url.pathname.startsWith('/api/')) {
-        return json({ error: 'This request did not come through Cloudflare Access.' }, 403);
+        return json({
+          error: 'This request did not come through Cloudflare Access.',
+          reason: who.reason || undefined,
+        }, 403);
       }
-      return new Response(NOT_PROTECTED_HTML, {
+      return new Response(notAvailableHtml(who.reason), {
         status: 403,
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
       });
