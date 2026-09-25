@@ -40,7 +40,11 @@ CALENDAR_EDITORS = "cory@jettylife.com,jeremy@jettylife.com,arlynn@jettylife.com
 # on the Access application protecting THIS Worker -- the calendar needs its own
 # Access application, separate from the dashboard's.
 ACCESS_TEAM_DOMAIN = "wild-pine-bbc7.cloudflareaccess.com"
-ACCESS_AUD = "72de24beb216200c9ac2cfaedef7695eb65616b19059cf3ac0ec0bfaa1b8cfe7"
+# Comma-separated: every Access application in front of this Worker. The first
+# is the jettycalendar.com hostname application, the second the older one
+# attached from the Worker's own Access tab. Each application mints tokens
+# with its own AUD, so both are listed while both exist.
+ACCESS_AUD = "e1298418136cf13aa447fef3a03345bdbdef2a9a0919552e0cc28aaf86ba77c8,72de24beb216200c9ac2cfaedef7695eb65616b19059cf3ac0ec0bfaa1b8cfe7"
 
 # The calendar refuses to serve anything to a request that did not come through
 # Cloudflare Access. This is what keeps a brand-new Worker hostname from being
