@@ -12,7 +12,6 @@
                 'July', 'August', 'September', 'October', 'November', 'December'];
   var DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  var NONE = '\u2014none\u2014';
 
   // A month grid is unreadable at phone width -- there is no room for titles.
   // Agenda shows the same information in a form that survives the narrow column.
@@ -24,30 +23,27 @@
     items: [],
     tax: null,
     me: { canEdit: false, email: '' },
-    kinds: {},    // Event Type key -> shown
-    depts: {},    // department key -> shown
-    subs: {},     // sub-type key   -> shown
-    needs: {},    // need key       -> shown
-    vehicles: {}, // vehicle key    -> shown
-    stats: {},    // status         -> shown
-    open: {},    // sidebar section -> expanded
+    // What is SELECTED on each axis. Empty means that axis is not asking a
+    // question, which is why an untouched calendar shows everything and why
+    // clicking one chip cannot be vetoed by an axis nobody has touched.
+    sel: { kinds: [], depts: [], subs: [], vehicles: [], stats: [] },
   };
 
   // ── remembered preferences ─────────────────────────────────────────────
   //
-  // Per person, per browser. What gets stored is the set of boxes you have
-  // turned OFF, not the ones left on -- so an Event Type added to the taxonomy
-  // next month shows up for everyone instead of being silently hidden by a
-  // preference saved before it existed.
+  // Per person, per browser. What gets stored is which chips are lit. Nothing
+  // lit is the default, so a department added to the taxonomy next month simply
+  // appears as another chip rather than being hidden by an old preference.
   //
   // Every read and write is guarded: private windows, cleared site data and
   // blocked storage all throw, and none of that should stop the calendar
   // rendering.
 
-  var AXES = ['kinds', 'depts', 'subs', 'needs', 'vehicles', 'stats'];
-  // v2: the axes changed name and meaning, so a v1 preference would switch
-  // off the wrong things rather than simply being ignored.
-  var PREFS_KEY = 'jetty-calendar-prefs-v2';
+  var AXES = ['kinds', 'depts', 'subs', 'vehicles', 'stats'];
+  // v3: preferences used to record what was switched OFF, which only made
+  // sense when everything started on. Chips record what is switched ON, so an
+  // older preference would mean the opposite of what it said.
+  var PREFS_KEY = 'jetty-calendar-prefs-v3';
 
   function readPrefs() {
     try {
@@ -58,14 +54,9 @@
 
   function savePrefs() {
     try {
-      var off = {};
-      AXES.forEach(function (axis) {
-        off[axis] = Object.keys(state[axis]).filter(function (k) { return state[axis][k] === false; });
-      });
       window.localStorage.setItem(PREFS_KEY, JSON.stringify({
-        off: off,
+        sel: state.sel,
         view: state.view,
-        open: state.open,
       }));
     } catch (e) { /* storage unavailable; the calendar still works */ }
   }
@@ -74,14 +65,12 @@
     var p = readPrefs();
     if (!p) return;
     AXES.forEach(function (axis) {
-      (p.off && p.off[axis] ? p.off[axis] : []).forEach(function (k) {
-        if (k in state[axis]) state[axis][k] = false;
-      });
+      var saved = p.sel && p.sel[axis];
+      if (Array.isArray(saved)) state.sel[axis] = saved.slice();
     });
     // A view saved on a desktop should not land someone on a month grid at
     // phone width, where it is unreadable.
     if (p.view && !NARROW) state.view = p.view;
-    if (p.open) state.open = p.open;
   }
 
   // ── small helpers ──────────────────────────────────────────────────────
@@ -217,32 +206,22 @@
 
   // ── filtering ──────────────────────────────────────────────────────────
 
-  // An axis with nothing ticked has stopped asking a question, so it stops
-  // narrowing. Without this, emptying one section blanks the whole calendar no
-  // matter what is ticked in the others -- and "show me the ones with none"
-  // already has its own row, so "nothing ticked" has no second job to do.
-  function axisActive(shown) {
-    for (var k in shown) if (shown[k] !== false) return true;
-    return false;
-  }
-
-  // Each axis narrows independently. An item passes an axis when any of its
-  // values on that axis is still shown -- or when it has none and the axis's
-  // "not set" row is still shown, so an item without sub-types is not quietly
-  // filtered out by a section that has nothing to do with it.
-  function passesAxis(values, shown) {
-    if (!axisActive(shown)) return true;
-    if (!values.length) return shown[NONE] !== false;
-    return values.some(function (k) { return shown[k] !== false; });
+  // An axis with nothing selected has stopped asking a question, so it stops
+  // narrowing. Axes that ARE asking narrow together: Box Truck plus Pending
+  // means both. Within one axis the values are alternatives, so an event stays
+  // while any of its departments is lit -- pick Marketing and you still get the
+  // store sale Marketing only promotes, because that event is still the store's.
+  function passesAxis(values, picked) {
+    if (!picked.length) return true;
+    return values.some(function (k) { return picked.indexOf(k) >= 0; });
   }
 
   function passes(item) {
-    return passesAxis(item.event_type ? [item.event_type] : [], state.kinds)
-      && passesAxis(item.status ? [item.status] : [], state.stats)
-      && passesAxis(deptsOf(item), state.depts)
-      && passesAxis(subsOf(item), state.subs)
-      && passesAxis(needsOf(item), state.needs)
-      && passesAxis(vehiclesOf(item), state.vehicles);
+    return passesAxis(item.event_type ? [item.event_type] : [], state.sel.kinds)
+      && passesAxis(item.status ? [item.status] : [], state.sel.stats)
+      && passesAxis(deptsOf(item), state.sel.depts)
+      && passesAxis(subsOf(item), state.sel.subs)
+      && passesAxis(vehiclesOf(item), state.sel.vehicles);
   }
 
   function visible() { return state.items.filter(passes); }
@@ -295,115 +274,124 @@
     return MONTHS[c.getMonth()] + ' ' + c.getFullYear();
   }
 
-  // ── filter sidebar ─────────────────────────────────────────────────────
+  // ── the filter bar ─────────────────────────────────────────────────────
+  //
+  // Two rows of chips in place of six sections and forty checkboxes. The first
+  // answers "whose is it, and is it a meeting", plus the two questions asked
+  // often enough to earn a chip of their own -- which vehicle has to be driven,
+  // and what is still tentative. The second is Marketing's own sub-types, which
+  // only matter once you are looking at Marketing's work.
+  //
+  // Everything the taxonomy knows is still on the form when adding or editing;
+  // this is the reading view, and it is narrower on purpose.
 
-  function counts() {
-    var by = { kinds: {}, depts: {}, subs: {}, needs: {}, vehicles: {}, stats: {} };
-    var tally = function (bucket, values) {
-      if (!values.length) { bucket[NONE] = (bucket[NONE] || 0) + 1; return; }
-      values.forEach(function (k) { bucket[k] = (bucket[k] || 0) + 1; });
-    };
-    state.items.forEach(function (it) {
-      by.stats[it.status] = (by.stats[it.status] || 0) + 1;
-      by.kinds[it.event_type] = (by.kinds[it.event_type] || 0) + 1;
-      tally(by.depts, deptsOf(it));
-      tally(by.subs, subsOf(it));
-      tally(by.needs, needsOf(it));
-      tally(by.vehicles, vehiclesOf(it));
+  // Line drawings rather than photographs: at 18px the only thing that
+  // separates three white vans is silhouette, so the box, the cargo van and the
+  // transit get different rooflines and different proportions.
+  var VEHICLE_ICONS = {
+    'box-truck':
+      '<svg viewBox="0 0 34 20" aria-hidden="true">'
+      + '<path d="M1 4h17v11H1z"/><path d="M18 7h7l5 5v3H18z"/>'
+      + '<circle cx="8" cy="16.5" r="2.4"/><circle cx="25" cy="16.5" r="2.4"/></svg>',
+    'ink-van':
+      '<svg viewBox="0 0 34 20" aria-hidden="true">'
+      + '<path d="M2 6h15l7 2 6 2v5H2z"/><path d="M17 7.5h5l3 2h-8z" class="win"/>'
+      + '<circle cx="9" cy="16.5" r="2.4"/><circle cx="25" cy="16.5" r="2.4"/></svg>',
+    'brand-transit':
+      '<svg viewBox="0 0 34 20" aria-hidden="true">'
+      + '<path d="M4 3h14l6 4 4 1v7H4z"/><path d="M7 5h9v4H7z" class="win"/>'
+      + '<path d="M18 5.5h3l3.5 3.5H18z" class="win"/>'
+      + '<circle cx="10" cy="15.5" r="2.4"/><circle cx="25" cy="15.5" r="2.4"/></svg>',
+  };
+
+  // Each chip names an axis and a value on it, so the click handler needs no
+  // special cases and adding one later is a line in this function.
+  function chipRows() {
+    var depts = tax('departments').map(function (d) {
+      return { axis: 'depts', key: d.key, label: d.label, color: deptVar(d.key) };
     });
-    return by;
+
+    var meetings = tax('eventTypes')
+      .filter(function (e) { return e.key === 'meetings-deadlines'; })
+      .map(function (e) { return { axis: 'kinds', key: e.key, label: 'Meetings' }; });
+
+    var vehicles = tax('vehicles').map(function (v) {
+      return { axis: 'vehicles', key: v.key, label: v.label, icon: VEHICLE_ICONS[v.key] };
+    });
+
+    var pending = [{ axis: 'stats', key: 'Pending', label: 'Pending' }];
+
+    // Marketing's nine. Wholesale's single Tradeshow sub-type sits with
+    // Wholesale rather than earning a row of its own.
+    var marketing = tax('subTypes')
+      .filter(function (st) { return st.department === 'marketing'; })
+      .map(function (st) { return { axis: 'subs', key: st.key, label: st.label }; });
+
+    return [
+      [].concat(depts, [null], meetings, [null], vehicles, [null], pending),
+      marketing,
+    ];
   }
 
-  function checkRow(axis, key, label, color, count, shown, title) {
-    return '<label class="flt-row"' + (title ? ' title="' + esc(title) + '"' : '') + '>'
-      + '<input type="checkbox" data-axis="' + axis + '" value="' + esc(key) + '"'
-      + (shown === false ? '' : ' checked') + '>'
-      + (color ? '<i class="dot" style="background:' + color + '"></i>' : '')
-      + '<span>' + esc(label) + '</span>'
-      + (count == null ? '' : '<span class="count">' + count + '</span>') + '</label>';
+  // A chip's count is worked out with its own axis ignored, so the numbers say
+  // what you would get by clicking it rather than what you have already got.
+  // Otherwise every chip on an active axis reads 0 and the bar looks broken.
+  function chipCounts() {
+    var out = {};
+    AXES.forEach(function (axis) {
+      var others = {};
+      AXES.forEach(function (a) { others[a] = a === axis ? [] : state.sel[a]; });
+      var pool = state.items.filter(function (it) {
+        return passesAxis(it.event_type ? [it.event_type] : [], others.kinds)
+          && passesAxis(it.status ? [it.status] : [], others.stats)
+          && passesAxis(deptsOf(it), others.depts)
+          && passesAxis(subsOf(it), others.subs)
+          && passesAxis(vehiclesOf(it), others.vehicles);
+      });
+      var bucket = {};
+      pool.forEach(function (it) {
+        var vals = axis === 'kinds' ? [it.event_type]
+          : axis === 'stats' ? [it.status]
+          : axis === 'depts' ? deptsOf(it)
+          : axis === 'subs' ? subsOf(it)
+          : vehiclesOf(it);
+        vals.filter(Boolean).forEach(function (k) { bucket[k] = (bucket[k] || 0) + 1; });
+      });
+      out[axis] = bucket;
+    });
+    return out;
   }
+
+  function chipOn(c) { return state.sel[c.axis].indexOf(c.key) >= 0; }
 
   function renderFilters() {
     if (!state.tax) return;
-    var n = counts();
+    var el = $('#filterBar');
+    if (!el) return;
+    var n = chipCounts();
+    var anyOn = AXES.some(function (a) { return state.sel[a].length; });
 
-    $('#kindTree').innerHTML = tax('eventTypes').map(function (e) {
-      return checkRow('kinds', e.key, e.label, null,
-                      n.kinds[e.key] || 0, state.kinds[e.key], e.note);
-    }).join('');
+    var chipHtml = function (c) {
+      var count = (n[c.axis] && n[c.axis][c.key]) || 0;
+      return '<button type="button" class="fchip' + (chipOn(c) ? ' on' : '')
+        + (count ? '' : ' empty') + '" data-axis="' + c.axis + '"'
+        + ' data-key="' + esc(c.key) + '" aria-pressed="' + (chipOn(c) ? 'true' : 'false') + '">'
+        + (c.icon ? '<span class="fveh">' + c.icon + '</span>' : '')
+        + (c.color ? '<i class="dot" style="background:' + c.color + '"></i>' : '')
+        + esc(c.label) + '<span class="fn">' + count + '</span></button>';
+    };
 
-    var deptRows = tax('departments').map(function (d) {
-      return checkRow('depts', d.key, d.label, deptVar(d.key),
-                      n.depts[d.key] || 0, state.depts[d.key], d.note);
-    });
-    if (n.depts[NONE]) {
-      deptRows.push(checkRow('depts', NONE, 'No department', null,
-                             n.depts[NONE], state.depts[NONE]));
-    }
-    $('#deptTree').innerHTML = deptRows.join('');
-
-    // Each sub-type belongs to a department, so the row says which -- otherwise
-    // "Tradeshow" and "Campaign" read as peers when they are not.
-    var subRows = tax('subTypes').map(function (st) {
-      return checkRow('subs', st.key, st.label, null,
-                      n.subs[st.key] || 0, state.subs[st.key],
-                      deptLabel(st.department));
-    });
-    if (n.subs[NONE]) {
-      subRows.push(checkRow('subs', NONE, 'No sub-type', null, n.subs[NONE], state.subs[NONE]));
-    }
-    $('#subTree').innerHTML = subRows.join('');
-
-    var needRows = tax('needs').map(function (nd) {
-      return checkRow('needs', nd.key, nd.label, null,
-                      n.needs[nd.key] || 0, state.needs[nd.key],
-                      deptLabel(nd.department));
-    });
-    if (n.needs[NONE]) {
-      needRows.push(checkRow('needs', NONE, 'Nothing needed', null,
-                             n.needs[NONE], state.needs[NONE]));
-    }
-    $('#needTree').innerHTML = needRows.join('');
-
-    var vehRows = tax('vehicles').map(function (v) {
-      return checkRow('vehicles', v.key, v.label, null,
-                      n.vehicles[v.key] || 0, state.vehicles[v.key]);
-    });
-    if (n.vehicles[NONE]) {
-      vehRows.push(checkRow('vehicles', NONE, 'No vehicle', null,
-                            n.vehicles[NONE], state.vehicles[NONE]));
-    }
-    $('#vehTree').innerHTML = vehRows.join('');
-
-    $('#statTree').innerHTML = tax('statuses').map(function (st) {
-      return checkRow('stats', st, st, null, n.stats[st] || 0, state.stats[st]);
-    }).join('');
-  }
-
-  // Section headers carry a live summary, so a collapsed panel still says
-  // whether it is hiding anything. Counted off the rendered checkboxes rather
-  // than the state object, so it cannot drift from what is on screen.
-  function renderChrome() {
-    Array.prototype.forEach.call(document.querySelectorAll('.flt-card'), function (card) {
-      var axis = card.dataset.axis;
-      var boxes = card.querySelectorAll('.flt-body input[type="checkbox"]');
-      var on = card.querySelectorAll('.flt-body input[type="checkbox"]:checked').length;
-      var sum = card.querySelector('.flt-sum');
-      // Nothing ticked means the section is not narrowing anything, so it says
-      // "any" rather than "0 of 11", which would read as hiding everything.
-      var filtered = boxes.length > 0 && on > 0 && on < boxes.length;
-      if (sum) {
-        sum.textContent = !boxes.length ? ''
-          : on === 0 ? 'any'
-          : filtered ? on + ' of ' + boxes.length
-          : 'all ' + boxes.length;
-        sum.classList.toggle('on', filtered);
-      }
-      var open = state.open[axis] === true;
-      card.classList.toggle('open', open);
-      var btn = card.querySelector('.flt-toggle');
-      if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    });
+    var rows = chipRows();
+    el.innerHTML =
+      '<div class="frow">'
+      + '<button type="button" class="fchip all' + (anyOn ? '' : ' on') + '" data-all="1">'
+      + 'Everything<span class="fn">' + state.items.length + '</span></button>'
+      + rows[0].map(function (c) { return c ? chipHtml(c) : '<span class="fsep"></span>'; }).join('')
+      + '</div>'
+      + '<div class="frow sub">'
+      + '<span class="flabel">Marketing</span>'
+      + rows[1].map(chipHtml).join('')
+      + '</div>';
   }
 
   // Persisted filters are silent by nature: someone narrows the view, comes back
@@ -622,7 +610,6 @@
     });
     var r = retailWeek(ymd(state.cursor));
     if (r && $('#wkNum') !== document.activeElement) $('#wkNum').value = r.week;
-    renderChrome();
     renderFilterStatus();
     $('#view').innerHTML = state.view === 'day' ? renderDay()
       : state.view === 'week' ? renderWeek()
@@ -1186,41 +1173,29 @@
     $('#wkNum').addEventListener('change', jumpWeek);
     $('#wkNum').addEventListener('keydown', function (e) { if (e.key === 'Enter') jumpWeek(); });
 
-    var side = document.querySelector('.cal-side');
-    side.addEventListener('change', function (e) {
-      var el = e.target;
-      var axis = el.dataset.axis;
-      if (!axis || !state[axis]) return;
-      state[axis][el.value] = el.checked;
-      savePrefs();
-      render();
-    });
-
-    // Collapsing a section is a preference too.
-    side.addEventListener('click', function (e) {
-      var btn = e.target.closest('.flt-toggle');
+    // One handler for every chip: each carries the axis it belongs to and the
+    // value it selects, so there are no special cases and a new chip is a line
+    // in chipRows() rather than another listener here.
+    $('#filterBar').addEventListener('click', function (e) {
+      var btn = e.target.closest('button');
       if (!btn) return;
-      var axis = btn.closest('.flt-card').dataset.axis;
-      state.open[axis] = !state.open[axis];
+      if (btn.dataset.all) {
+        AXES.forEach(function (a) { state.sel[a] = []; });
+      } else {
+        var axis = btn.dataset.axis;
+        var key = btn.dataset.key;
+        if (!axis || !state.sel[axis]) return;
+        var at = state.sel[axis].indexOf(key);
+        if (at >= 0) state.sel[axis].splice(at, 1);
+        else state.sel[axis].push(key);
+      }
       savePrefs();
-      renderChrome();
-    });
-    // Each section's All/None acts on that section only.
-    Array.prototype.forEach.call(side.querySelectorAll('[data-all]'), function (btn) {
-      btn.addEventListener('click', function () {
-        var axis = btn.dataset.all;
-        var on = btn.dataset.on === '1';
-        Object.keys(state[axis]).forEach(function (k) { state[axis][k] = on; });
-        savePrefs();
-        renderAll();
-      });
+      renderAll();
     });
 
     $('#filterStatus').addEventListener('click', function (e) {
       if (!e.target.closest('#fltReset')) return;
-      AXES.forEach(function (axis) {
-        Object.keys(state[axis]).forEach(function (k) { state[axis][k] = true; });
-      });
+      AXES.forEach(function (axis) { state.sel[axis] = []; });
       savePrefs();
       renderAll();
     });
@@ -1329,27 +1304,12 @@
 
   // ── boot ───────────────────────────────────────────────────────────────
 
-  function initFilters() {
-    tax('eventTypes').forEach(function (e) { state.kinds[e.key] = true; });
-    tax('departments').forEach(function (d) { state.depts[d.key] = true; });
-    tax('subTypes').forEach(function (st) { state.subs[st.key] = true; });
-    tax('needs').forEach(function (nd) { state.needs[nd.key] = true; });
-    tax('vehicles').forEach(function (v) { state.vehicles[v.key] = true; });
-    tax('statuses').forEach(function (st) { state.stats[st] = true; });
-    // The "not set" rows, so an item with nothing on an axis is not silently
-    // filtered out by a section that has nothing to do with it.
-    state.depts[NONE] = true;
-    state.subs[NONE] = true;
-    state.needs[NONE] = true;
-    state.vehicles[NONE] = true;
-  }
 
   Promise.all([api('/api/taxonomy'), api('/api/me').catch(function () { return {}; })])
     .then(function (r) {
       state.tax = r[0];
       state.me = r[1] || {};
       injectPalette();
-      initFilters();
       applyPrefs();
       renderWho();
       renderNotice();

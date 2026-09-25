@@ -137,22 +137,36 @@ of them are editors-only.
 
 ## Filtering
 
-Each section in the sidebar asks one question, and the sections narrow together:
-an event shows when it passes every section that is asking something.
+Two rows of chips above the calendar. Nothing else — the sidebar of six
+collapsible sections and forty checkboxes was a faithful rendering of the
+taxonomy, which turned out not to be the same thing as a way to read a calendar.
 
-A section with **nothing ticked has stopped asking**, so it stops narrowing — its
-summary reads `any`. Without that, clearing one section blanked the whole
-calendar however much was ticked in the others, which is a dead end you can only
-get out of by guessing which section did it. "Show me the ones with none" is a
-row of its own in each section, so "nothing ticked" has no second job to do.
+**Row one** — one chip per department, then *Meetings*, then the three vehicles,
+then *Pending*. **Row two** — Marketing's nine sub-types, which only matter once
+you are looking at Marketing's work. *Everything* clears the lot.
 
-Within a section, an event passes if **any** of its values is ticked. Untick
-Marketing and you lose the campaigns Marketing owns, but you keep the store sale
-it only promotes — that event is still the store's.
+Chips of the same kind are alternatives; different kinds narrow together. Box
+Truck plus Wholesale shows both departments' events; Long Branch plus Pending
+shows only what is tentative at Long Branch. A chip with nothing selected on its
+axis is not asking a question, so it never hides anything — clicking one chip
+can never be vetoed by an axis nobody has touched.
 
-Each person's ticks are remembered in their own browser. What is stored is the
-set of boxes turned **off**, so a department added later starts on for everybody
-rather than being invisible to whoever was here first.
+Within a department, an event shows while **any** of its departments is lit. Pick
+Marketing and you get the store sale Marketing only promotes, because that event
+is still the store's — the primary is what gives it colour, not what makes it
+findable.
+
+Counts are worked out with the chip's own axis ignored, so each number is what
+you would get by clicking it rather than what you already have. Without that,
+every chip on an active axis reads 0 and the bar looks broken.
+
+Needs, Tradeshow, Cancelled and *Events & Marketing* have no chips. They are
+still on the form when adding or editing, and still shown on an event — they
+just did not earn a place in the reading view. Say so and they are one line each.
+
+Each person's chips are remembered in their own browser. What is stored is what
+is **lit**, and nothing lit is the default, so a department added next month
+simply appears rather than being hidden by an old preference.
 
 ## The retail calendar
 

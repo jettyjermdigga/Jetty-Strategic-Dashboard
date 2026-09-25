@@ -52,87 +52,9 @@
   <button class="cal-btn primary" id="addBtn" hidden>+ Add event</button>
 </div>
 
-<div class="cal-shell">
-  <aside class="cal-side">
-    <div class="cal-card flt-card" data-axis="kinds">
-      <button class="flt-toggle" type="button" aria-expanded="false">
-        <h3>Event Type</h3><span class="flt-sum"></span><i class="flt-caret"></i>
-      </button>
-      <div class="flt-body">
-        <p class="flt-note">What kind of item it is. Every item is exactly one.</p>
-        <div id="kindTree"></div>
-        <div class="flt-actions">
-          <button data-all="kinds" data-on="1">All</button>
-          <button data-all="kinds" data-on="0">Clear</button>
-        </div>
-      </div>
-    </div>
-    <div class="cal-card flt-card" data-axis="depts">
-      <button class="flt-toggle" type="button" aria-expanded="false">
-        <h3>Department</h3><span class="flt-sum"></span><i class="flt-caret"></i>
-      </button>
-      <div class="flt-body">
-        <p class="flt-note">Whose calendar it is. Colour follows the department
-          that owns the event; the others show as dots.</p>
-        <div id="deptTree"></div>
-        <div class="flt-actions">
-          <button data-all="depts" data-on="1">All</button>
-          <button data-all="depts" data-on="0">Clear</button>
-        </div>
-      </div>
-    </div>
-    <div class="cal-card flt-card" data-axis="subs">
-      <button class="flt-toggle" type="button" aria-expanded="false">
-        <h3>Sub-type</h3><span class="flt-sum"></span><i class="flt-caret"></i>
-      </button>
-      <div class="flt-body">
-        <div id="subTree"></div>
-        <div class="flt-actions">
-          <button data-all="subs" data-on="1">All</button>
-          <button data-all="subs" data-on="0">Clear</button>
-        </div>
-      </div>
-    </div>
-    <div class="cal-card flt-card" data-axis="needs">
-      <button class="flt-toggle" type="button" aria-expanded="false">
-        <h3>Needs</h3><span class="flt-sum"></span><i class="flt-caret"></i>
-      </button>
-      <div class="flt-body">
-        <p class="flt-note">What an event requires, asked by the department that
-          answers for it.</p>
-        <div id="needTree"></div>
-        <div class="flt-actions">
-          <button data-all="needs" data-on="1">All</button>
-          <button data-all="needs" data-on="0">Clear</button>
-        </div>
-      </div>
-    </div>
-    <div class="cal-card flt-card" data-axis="vehicles">
-      <button class="flt-toggle" type="button" aria-expanded="false">
-        <h3>Vehicles</h3><span class="flt-sum"></span><i class="flt-caret"></i>
-      </button>
-      <div class="flt-body">
-        <div id="vehTree"></div>
-        <div class="flt-actions">
-          <button data-all="vehicles" data-on="1">All</button>
-          <button data-all="vehicles" data-on="0">Clear</button>
-        </div>
-      </div>
-    </div>
-    <div class="cal-card flt-card" data-axis="stats">
-      <button class="flt-toggle" type="button" aria-expanded="false">
-        <h3>Status</h3><span class="flt-sum"></span><i class="flt-caret"></i>
-      </button>
-      <div class="flt-body">
-        <div id="statTree"></div>
-        <div class="flt-actions">
-          <button data-all="stats" data-on="1">All</button>
-          <button data-all="stats" data-on="0">Clear</button>
-        </div>
-      </div>
-    </div>
-  </aside>
+<div class="filterbar" id="filterBar"></div>
 
+<div class="cal-shell">
   <main>
     <div id="notice"></div>
     <div id="filterStatus"></div>
