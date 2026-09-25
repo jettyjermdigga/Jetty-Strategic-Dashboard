@@ -76,11 +76,6 @@
   display:flex;flex-direction:column;gap:8px;
 }
 .frow{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-.frow.sub{padding-left:2px}
-.flabel{
-  font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
-  opacity:.45;margin-right:4px;
-}
 .fsep{width:1px;height:18px;background:var(--surface-alt);margin:0 4px}
 
 .fchip{

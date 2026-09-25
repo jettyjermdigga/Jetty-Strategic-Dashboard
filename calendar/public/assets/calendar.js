@@ -276,11 +276,13 @@
 
   // ── the filter bar ─────────────────────────────────────────────────────
   //
-  // Two rows of chips in place of six sections and forty checkboxes. The first
-  // answers "whose is it, and is it a meeting", plus the two questions asked
-  // often enough to earn a chip of their own -- which vehicle has to be driven,
-  // and what is still tentative. The second is Marketing's own sub-types, which
-  // only matter once you are looking at Marketing's work.
+  // Three rows of chips in place of six sections and forty checkboxes.
+  //
+  //   1  the departments, which is the question asked most
+  //   2  Marketing, with its nine sub-types beside it -- they are only ever
+  //      asked about together, and Marketing's row is where they belong
+  //   3  the crosscutting ones: meetings, what has to be driven, what is
+  //      still tentative
   //
   // Everything the taxonomy knows is still on the form when adding or editing;
   // this is the reading view, and it is narrower on purpose.
@@ -327,9 +329,16 @@
       .filter(function (st) { return st.department === 'marketing'; })
       .map(function (st) { return { axis: 'subs', key: st.key, label: st.label }; });
 
+    // Marketing leads its own row rather than sitting in the department list,
+    // so its sub-types read as its sub-types. "(All)" because the nine chips
+    // beside it are the parts.
+    var marketingDept = depts.filter(function (d) { return d.key === 'marketing'; })
+      .map(function (d) { return { axis: 'depts', key: d.key, label: 'Marketing (All)', color: d.color }; });
+
     return [
-      [].concat(depts, [null], meetings, [null], vehicles, [null], pending),
-      marketing,
+      depts.filter(function (d) { return d.key !== 'marketing'; }),
+      [].concat(marketingDept, marketing),
+      [].concat(meetings, [null], vehicles, [null], pending),
     ];
   }
 
@@ -382,16 +391,20 @@
     };
 
     var rows = chipRows();
+    var row = function (chips) {
+      return chips.map(function (c) {
+        return c ? chipHtml(c) : '<span class="fsep"></span>';
+      }).join('');
+    };
+
     el.innerHTML =
       '<div class="frow">'
       + '<button type="button" class="fchip all' + (anyOn ? '' : ' on') + '" data-all="1">'
       + 'Everything<span class="fn">' + state.items.length + '</span></button>'
-      + rows[0].map(function (c) { return c ? chipHtml(c) : '<span class="fsep"></span>'; }).join('')
+      + row(rows[0])
       + '</div>'
-      + '<div class="frow sub">'
-      + '<span class="flabel">Marketing</span>'
-      + rows[1].map(chipHtml).join('')
-      + '</div>';
+      + '<div class="frow">' + row(rows[1]) + '</div>'
+      + '<div class="frow">' + row(rows[2]) + '</div>';
   }
 
   // Persisted filters are silent by nature: someone narrows the view, comes back

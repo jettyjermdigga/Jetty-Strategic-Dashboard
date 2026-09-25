@@ -64,7 +64,7 @@ store event that Marketing promotes, not a joint one.
 | Wholesale | Tradeshows, sales trips and other industry events |
 | Marketing | MKG-specific work the team plans against |
 | Logistics | |
-| Product Development | |
+| ProDev | |
 | Culture | Team-building |
 | Finance | |
 
@@ -141,9 +141,10 @@ Two rows of chips above the calendar. Nothing else — the sidebar of six
 collapsible sections and forty checkboxes was a faithful rendering of the
 taxonomy, which turned out not to be the same thing as a way to read a calendar.
 
-**Row one** — one chip per department, then *Meetings*, then the three vehicles,
-then *Pending*. **Row two** — Marketing's nine sub-types, which only matter once
-you are looking at Marketing's work. *Everything* clears the lot.
+**Row one** — a chip per department, Marketing excepted. **Row two** — *Marketing
+(All)* with its nine sub-types beside it, since they are only ever asked about
+together. **Row three** — the crosscutting questions: *Meetings*, the three
+vehicles, and *Pending*. *Everything* clears the lot.
 
 Chips of the same kind are alternatives; different kinds narrow together. Box
 Truck plus Wholesale shows both departments' events; Long Branch plus Pending
