@@ -516,6 +516,45 @@ async function listAttachments(db, itemId) {
   return res.results || [];
 }
 
+// One feed per person, created the first time they open Subscribe. The token
+// is the credential -- 32 random bytes, not derived from the email, so knowing
+// who works here tells you nothing about their link.
+const FEED_AXES = ['dept', 'kind', 'sub', 'status'];
+
+function newToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function cleanFilters(input) {
+  const out = {};
+  const src = input && typeof input === 'object' ? input : {};
+  for (const axis of FEED_AXES) {
+    const raw = Array.isArray(src[axis]) ? src[axis] : [];
+    const picked = [];
+    for (const v of raw) {
+      const key = clean(v, 60);
+      // Only the shapes a key can take; nothing here is interpolated into SQL,
+      // but a filter value has no business carrying anything else either.
+      if (key && /^[A-Za-z0-9-]+$/.test(key) && !picked.includes(key)) picked.push(key);
+    }
+    if (picked.length) out[axis] = picked;
+  }
+  return out;
+}
+
+async function feedFor(db, email) {
+  const row = await db.prepare('SELECT * FROM feeds WHERE email = ?').bind(email).first();
+  if (row) return row;
+  const now = new Date().toISOString();
+  const token = newToken();
+  await db.prepare(
+    'INSERT INTO feeds (token, email, filters, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+  ).bind(token, email, '{}', now, now).run();
+  return { token, email, filters: '{}', created_at: now, updated_at: now };
+}
+
 async function handleApi(request, env, url, who) {
   const db = env.DB;
   if (!db) {
@@ -632,6 +671,45 @@ async function handleApi(request, env, url, who) {
     }
 
     return json({ imported: rows.length, warnings: warnings.slice(0, 40) }, 201);
+  }
+
+  // Your own calendar sync: the link, and what it carries. Never anybody
+  // else's -- the row is looked up by the signed-in email, not by anything the
+  // caller sends.
+  if (path === '/api/feed') {
+    if (!who.email) return json({ error: 'Not signed in.' }, 403);
+
+    if (method === 'GET' || method === 'POST' || method === 'PUT') {
+      let row = await feedFor(db, who.email);
+
+      if (method === 'PUT') {
+        const body = await request.json().catch(() => null);
+        if (!body) return json({ error: 'Expected a JSON body.' }, 400);
+        const filters = JSON.stringify(cleanFilters(body.filters));
+        await db.prepare('UPDATE feeds SET filters = ?, updated_at = ? WHERE token = ?')
+          .bind(filters, new Date().toISOString(), row.token).run();
+        row = { ...row, filters };
+      }
+
+      if (method === 'POST') {
+        // Reset: a new token, so a link that got out stops working for that
+        // person and nobody else is disturbed.
+        const token = newToken();
+        await db.prepare('UPDATE feeds SET token = ?, updated_at = ? WHERE email = ?')
+          .bind(token, new Date().toISOString(), who.email).run();
+        row = { ...row, token };
+      }
+
+      let parsed = {};
+      try { parsed = JSON.parse(row.filters || '{}'); } catch (err) { parsed = {}; }
+      return json({
+        url: env.FEED_ORIGIN
+          ? env.FEED_ORIGIN.replace(/\/$/, '') + '/calendar.ics?token=' + row.token
+          : null,
+        filters: parsed,
+      });
+    }
+    return json({ error: 'Method not allowed.' }, 405);
   }
 
   const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
@@ -794,17 +872,11 @@ export default {
           verified: who.verified,
           accessConfigured: who.accessConfigured,
           editorsConfigured: who.editorsConfigured,
-          feedConfigured: Boolean(env.ICS_KEY && env.FEED_ORIGIN),
-          // Anyone Access has let in can already read the calendar, so handing
-          // them the feed key grants nothing new -- but it stays out of the
-          // response for anonymous callers.
-          // The feed lives on its own Worker, outside Access, because Access
-          // protects a Worker whole and Google cannot sign in. So the link
-          // points somewhere else entirely, and this one hands it out.
-          feedUrl: (env.ICS_KEY && env.FEED_ORIGIN && who.email)
-            ? env.FEED_ORIGIN.replace(/\/$/, '')
-              + '/calendar.ics?key=' + encodeURIComponent(env.ICS_KEY)
-            : null,
+          // Whether calendar sync can work at all. The link itself is per
+          // person and comes from /api/feed, not from here -- it is a
+          // credential, and it belongs in a response about one person rather
+          // than in the one every page load makes.
+          feedConfigured: Boolean(env.FEED_ORIGIN),
         });
       }
 

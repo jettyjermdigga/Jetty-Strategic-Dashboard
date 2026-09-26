@@ -430,30 +430,30 @@ trusting the header it sets. Until both are filled in, the page says so.
 *Subscribe* hands out a URL to paste into Google Calendar under
 Other calendars → **+** → **From URL**.
 
+### Calendar sync is a per-person setting
+
+Subscribing to the whole calendar means 588 events in your own diary, a hundred
+of them emails and a hundred SMS sends. So sync is not "everything" and it is
+not a snapshot of whatever chips were on when you pressed the button — the chips
+change a dozen times an hour and a link is fixed the moment Google stores it.
+
+Each person gets **one stable link and a saved choice of what it carries**.
+*Subscribe* opens their settings: departments, kind, Marketing sub-types,
+status. Nothing ticked in a section means that section does not narrow
+anything. Change the settings later and the calendar Google has already added
+starts delivering the new selection, with nothing to re-add.
+
+The link is `…/calendar.ics?token=…`. The token **is** the credential: 64 hex
+characters, random, stored in the `feeds` table against that person's email and
+never derived from it. An unknown token gets 404 rather than 403, which tells a
+stranger nothing. **Reset link** issues a new one, so a link that gets out is
+revoked for that person alone rather than for everybody — which is what a single
+shared key would have forced.
+
+`/api/feed` only ever reads and writes the row for the signed-in email; nothing
+the caller sends selects the row.
+
 ### The feed is a second Worker
-
-`calendar/feed/` is a Worker of its own, `jetty-calendar-feed`, with **no
-Cloudflare Access in front of it**. It binds the same D1 database, never writes,
-serves exactly one path, and 404s everything else.
-
-It is separate because Access protects a Worker **whole** and cannot exempt a
-single path on it. Two attempts said otherwise and neither worked: a self-hosted
-application scoped to `jettycalendar.com/calendar.ics` with a Bypass policy is
-overruled by the Worker policy — the sign-in page names the Worker application —
-whatever the precedence list on the Worker's Access tab says. The calendar has
-to be behind Access and Google's fetchers cannot sign in, so the only
-arrangement where both are true is two Workers.
-
-What guards it is `ICS_KEY`, set as a secret on **both** Workers: the calendar
-needs it to hand out the link, the feed needs it to check. A wrong key gets 404
-rather than 403, which tells a stranger nothing. That URL is readable by anyone
-holding it, which is what a calendar subscription always is — Google will not
-carry a credential. Treat it like a password and re-issue it if it gets out.
-
-`FEED_ORIGIN` on the calendar Worker is what *Subscribe* hands out. Without it
-the button says the feed is not configured rather than offering a link to a
-Worker that is not there.
-
 ### How Access is attached, and why it took three tries
 
 Access is set on the **Worker's own Access tab** — Workers & Pages →

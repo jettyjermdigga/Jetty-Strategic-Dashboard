@@ -229,51 +229,69 @@ describe('buildIcs', () => {
 // serves.
 
 const feed = (await import('../feed/index.js')).default;
-const KEY = 'a-very-long-unguessable-key';
+
+// A token is 64 hex characters and is looked up, not compared -- so the stub
+// answers for one and nothing else.
+const TOKEN = 'a'.repeat(64);
 const stubDb = {
-  prepare: () => ({ all: async () => ({ results: [feedItem()] }) }),
+  prepare: (sql) => ({
+    bind: (...args) => ({
+      first: async () => (/FROM feeds/.test(sql) && args[0] === TOKEN
+        ? { filters: '{"dept":["jrf"]}' } : null),
+      all: async () => ({ results: [] }),
+    }),
+    all: async () => ({ results: [
+      feedItem(),
+      feedItem({ id: 'b', title: 'Marketing Email', department: 'marketing', departments: '' }),
+    ] }),
+  }),
 };
 const call = (path, env, init) =>
   feed.fetch(new Request('https://feed.test' + path, init), env);
 
 describe('feed Worker', () => {
-  const env = { ICS_KEY: KEY, DB: stubDb };
+  const env = { DB: stubDb };
 
-  it('serves the feed with the right key', async () => {
-    const res = await call('/calendar.ics?key=' + KEY, env);
+  it('serves the feed for a known token', async () => {
+    const res = await call('/calendar.ics?token=' + TOKEN, env);
     eq(res.status, 200);
     eq(res.headers.get('content-type'), 'text/calendar; charset=utf-8');
   });
-  it('404s a wrong key, rather than 403', async () => {
+  it('carries only what that person asked for', async () => {
+    // The stub's token says dept=jrf; the marketing event must not be in it.
+    const body = await (await call('/calendar.ics?token=' + TOKEN, env)).text();
+    ok(body.includes('Coquina Jam'), 'the JRF event is missing');
+    ok(!body.includes('Marketing Email'), 'an unasked-for event got through');
+  });
+  it('names the calendar after the selection', async () => {
+    const body = await (await call('/calendar.ics?token=' + TOKEN, env)).text();
+    ok(/X-WR-CALNAME:.*Jetty Rock Foundation/.test(body.replace(/\r\n /g, '')),
+       'the feed is not named after its filter');
+  });
+  it('404s an unknown token, rather than 403', async () => {
     // A 403 would confirm to a stranger that there is something here.
-    eq((await call('/calendar.ics?key=wrong', env)).status, 404);
+    eq((await call('/calendar.ics?token=' + 'b'.repeat(64), env)).status, 404);
   });
-  it('404s a missing key', async () => {
+  it('404s a missing or malformed token', async () => {
     eq((await call('/calendar.ics', env)).status, 404);
+    eq((await call('/calendar.ics?token=short', env)).status, 404);
+    eq((await call('/calendar.ics?token=' + 'Z'.repeat(64), env)).status, 404);
   });
-  it('404s a key of the right length but wrong content', async () => {
-    const wrong = 'b'.repeat(KEY.length);
-    eq((await call('/calendar.ics?key=' + wrong, env)).status, 404);
-  });
-  it('404s every other path, key or no key', async () => {
+  it('404s every other path', async () => {
     eq((await call('/', env)).status, 404);
-    eq((await call('/api/items?key=' + KEY, env)).status, 404);
-    eq((await call('/calendar.ics/../api/items?key=' + KEY, env)).status, 404);
+    eq((await call('/api/items?token=' + TOKEN, env)).status, 404);
+    eq((await call('/calendar.ics/../api/items?token=' + TOKEN, env)).status, 404);
   });
   it('refuses to write', async () => {
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-      eq((await call('/calendar.ics?key=' + KEY, env, { method })).status, 404, method);
+      eq((await call('/calendar.ics?token=' + TOKEN, env, { method })).status, 404, method);
     }
   });
-  it('stays shut when no key is configured', async () => {
-    eq((await call('/calendar.ics', { DB: stubDb })).status, 503);
-    eq((await call('/calendar.ics?key=', { DB: stubDb })).status, 503);
-  });
   it('says so when the database is not bound', async () => {
-    eq((await call('/calendar.ics?key=' + KEY, { ICS_KEY: KEY })).status, 503);
+    eq((await call('/calendar.ics?token=' + TOKEN, {})).status, 503);
   });
   it('answers HEAD without a body', async () => {
-    const res = await call('/calendar.ics?key=' + KEY, env, { method: 'HEAD' });
+    const res = await call('/calendar.ics?token=' + TOKEN, env, { method: 'HEAD' });
     eq(res.status, 200);
     eq(await res.text(), '');
   });

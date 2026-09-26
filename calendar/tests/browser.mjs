@@ -59,7 +59,8 @@ const ATTACHMENTS = [{
   uploaded_by: 'jeremy@jettylife.com', uploaded_at: '2026-09-01T10:00:00Z',
 }];
 
-const seen = { posted: null, patched: null, uploads: [], deleted: [] };
+const seen = { posted: null, patched: null, uploads: [], deleted: [], savedFilters: null, resets: 0 };
+let feedRow = { url: 'https://feed.test/calendar.ics?token=' + 'a'.repeat(64), filters: {} };
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
@@ -95,6 +96,17 @@ await page.route('**/*', async (route) => {
   if (/^\/api\/items\/[0-9a-f-]+$/.test(p) && method === 'PATCH') {
     seen.patched = JSON.parse(req.postData());
     return route.fulfill({ json: { item: ITEMS[0] } });
+  }
+  if (p === '/api/feed') {
+    if (method === 'PUT') {
+      seen.savedFilters = JSON.parse(req.postData()).filters;
+      feedRow = { ...feedRow, filters: seen.savedFilters };
+    }
+    if (method === 'POST') {
+      seen.resets++;
+      feedRow = { ...feedRow, url: 'https://feed.test/calendar.ics?token=' + 'b'.repeat(64) };
+    }
+    return route.fulfill({ json: feedRow });
   }
   if (p === '/api/items' && method === 'POST') {
     seen.posted = JSON.parse(req.postData());
@@ -305,8 +317,36 @@ await t('removes an attachment straight away, not on save', async () => {
   return seen.deleted.length === 1;
 });
 
-console.log('a list row');
+console.log('calendar sync');
+await page.locator('button[data-act="close"]').click();   // the edit form is still open
+await page.waitForFunction(() => document.querySelector('#modal').hidden);
+await page.locator('#subscribe').click();
+await page.waitForSelector('#syncBox .sub-url');
+await t('hands out one stable link', async () =>
+  (await page.locator('#feedUrl').textContent()).includes('token=' + 'a'.repeat(64)));
+await t('warns that nothing ticked means all of it', async () =>
+  (await page.locator('.sub-scope.warn').textContent()).includes('every email and SMS'));
+await t('offers every axis to choose from', async () =>
+  (await page.locator('.sync-opt[data-param="dept"]').count()) === 11
+  && (await page.locator('.sync-opt[data-param="kind"]').count()) === 2
+  && (await page.locator('.sync-opt[data-param="sub"]').count()) === 10
+  && (await page.locator('.sync-opt[data-param="status"]').count()) === 3);
+await t('saves a choice without a Save button', async () => {
+  await page.locator('.sync-opt[data-param="dept"][value="box-truck"]').check();
+  await page.waitForFunction(() => !document.querySelector('.sub-scope.warn'));
+  return JSON.stringify(seen.savedFilters) === '{"dept":["box-truck"]}';
+});
+await t('keeps the same link when the selection changes', async () =>
+  (await page.locator('#feedUrl').textContent()).includes('token=' + 'a'.repeat(64)));
+await t('reset issues a new link', async () => {
+  await page.locator('button[data-act="feed-reset"]').click();
+  await page.waitForFunction(() =>
+    document.querySelector('#feedUrl').textContent.includes('bbbb'));
+  return seen.resets === 1;
+});
 await page.locator('button[data-act="close"]').click();
+
+console.log('a list row');
 await chip('Wholesale').click();
 await page.locator('#listPanel .day-item').first().click();
 await t('opens its event', async () =>

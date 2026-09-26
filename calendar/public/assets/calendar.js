@@ -1143,31 +1143,118 @@
     $('#f-csv').focus();
   }
 
+  // Calendar sync is a setting, not a snapshot of the chips. The chips change
+  // a dozen times an hour; a subscription is something you set once. So each
+  // person gets one stable link and a saved choice of what it carries -- edit
+  // the settings and the subscription Google already has starts delivering the
+  // new slice, with nothing to re-add.
+  //
+  // Subscribing to all 588 events, a hundred of them emails and a hundred SMS
+  // sends, buries the reader's own diary. That is the problem this solves.
+  var syncState = { url: '', filters: {} };
+  var SYNC_AXES = [
+    { param: 'dept', title: 'Departments', list: function () { return tax('departments'); } },
+    { param: 'kind', title: 'Kind', list: function () { return tax('eventTypes'); } },
+    { param: 'sub', title: 'Marketing sub-types', list: function () { return tax('subTypes'); } },
+    { param: 'status', title: 'Status',
+      list: function () {
+        return tax('statuses').map(function (st) { return { key: st, label: st }; });
+      } },
+  ];
+
+  function syncPicked(param) {
+    var v = syncState.filters[param];
+    return Array.isArray(v) ? v : [];
+  }
+
+  function syncBody() {
+    return SYNC_AXES.map(function (axis) {
+      var picked = syncPicked(axis.param);
+      return '<div class="fld"><label>' + esc(axis.title)
+        + '<span class="lbl-note">'
+        + (picked.length ? picked.length + ' chosen' : 'nothing ticked \u2014 everything')
+        + '</span></label><div class="chk-grid">'
+        + axis.list().map(function (x) {
+            return '<label class="fld-inline"><input type="checkbox" class="sync-opt" '
+              + 'data-param="' + axis.param + '" value="' + esc(x.key) + '"'
+              + (picked.indexOf(x.key) >= 0 ? ' checked' : '') + '>'
+              + esc(x.label) + '</label>';
+          }).join('')
+        + '</div></div>';
+    }).join('');
+  }
+
+  function readSync() {
+    var out = {};
+    Array.prototype.forEach.call(document.querySelectorAll('.sync-opt:checked'), function (el) {
+      (out[el.dataset.param] = out[el.dataset.param] || []).push(el.value);
+    });
+    return out;
+  }
+
+  function paintSync() {
+    var box = $('#syncBox');
+    if (!box) return;
+    var any = SYNC_AXES.some(function (a) { return syncPicked(a.param).length; });
+    box.innerHTML =
+      '<p class="modal-lede">This link is yours and it does not change. What it '
+      + 'carries is set here &mdash; change it later and the calendar you have already added to '
+      + 'Google simply starts showing the new selection.</p>'
+      + '<div class="sub-url" id="feedUrl">' + esc(syncState.url || '') + '</div>'
+      + (any
+          ? ''
+          : '<p class="sub-scope warn"><strong>Nothing ticked means everything</strong> &mdash; all '
+            + state.items.length + ' events, including every email and SMS send. That is a lot to '
+            + 'put in a personal calendar. Tick the departments you work in.</p>')
+      + '<p class="hint">Nothing ticked in a section means that section does not narrow anything. '
+      + 'Ticking Box Truck and Meetings gives you both.</p>'
+      + syncBody()
+      + '<ol class="sub-steps">'
+      + '<li>Copy the link.</li>'
+      + '<li>Google Calendar &rarr; <strong>Other calendars</strong> &rarr; <strong>+</strong> '
+      + '&rarr; <strong>From URL</strong>.</li>'
+      + '<li>Paste and <strong>Add calendar</strong>. Google refreshes on its own schedule, often '
+      + 'a few hours &mdash; this page is always current.</li>'
+      + '</ol>'
+      + '<p class="hint">Treat the link like a password: anyone holding it can read your slice '
+      + 'without signing in. <strong>Reset link</strong> issues a new one and stops the old one '
+      + 'working, for you alone.</p>';
+  }
+
   function showSubscribe() {
-    var url = state.me.feedUrl || '';
-    var body;
-    if (!url) {
-      body = '<p class="modal-lede">The calendar feed is not switched on yet. Set the '
-        + '<code>ICS_KEY</code> secret on the Worker and add a Cloudflare Access bypass policy for '
-        + '<code>/calendar.ics</code>, and this panel will hand out a subscribe link.</p>';
-    } else {
-      body = '<p class="modal-lede">Add this calendar to Google Calendar and it shows up alongside '
-        + 'your own. Google refreshes subscribed calendars on its own schedule, so a new event can '
-        + 'take a few hours to appear there &mdash; this page is always current.</p>'
-        + '<div class="sub-url" id="feedUrl">' + esc(url) + '</div>'
-        + '<ol class="sub-steps">'
-        + '<li>Copy the link above.</li>'
-        + '<li>In Google Calendar, open <strong>Other calendars</strong> &rarr; <strong>+</strong> '
-        + '&rarr; <strong>From URL</strong>.</li>'
-        + '<li>Paste the link and choose <strong>Add calendar</strong>.</li>'
-        + '</ol>'
-        + '<p class="hint">Treat the link like a password &mdash; anyone who has it can read the '
-        + 'calendar without signing in.</p>';
-    }
-    var foot = '<div class="grow"></div>'
-      + (url ? '<button class="cal-btn" data-act="copy">Copy link</button>' : '')
-      + '<button class="cal-btn primary" data-act="close">Done</button>';
-    openModal('Subscribe in Google Calendar', body, foot);
+    openModal('Your calendar sync',
+      '<div id="syncBox"><p class="modal-lede">Loading\u2026</p></div>',
+      '<button class="cal-btn danger" data-act="feed-reset">Reset link</button>'
+      + '<div class="grow"></div>'
+      + '<button class="cal-btn" data-act="copy">Copy link</button>'
+      + '<button class="cal-btn primary" data-act="close">Done</button>');
+
+    api('/api/feed').then(function (r) {
+      if (!r.url) {
+        $('#syncBox').innerHTML = '<p class="modal-lede">Calendar sync is not switched on yet. '
+          + 'It needs <code>FEED_ORIGIN</code> set on this Worker and the feed Worker deployed.</p>';
+        return;
+      }
+      syncState = { url: r.url, filters: r.filters || {} };
+      paintSync();
+    }).catch(function (err) {
+      $('#syncBox').innerHTML = '<p class="modal-lede">' + esc(err.message) + '</p>';
+    });
+  }
+
+  // Saved as you tick, so there is no Save button to forget and no way to close
+  // the panel believing a change took when it did not.
+  function saveSync() {
+    syncState.filters = readSync();
+    paintSync();
+    api('/api/feed', {
+      method: 'PUT',
+      body: JSON.stringify({ filters: syncState.filters }),
+    }).catch(function (err) {
+      var box = $('#syncBox');
+      if (box) box.insertAdjacentHTML('afterbegin',
+        '<p class="form-err" style="display:block">Could not save that: ' + esc(err.message) + '</p>');
+    });
   }
 
   // ── API ────────────────────────────────────────────────────────────────
@@ -1292,6 +1379,12 @@
     $('#view').addEventListener('click', openFromClick);
     $('#listPanel').addEventListener('click', openFromClick);
 
+    // The sync panel lives in the modal body, which showForm also uses -- so
+    // this listens on the modal itself and checks what was clicked.
+    $('#modalBody').addEventListener('change', function (e) {
+      if (e.target.classList && e.target.classList.contains('sync-opt')) saveSync();
+    });
+
     $('#modalX').addEventListener('click', closeModal);
     $('#modal').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
@@ -1303,13 +1396,25 @@
 
       if (act === 'close') return closeModal();
 
+      // A new token: the old link stops working, for this person only.
+      if (act === 'feed-reset') {
+        if (!confirm('Issue a new link? The one you have already given out stops working.')) return;
+        b.disabled = true;
+        api('/api/feed', { method: 'POST' }).then(function (r) {
+          syncState = { url: r.url, filters: r.filters || {} };
+          paintSync();
+          b.disabled = false;
+        }).catch(function (err) { b.disabled = false; alert(err.message); });
+        return;
+      }
+
       // The interview rebuilds this footer on every step, so Back and Next are
       // handled here rather than bound to buttons that stop existing.
       if (act === 'next') return showForm.step(1);
       if (act === 'back') return showForm.step(-1);
 
       if (act === 'copy') {
-        navigator.clipboard.writeText(state.me.feedUrl || '').then(function () {
+        navigator.clipboard.writeText(syncState.url || '').then(function () {
           b.textContent = 'Copied';
           setTimeout(function () { b.textContent = 'Copy link'; }, 1600);
         });

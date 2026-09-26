@@ -10,14 +10,21 @@
 // to a stranger that there is something here.
 
 import { buildIcs } from '../worker/ics.js';
+import { matches, feedName } from '../worker/filter.js';
+import { DEPARTMENTS, EVENT_TYPES, SUB_TYPES, VEHICLES } from '../worker/taxonomy.js';
 
-// Constant-time-ish comparison, so the key cannot be recovered a character at a
-// time by timing the responses.
-function keyMatches(a, b) {
-  if (!a || !b || a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+// A subscribed calendar carrying all 588 events -- including a hundred emails
+// and a hundred SMS sends -- buries the reader's own diary. So the link carries
+// the filters that were on screen when it was made, and the feed honours them.
+function labelFor(axis, key) {
+  if (key === 'none') return 'Unassigned';
+  const list = axis === 'dept' ? DEPARTMENTS
+    : axis === 'kind' ? EVENT_TYPES
+    : axis === 'sub' ? SUB_TYPES
+    : axis === 'veh' ? VEHICLES
+    : [];
+  const hit = list.find((x) => x.key === key);
+  return hit ? hit.label : key;
 }
 
 const notFound = () => new Response('Not found\n', { status: 404 });
@@ -29,13 +36,19 @@ export default {
     if (url.pathname !== '/calendar.ics') return notFound();
     if (request.method !== 'GET' && request.method !== 'HEAD') return notFound();
 
-    if (!env.ICS_KEY) {
-      return new Response('The calendar feed is not configured yet.\n', { status: 503 });
-    }
-    if (!keyMatches(url.searchParams.get('key') || '', env.ICS_KEY)) return notFound();
     if (!env.DB) {
       return new Response('The calendar database is not bound to this Worker.\n', { status: 503 });
     }
+
+    // One token per person, looked up rather than compared: a link that gets
+    // out is reset for that one person without disturbing anybody else. The
+    // token is the whole credential, so an unknown one gets 404 -- a 403 would
+    // confirm to a stranger that there is something here.
+    const token = url.searchParams.get('token') || '';
+    if (!/^[0-9a-f]{64}$/.test(token)) return notFound();
+    const feed = await env.DB.prepare('SELECT filters FROM feeds WHERE token = ?')
+      .bind(token).first();
+    if (!feed) return notFound();
 
     // Same ordering as the calendar's own list, so the two never disagree about
     // what comes first on a day.
@@ -43,7 +56,16 @@ export default {
       'SELECT * FROM items ORDER BY start_date ASC, all_day DESC, start_time ASC, title ASC',
     ).all();
 
-    const body = buildIcs(res.results || [], { includeCancelled: false });
+    let filters = {};
+    try { filters = JSON.parse(feed.filters || '{}'); } catch (err) { filters = {}; }
+    const items = (res.results || []).filter((it) => matches(it, filters));
+
+    const body = buildIcs(items, {
+      includeCancelled: false,
+      // Named after what was asked for, so a sidebar full of Jetty feeds says
+      // which is which rather than three identical entries.
+      name: feedName(filters, labelFor),
+    });
     return new Response(request.method === 'HEAD' ? null : body, {
       headers: {
         'content-type': 'text/calendar; charset=utf-8',

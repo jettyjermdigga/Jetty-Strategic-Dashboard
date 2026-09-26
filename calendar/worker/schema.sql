@@ -56,6 +56,22 @@ CREATE TABLE IF NOT EXISTS attachments (
 );
 CREATE INDEX IF NOT EXISTS idx_att_item ON attachments(item_id);
 
+-- One row per person who has ever opened Subscribe: their own feed token and
+-- what they want it to carry.
+--
+-- A token rather than one shared key, so a link that gets out can be reset for
+-- that person alone. Filters live here rather than in the URL because a URL is
+-- fixed the moment Google stores it -- settings can be changed afterwards and
+-- the existing subscription simply starts carrying the new slice.
+CREATE TABLE IF NOT EXISTS feeds (
+  token      TEXT PRIMARY KEY,         -- unguessable; this IS the credential
+  email      TEXT NOT NULL UNIQUE,
+  filters    TEXT,                     -- JSON: { dept: [], kind: [], sub: [], status: [] }
+  created_at TEXT,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_feeds_email ON feeds(email);
+
 -- One row per applied migration, so a backfill that rewrites data runs once and
 -- not on every cold start.
 CREATE TABLE IF NOT EXISTS meta (

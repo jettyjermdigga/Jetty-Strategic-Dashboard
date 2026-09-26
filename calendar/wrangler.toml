@@ -65,8 +65,7 @@ REQUIRE_IDENTITY = "true"
 # Worker never serves the feed -- it only hands out the link.
 FEED_ORIGIN = "https://jetty-calendar-feed.jeremy-85e.workers.dev"
 
-# ICS_KEY is a secret, not a var -- set it with:
-#   wrangler secret put ICS_KEY
-# Without it /calendar.ics stays closed. The feed is the one path exempt from
-# REQUIRE_IDENTITY, because Google's fetchers carry no Access session; the
-# unguessable key is what protects it.
+# There is no shared feed key any more. Each person gets their own token the
+# first time they open Subscribe, stored in the feeds table -- so a link that
+# gets out is reset for that one person rather than for everybody. The token is
+# the credential; see calendar/feed/.
