@@ -430,6 +430,30 @@ trusting the header it sets. Until both are filled in, the page says so.
 *Subscribe* hands out a URL to paste into Google Calendar under
 Other calendars → **+** → **From URL**.
 
+### The feed is a second Worker
+
+`calendar/feed/` is a Worker of its own, `jetty-calendar-feed`, with **no
+Cloudflare Access in front of it**. It binds the same D1 database, never writes,
+serves exactly one path, and 404s everything else.
+
+It is separate because Access protects a Worker **whole** and cannot exempt a
+single path on it. Two attempts said otherwise and neither worked: a self-hosted
+application scoped to `jettycalendar.com/calendar.ics` with a Bypass policy is
+overruled by the Worker policy — the sign-in page names the Worker application —
+whatever the precedence list on the Worker's Access tab says. The calendar has
+to be behind Access and Google's fetchers cannot sign in, so the only
+arrangement where both are true is two Workers.
+
+What guards it is `ICS_KEY`, set as a secret on **both** Workers: the calendar
+needs it to hand out the link, the feed needs it to check. A wrong key gets 404
+rather than 403, which tells a stranger nothing. That URL is readable by anyone
+holding it, which is what a calendar subscription always is — Google will not
+carry a credential. Treat it like a password and re-issue it if it gets out.
+
+`FEED_ORIGIN` on the calendar Worker is what *Subscribe* hands out. Without it
+the button says the feed is not configured rather than offering a link to a
+Worker that is not there.
+
 ### How Access is attached, and why it took three tries
 
 Access is set on the **Worker's own Access tab** — Workers & Pages →
