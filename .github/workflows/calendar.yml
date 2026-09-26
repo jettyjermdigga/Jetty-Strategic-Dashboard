@@ -54,3 +54,23 @@ jobs:
           wranglerVersion: '4'
           workingDirectory: calendar
           command: deploy
+
+      # The Google Calendar feed is a second Worker, deliberately outside
+      # Access: Access protects a Worker whole and cannot exempt one path, and
+      # Google's fetchers carry no sign-in. It binds the same database read-only
+      # and is guarded by ICS_KEY, which is set on it as its own secret.
+      - name: Point the feed Worker at the same database
+        working-directory: calendar
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_CONFIG: feed/wrangler.toml
+        run: python provision_d1.py
+      - name: Deploy the feed Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          workingDirectory: calendar/feed
+          command: deploy

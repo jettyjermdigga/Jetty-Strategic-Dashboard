@@ -1,0 +1,20 @@
+# The Google Calendar feed, on a Worker of its own.
+#
+# It is separate for one reason: Cloudflare Access protects a Worker whole, and
+# cannot exempt a single path on it. The calendar has to be behind Access;
+# Google's fetchers cannot sign in. Two Workers is the way to have both.
+#
+# Nothing here is protected by Access. The unguessable ICS_KEY is the only thing
+# between this and the public, which is what a calendar subscription URL always
+# is -- Google will not carry a credential.
+
+name = "jetty-calendar-feed"
+main = "index.js"
+compatibility_date = "2024-09-23"
+
+# Read-only by intent: this Worker never writes. Nothing in it calls put, and
+# the endpoints that could are simply absent.
+[[d1_databases]]
+binding = "DB"
+database_name = "jetty_calendar"
+database_id = "__D1_DATABASE_ID__"

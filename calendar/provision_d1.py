@@ -23,7 +23,9 @@ import urllib.request
 
 DB_NAME = "jetty_calendar"
 PLACEHOLDER = "__D1_DATABASE_ID__"
-CONFIG = "wrangler.toml"
+# Which config to patch. The feed Worker has its own and binds the same
+# database, so it needs the same id written into it.
+CONFIG = os.environ.get("WRANGLER_CONFIG", "wrangler.toml")
 API = "https://api.cloudflare.com/client/v4"
 
 

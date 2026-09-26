@@ -61,8 +61,8 @@ served.</p>
 hostname: Zero Trust &rarr; Access &rarr; Applications &rarr; add a self-hosted
 application for it, then add the people who should be able to open it. If one
 already exists, the line above says what the Worker made of what it was sent.</p>
-<p>The feed at <code>/calendar.ics</code> needs a <strong>Bypass</strong> policy
-on that single path, since Google Calendar cannot sign in.</p>
+<p>The Google Calendar feed is a separate Worker, outside this one, because
+Access protects a Worker whole and Google cannot sign in.</p>
 </div></body></html>`;
 
 let schemaReady = false;
@@ -328,15 +328,6 @@ async function listItems(db, from, to) {
   sql += ' ORDER BY start_date ASC, all_day DESC, start_time ASC, title ASC';
   const res = await db.prepare(sql).bind(...binds).all();
   return (res.results || []).map(withRetail);
-}
-
-// Constant-time-ish comparison so the feed key cannot be recovered a character
-// at a time by timing the responses.
-function keyMatches(a, b) {
-  if (!a || !b || a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
 }
 
 function parseCsv(text) {
@@ -773,36 +764,14 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // The ICS feed is fetched by Google's servers, which carry no Access
-    // session, so it authenticates on an unguessable key instead. Without a key
-    // configured the feed stays closed rather than defaulting to public.
-    if (url.pathname === '/calendar.ics') {
-      if (!env.ICS_KEY) {
-        return new Response('The calendar feed is not configured yet.\n', { status: 503 });
-      }
-      if (!keyMatches(url.searchParams.get('key') || '', env.ICS_KEY)) {
-        return new Response('Not found\n', { status: 404 });
-      }
-      if (!env.DB) return new Response('The calendar database is not bound yet.\n', { status: 503 });
-      await ensureSchema(env.DB);
-      const items = await listItems(env.DB, null, null);
-      return new Response(buildIcs(items, { includeCancelled: false }), {
-        headers: {
-          'content-type': 'text/calendar; charset=utf-8',
-          'content-disposition': 'inline; filename="jetty-company-calendar.ics"',
-          'cache-control': 'public, max-age=600',
-        },
-      });
-    }
-
     const who = await identify(request, env);
 
     // A new workers.dev hostname is reachable by anyone until an Access
     // application is put in front of it. Rather than depend on that happening
     // before anybody finds the URL, refuse every request that arrives without
-    // an Access identity and explain what is missing. /calendar.ics is handled
-    // above and is deliberately exempt -- Google's fetchers carry no session,
-    // so the unguessable key is what protects that one path.
+    // an Access identity and explain what is missing. There is no exempt path
+    // here: Access cannot carve one out of a Worker, which is exactly why the
+    // feed is a Worker of its own.
     if (env.REQUIRE_IDENTITY !== 'false' && !who.email) {
       if (url.pathname.startsWith('/api/')) {
         return json({
@@ -825,12 +794,16 @@ export default {
           verified: who.verified,
           accessConfigured: who.accessConfigured,
           editorsConfigured: who.editorsConfigured,
-          feedConfigured: Boolean(env.ICS_KEY),
+          feedConfigured: Boolean(env.ICS_KEY && env.FEED_ORIGIN),
           // Anyone Access has let in can already read the calendar, so handing
           // them the feed key grants nothing new -- but it stays out of the
           // response for anonymous callers.
-          feedUrl: (env.ICS_KEY && who.email)
-            ? url.origin + '/calendar.ics?key=' + encodeURIComponent(env.ICS_KEY)
+          // The feed lives on its own Worker, outside Access, because Access
+          // protects a Worker whole and Google cannot sign in. So the link
+          // points somewhere else entirely, and this one hands it out.
+          feedUrl: (env.ICS_KEY && env.FEED_ORIGIN && who.email)
+            ? env.FEED_ORIGIN.replace(/\/$/, '')
+              + '/calendar.ics?key=' + encodeURIComponent(env.ICS_KEY)
             : null,
         });
       }

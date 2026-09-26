@@ -60,6 +60,11 @@ ACCESS_AUD = "9d5dfc7cd33c026b2403255f25ceeb6e4f395ab5332e247594bc433f687409a0"
 # to "false" for local development.
 REQUIRE_IDENTITY = "true"
 
+# Where the Google Calendar feed lives. A Worker of its own, outside Access,
+# because Access protects a Worker whole and Google cannot sign in. This
+# Worker never serves the feed -- it only hands out the link.
+FEED_ORIGIN = "https://jetty-calendar-feed.jeremy-85e.workers.dev"
+
 # ICS_KEY is a secret, not a var -- set it with:
 #   wrangler secret put ICS_KEY
 # Without it /calendar.ics stays closed. The feed is the one path exempt from
