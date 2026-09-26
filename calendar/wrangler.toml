@@ -29,6 +29,14 @@ binding = "DB"
 database_name = "jetty_calendar"
 database_id = "__D1_DATABASE_ID__"
 
+# Files attached to events. The bytes live here; the attachments table in D1 is
+# the index. Nothing is served straight from the bucket -- every download goes
+# through the Worker, which is what keeps it behind Cloudflare Access, so the
+# bucket stays private with no public r2.dev URL and no custom domain.
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "jetty-calendar-files"
+
 [vars]
 # Who may add or edit calendar items. Everyone else Cloudflare Access lets in
 # sees the calendar read-only. Comma-separated, matched case-insensitively.
