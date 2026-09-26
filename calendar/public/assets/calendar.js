@@ -113,8 +113,12 @@
   var DAY_MS = 86400000;
   function retailWeek(dateStr) {
     if (!state.tax || !dateStr) return null;
+    var at = fromYmd(dateStr);
+    // Matches worker/retail.js: a date this cannot parse returns null rather
+    // than producing an Invalid Date that renders as "NaN".
+    if (isNaN(at)) return null;
     var base = fromYmd(state.tax.retailEpoch);
-    var idx = Math.floor((fromYmd(dateStr) - base) / (7 * DAY_MS));
+    var idx = Math.floor((at - base) / (7 * DAY_MS));
     var yearOffset = Math.floor(idx / 52);
     var start = addDays(base, idx * 7);
     return {
@@ -1007,7 +1011,10 @@
       }).catch(function () {});
     }
 
-    $('#modalBody').addEventListener('click', function (e) {
+    // Assigned rather than added: #modalBody outlives the form, so
+    // addEventListener stacks a fresh handler every time the form is opened.
+    // Three opens meant one click on a remove button firing three deletes.
+    $('#modalBody').onclick = function (e) {
       var x = e.target.closest('.att-x');
       if (!x) return;
       e.preventDefault();
@@ -1021,16 +1028,16 @@
           paintFiles();
         })
         .catch(function (err) { x.disabled = false; formError(err.message); });
-    });
+    };
 
-    $('#modalBody').addEventListener('change', function (e) {
+    $('#modalBody').onchange = function (e) {
       if (e.target.classList.contains('f-kind')) return paint();
       if (e.target.classList.contains('f-dept')) { paintExtras(); paintScoped(); return paint(); }
       if (e.target.classList.contains('f-extra')) { paintScoped(); return paint(); }
       if (e.target.classList.contains('f-need')) return paintStaff();
       if (e.target.id === 'f-allday') { $('#timeRow').hidden = e.target.checked; return; }
       if (e.target.id === 'f-start') return startChanged(e.target);
-    });
+    };
 
     // Year / Week / Start (Week) / End (Week) / Month / Day are shown as they
     // will be derived, so you can see the retail week without typing it.

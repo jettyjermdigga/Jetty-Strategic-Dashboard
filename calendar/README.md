@@ -469,6 +469,32 @@ sometimes longer. The feed asks for hourly, but Google treats that as a hint. Th
 page is always current; the Google copy lags. Treat the subscribe link like a
 password: anyone holding it can read the calendar without signing in.
 
+## Tests
+
+```
+node tests/unit.mjs        # no browser, no network, no packages
+node tests/browser.mjs     # the real page against a stubbed API; needs Playwright
+```
+
+`tests/unit.mjs` gates the deploy. It covers the things that have actually
+broken: a semicolon in a schema comment that took the calendar down, a migration
+that could undo an edit made after it, the retail week the business plans
+against, the ICS feed's folding and its handling of cancelled events, and the
+taxonomy invariants — unique keys, a colour per department, every department in
+PRIMACY, needs left unscoped.
+
+`tests/browser.mjs` drives the actual page with the API stubbed, because that is
+where most of this project's real bugs have been: list rows that were not
+clickable, colour dots with no size, a filter that blanked the calendar, a count
+that read zero and was telling the truth, and handlers stacking on `#modalBody`
+so one click fired three deletes. None of those are visible from the worker
+side. It is not in CI — it needs Chromium, and a flaky UI check blocking a
+deploy is worse than the check is worth — so run it before pushing anything that
+touches `public/`.
+
+Both are plain Node scripts with no framework, and both exit non-zero on
+failure.
+
 ## Local development
 
 ```

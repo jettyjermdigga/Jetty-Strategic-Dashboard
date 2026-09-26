@@ -24,6 +24,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Gates the deploy. These need no browser, no network and no packages, so
+      # they cost seconds -- and a schema file that cannot be parsed or a
+      # migration that would overwrite a later edit never reaches production.
+      # The browser suite is not run here: it needs Chromium, and a flaky UI
+      # check blocking a deploy is worse than the check is worth.
+      - name: Run the calendar's unit tests
+        working-directory: calendar
+        run: node tests/unit.mjs
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'

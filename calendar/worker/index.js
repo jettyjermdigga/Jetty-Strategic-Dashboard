@@ -14,6 +14,8 @@ import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, DEPARTMENTS, DEPARTMENT_KEYS,
          SUB_TYPES, SUB_TYPE_KEYS, NEEDS, NEED_KEYS, VEHICLES, VEHICLE_KEYS,
          STATUSES, PRIMACY } from './taxonomy.js';
 import { retailWeek, retailWeekStart } from './retail.js';
+import { sqlStatements } from './sql.js';
+import { planMigration } from './migrate.js';
 import SCHEMA from './schema.sql';
 
 // Shown instead of the calendar when a request arrives with no Cloudflare
@@ -73,60 +75,6 @@ const ADDED_COLUMNS = [
   'staff_count TEXT', 'vehicles TEXT',
 ];
 
-// The pre-decision-tree Event Type keys, and where each one lands now. Eight are
-// departments under a new name; "meetings" was never a department at all -- it
-// described the kind of item, which is what Event Type means now.
-const OLD_TYPE_TO_DEPT = {
-  'box-truck-events': 'box-truck',
-  'flagship-store': 'flagship-store',
-  'long-branch-store': 'long-branch-store',
-  'jrf': 'jrf',
-  'jetty-ink': 'jetty-ink',
-  'wholesale': 'wholesale',
-  'marketing': 'marketing',
-  'logistics': 'logistics',
-  'prodev': 'product-development',
-  'culture': 'culture',
-};
-
-// Two old needs were really vehicles. The rest -- Drifting Buoy, JBC, Insurance
-// and both tent setups -- have no home in the new structure and are dropped, as
-// are the Event, Meeting, Blog Post and Seasonal sub-types.
-const OLD_NEED_TO_VEHICLE = { 'box-truck-rig': 'box-truck', 'van': 'ink-van' };
-
-// Splitting the schema on a bare ";" is wrong: a semicolon inside a column
-// comment cuts the CREATE TABLE in half, and D1 reports the half as "incomplete
-// input" -- which takes the whole calendar down on the next cold start. Strip
-// comments and skip semicolons inside string literals instead.
-function sqlStatements(text) {
-  const out = [];
-  let cur = '';
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] === '-' && text[i + 1] === '-') {
-      const nl = text.indexOf('\n', i);
-      i = nl === -1 ? text.length : nl;      // drop the comment, keep the newline
-      continue;
-    }
-    if (text[i] === "'") {
-      const start = i;
-      i++;
-      while (i < text.length) {
-        if (text[i] === "'" && text[i + 1] === "'") { i += 2; continue; }   // escaped quote
-        if (text[i] === "'") { i++; break; }
-        i++;
-      }
-      cur += text.slice(start, i);
-      continue;
-    }
-    if (text[i] === ';') { out.push(cur); cur = ''; i++; continue; }
-    cur += text[i];
-    i++;
-  }
-  out.push(cur);
-  return out.map((x) => x.trim()).filter(Boolean);
-}
-
 async function ensureSchema(db) {
   if (schemaReady) return;
   // Statements are idempotent, so running them on each cold start is cheaper
@@ -174,40 +122,13 @@ async function migrateToDecisionTree(db) {
   const counts = { rows: rows.length, guessed: 0, noDepartment: 0, vehicles: 0 };
   const batch = [];
   for (const row of rows) {
-    const oldTypes = splitList(row.event_types);
-    const isMeeting = oldTypes.some((t) => t === 'meetings');
-    const depts = [];
-    for (const t of oldTypes) {
-      const d = OLD_TYPE_TO_DEPT[t];
-      if (d && !depts.includes(d)) depts.push(d);
-    }
-    // The old model had no primary, so one has to be chosen. PRIMACY encodes
-    // which department is likelier to own an event it shares.
-    depts.sort((a, b) => PRIMACY.indexOf(a) - PRIMACY.indexOf(b));
-    if (depts.length > 1) counts.guessed++;
-    if (!depts.length) counts.noDepartment++;
-
-    const subs = splitList(row.sub_types).filter((k) => SUB_TYPE_KEYS.includes(k));
-
-    const needs = [];
-    const veh = [];
-    for (const n of splitList(row.needs)) {
-      if (OLD_NEED_TO_VEHICLE[n]) {
-        if (!veh.includes(OLD_NEED_TO_VEHICLE[n])) veh.push(OLD_NEED_TO_VEHICLE[n]);
-      } else if (NEED_KEYS.includes(n)) {
-        needs.push(n);
-      }
-    }
-    if (veh.length) counts.vehicles++;
-
+    const plan = planMigration(row);
+    if (plan.guessedPrimary) counts.guessed++;
+    if (!plan.department) counts.noDepartment++;
+    if (plan.vehicles) counts.vehicles++;
     batch.push(stmt.bind(
-      isMeeting ? 'meetings-deadlines' : 'events-marketing',
-      depts[0] || null,
-      depts.length > 1 ? depts.slice(1).join(',') : null,
-      subs.length ? subs.join(',') : null,
-      needs.length ? needs.join(',') : null,
-      veh.length ? veh.join(',') : null,
-      row.id,
+      plan.event_type, plan.department, plan.departments,
+      plan.sub_types, plan.needs, plan.vehicles, row.id,
     ));
   }
 

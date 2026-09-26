@@ -26,8 +26,12 @@ function ymdFromUtc(ms) {
 /** { year, week, start, end } for the retail week containing a YYYY-MM-DD date. */
 export function retailWeek(dateStr) {
   if (!dateStr) return null;
+  const at = utcFromYmd(dateStr);
+  // A date this cannot parse used to reach ymdFromUtc and throw "Invalid time
+  // value", which turns a bad cell in an import into a dead request.
+  if (!Number.isFinite(at)) return null;
   const base = utcFromYmd(RETAIL_EPOCH);
-  const idx = Math.floor((utcFromYmd(dateStr) - base) / (7 * DAY_MS));
+  const idx = Math.floor((at - base) / (7 * DAY_MS));
   const yearOffset = Math.floor(idx / 52);
   const start = base + idx * 7 * DAY_MS;
   return {
