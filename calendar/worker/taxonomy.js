@@ -14,8 +14,9 @@
 //                that Marketing promotes, not a joint one.
 //   SUB_TYPES    what kind of item, scoped to one department. Only Wholesale
 //                and Marketing have any.
-//   NEEDS        what an event requires, scoped to the department that answers
-//                for it. A need can carry a detail -- how many extra staff.
+//   NEEDS        what an event requires. Unscoped: any event can need any of
+//                them, whoever is running it. A need can carry a detail -- how
+//                many extra staff.
 //   VEHICLES     what has to be driven there. Unscoped: any event can need any.
 
 // Colours are a validated categorical palette: both modes pass the lightness
@@ -75,14 +76,15 @@ export const SUB_TYPES = [
   { key: 'website',     label: 'Website',     department: 'marketing' },
 ];
 
-// Scoped to the department that answers for them, and offered as soon as that
-// department is on the event -- primary or not, because the Box Truck still
-// needs its staff when it is along for someone else's event.
+// Unscoped. These were once tied to the department that answers for them --
+// extra staff to the Box Truck, permits and sound to JRF -- which meant most
+// events could not record a need at all, and the form said so where the
+// question should have been. Any event can want any of them.
 export const NEEDS = [
-  { key: 'extra-staff',   label: 'Extra staff needed', department: 'box-truck',
+  { key: 'extra-staff',   label: 'Extra staff needed',
     detail: { key: 'staff_count', label: 'How many?', placeholder: 'e.g. 3' } },
-  { key: 'social-permit', label: 'Social Permit',      department: 'jrf' },
-  { key: 'sound',         label: 'Sound',              department: 'jrf' },
+  { key: 'social-permit', label: 'Social Permit' },
+  { key: 'sound',         label: 'Sound' },
 ];
 
 // Unscoped: whose event it is has no bearing on what has to be driven there.
@@ -110,7 +112,6 @@ export const VEHICLE_KEYS = VEHICLES.map((v) => v.key);
 
 export function departmentByKey(key) { return DEPARTMENTS.find((d) => d.key === key) || null; }
 export function subTypesFor(dept) { return SUB_TYPES.filter((s) => s.department === dept); }
-export function needsFor(depts) { return NEEDS.filter((n) => depts.includes(n.department)); }
 
 // Which department owns an event that names several. Used once, by the
 // migration off the old no-primary model: Marketing and INK support other

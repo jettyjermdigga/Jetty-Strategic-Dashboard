@@ -77,11 +77,11 @@ Collab, Ambassador, Influencer and Website. The form offers the sub-types of
 **every** department on the event, not only the primary one, so a store sale that
 Marketing promotes can still be a Promotion without Marketing having to own it.
 
-**Needs** are what an event requires, asked by the department that answers for
-them: **Extra staff needed** (Box Truck, with a count) and **Social Permit** and
-**Sound** (Jetty Rock Foundation). They are offered as soon as that department is
-on the event, primary or not — the Box Truck still needs its staff when it is
-working someone else's event.
+**Needs** are what an event requires: **Extra staff needed** (with a count),
+**Social Permit** and **Sound**. Unscoped — every event is asked, whoever is
+running it. They were once tied to the department that answers for them, which
+meant a Flagship Store event could not record a need at all and the form said so
+where the question should have been.
 
 **Vehicles** — Box Truck, INK Van, Brand Transit — are unscoped. Whose event it
 is has no bearing on what has to be driven there.
@@ -126,7 +126,7 @@ of them are editors-only.
 | Department | the primary one — required, sets the colour |
 | Also involved | any number of other departments |
 | Sub-type | scoped to the departments on the event |
-| Needs | scoped to the department that answers for them |
+| Needs | offered on every event |
 | Extra staff | a count, only when that need is ticked |
 | Vehicles | unscoped |
 | Status | Booked (the default), Pending or Cancelled |

@@ -303,15 +303,8 @@ function normalise(input, existing) {
   }
   out.sub_types = subs.length ? subs.join(',') : null;
 
+  // Unscoped: whose event it is has no bearing on what it needs.
   const needs = multi('needs', NEED_KEYS, 'need');
-  for (const k of needs) {
-    const def = NEEDS.find((x) => x.key === k);
-    if (def && !onEvent.includes(def.department)) {
-      errors.push('"' + def.label + '" belongs to '
-        + (DEPARTMENTS.find((d) => d.key === def.department) || {}).label
-        + ', which is not on this event.');
-    }
-  }
   out.needs = needs.length ? needs.join(',') : null;
 
   // Only meaningful alongside the need it details.

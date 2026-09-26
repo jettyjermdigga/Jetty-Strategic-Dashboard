@@ -859,10 +859,8 @@
       var on = onEvent();
       return tax('subTypes').filter(function (st) { return on.indexOf(st.department) >= 0; });
     }
-    function needsAvailable() {
-      var on = onEvent();
-      return tax('needs').filter(function (nd) { return on.indexOf(nd.department) >= 0; });
-    }
+    // Unscoped, so this is the whole list on every event.
+    function needsAvailable() { return tax('needs'); }
 
     // A meeting takes the short form: who, when, and nothing else. A step with
     // nothing to ask -- no department on the event has any sub-type -- is not
@@ -871,9 +869,7 @@
       if (kind() === 'meetings-deadlines') return ['kind', 'title', 'dept', 'when', 'final'];
       var out = ['kind', 'title', 'dept', 'extra'];
       if (subsAvailable().length) out.push('subs');
-      out.push('when', 'where');
-      if (needsAvailable().length || tax('vehicles').length) out.push('needs');
-      out.push('final');
+      out.push('when', 'where', 'needs', 'final');
       return out;
     }
 
@@ -919,11 +915,11 @@
         function (el) { return el.value; });
       var chosenNeeds = hadNeeds.length ? hadNeeds : needsOf(it);
       $('#needPick').innerHTML = needsAvailable().map(function (nd) {
-        return '<label class="fld-inline" title="' + esc(deptLabel(nd.department)) + '">'
+        return '<label class="fld-inline">'
           + '<input type="checkbox" class="f-need" value="' + esc(nd.key) + '"'
           + (chosenNeeds.indexOf(nd.key) >= 0 ? ' checked' : '') + '>'
           + esc(nd.label) + '</label>';
-      }).join('') || '<p class="hint">No department on this event has needs to ask about.</p>';
+      }).join('');
       paintStaff();
     }
 
