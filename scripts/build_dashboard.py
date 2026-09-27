@@ -1,4 +1,4 @@
-import os, json, datetime
+import os, sys, json, datetime
 import pandas as pd
 import pyxlsb
 import openpyxl
@@ -2469,6 +2469,25 @@ def build_summary_panel(d):
 
     bank_bal_arr = get(ty_year, 'bank_balance')
     starting_bank_balance = bank_bal_arr[WK - 1] if WK <= len(bank_bal_arr) else None
+
+    # The panel used to just disappear when this was missing, which looks
+    # exactly like a build failure from the outside. Say what was actually
+    # seen, in the build log, either way.
+    def _last_filled(arr):
+        for i in range(len(arr) - 1, -1, -1):
+            if arr[i] is not None:
+                return i + 1
+        return None
+    _cl = get(ty_year, 'cl_balance')
+    print('Summary panel: years=' + repr(sorted(hist.keys()))
+          + ' ty_year=' + repr(ty_year)
+          + ' WK=' + repr(WK)
+          + ' bank_balance last filled week=' + repr(_last_filled(bank_bal_arr))
+          + ' bank_balance[WK]=' + repr(starting_bank_balance)
+          + ' cl_balance last filled week=' + repr(_last_filled(_cl))
+          + ' cl_balance[WK]=' + repr(_cl[WK - 1] if WK <= len(_cl) else None),
+          file=sys.stderr)
+
     if starting_bank_balance is None:
         return ''
 
