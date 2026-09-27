@@ -1259,9 +1259,32 @@
 
   // ── API ────────────────────────────────────────────────────────────────
 
+  // A Cloudflare Access session expires while the page stays open. The next
+  // save is then redirected to a sign-in page on another origin, the browser
+  // refuses to let us read it, and fetch rejects with a bare "Failed to fetch"
+  // -- which tells the person nothing and looks like the calendar is broken.
+  // Both that and an HTML response where JSON was expected mean the same thing,
+  // and both get an answer someone can act on.
+  var SIGNED_OUT = 'Your sign-in has expired. Reload the page \u2014 your changes are still '
+    + 'in this form until you do.';
+
   function api(path, opts) {
-    return fetch(path, Object.assign({ headers: { 'content-type': 'application/json' } }, opts || {}))
+    return fetch(path, Object.assign({
+      headers: { 'content-type': 'application/json' },
+      // Do not quietly follow Access's redirect to the login page; a redirect
+      // here is the signal, not something to chase.
+      redirect: 'manual',
+    }, opts || {}))
       .then(function (res) {
+        if (res.type === 'opaqueredirect' || res.redirected
+            || res.status === 0 || res.status === 302) {
+          throw new Error(SIGNED_OUT);
+        }
+        var type = res.headers.get('content-type') || '';
+        if (type.indexOf('application/json') < 0) {
+          throw new Error(res.ok ? SIGNED_OUT
+            : 'The calendar answered with an error (' + res.status + ').');
+        }
         return res.json().catch(function () { return {}; }).then(function (body) {
           if (!res.ok) {
             var err = new Error(body.error || ('Request failed (' + res.status + ')'));
@@ -1270,6 +1293,12 @@
           }
           return body;
         });
+      }, function (err) {
+        // fetch itself rejected: no response at all. Offline, or the redirect
+        // above blocked before we could look at it.
+        throw new Error(navigator.onLine === false
+          ? 'You appear to be offline. The change has not been saved.'
+          : SIGNED_OUT);
       });
   }
 

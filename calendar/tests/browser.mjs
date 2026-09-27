@@ -66,7 +66,13 @@ const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+page.on('console', (m) => {
+  // The lapsed-sign-in check aborts a request on purpose; the browser logs
+  // that, and it is the point of the test rather than a fault.
+  if (m.type() === 'error' && !/net::ERR_FAILED/.test(m.text())) {
+    errors.push('console: ' + m.text());
+  }
+});
 
 await page.route('**/*', async (route) => {
   const req = route.request();
@@ -344,6 +350,28 @@ await t('reset issues a new link', async () => {
     document.querySelector('#feedUrl').textContent.includes('bbbb'));
   return seen.resets === 1;
 });
+await page.locator('button[data-act="close"]').click();
+
+console.log('a lapsed sign-in');
+// Access expires while the page is open; the save is redirected to a login
+// page on another origin and fetch rejects with a bare "Failed to fetch".
+await page.locator('.chip:has-text("LB Spring Sale")').click();
+await page.locator('button[data-act="edit"]').click();
+await page.waitForSelector('#f-title');
+await page.route('**/api/items/*', (route) => {
+  if (route.request().method() === 'PATCH') return route.abort('failed');
+  return route.fallback();
+});
+await page.locator('button[data-act="save"]').click();
+await t('says the sign-in expired, not "Failed to fetch"', async () => {
+  await page.waitForSelector('#formErr:not([hidden])');
+  const msg = await page.locator('#formErr').textContent();
+  return msg.includes('sign-in has expired') && !msg.includes('Failed to fetch');
+});
+await t('leaves the form open so the work is not lost', async () =>
+  (await page.locator('#f-title').inputValue()).includes('LB Spring Sale')
+  && (await page.locator('button[data-act="save"]').isEnabled()));
+await page.unroute('**/api/items/*');
 await page.locator('button[data-act="close"]').click();
 
 console.log('a list row');
