@@ -145,7 +145,9 @@ const t = async (name, fn) => {
 const rx = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const chip = (label) => page.locator('.fchip').filter({ hasText: new RegExp('^' + rx(label)) }).first();
 const listed = async () => await page.locator('#listPanel .day-title').allTextContents();
-const clearAll = async () => { await page.locator('.fchip.all').click(); };
+// No Everything chip any more: Clear all in the active-filter bar is the one
+// way back to an unfiltered calendar, and it only exists while a filter is on.
+const clearAll = async () => { await page.locator('#fltReset').click(); };
 
 await page.goto('http://local.test/');
 await page.waitForSelector('.mo-grid');

@@ -379,7 +379,6 @@
     var el = $('#filterBar');
     if (!el) return;
     var n = chipCounts();
-    var anyOn = AXES.some(function (a) { return state.sel[a].length; });
 
     var chipHtml = function (c) {
       var count = (n[c.axis] && n[c.axis][c.key]) || 0;
@@ -401,8 +400,6 @@
     el.innerHTML =
       '<div class="frow">'
       + '<span class="fhint">Choose one department</span>'
-      + '<button type="button" class="fchip all' + (anyOn ? '' : ' on') + '" data-all="1">'
-      + 'Everything<span class="fn">' + state.items.length + '</span></button>'
       + row(rows[0])
       + '</div>'
       + '<div class="frow">' + row(rows[1]) + '</div>'
@@ -1355,25 +1352,23 @@
     $('#filterBar').addEventListener('click', function (e) {
       var btn = e.target.closest('button');
       if (!btn) return;
-      if (btn.dataset.all) {
+      var axis = btn.dataset.axis;
+      var key = btn.dataset.key;
+      if (!axis || !state.sel[axis]) return;
+      var at = state.sel[axis].indexOf(key);
+      if (at >= 0) {
+        // Clicking a lit chip turns it off -- with no Everything chip, this
+        // and Clear all in the status bar are how a filter is taken back off.
+        state.sel[axis].splice(at, 1);
+      } else if (axis === DEPT_AXIS) {
+        // A department replaces everything, including another department.
         AXES.forEach(function (a) { state.sel[a] = []; });
+        state.sel[axis] = [key];
       } else {
-        var axis = btn.dataset.axis;
-        var key = btn.dataset.key;
-        if (!axis || !state.sel[axis]) return;
-        var at = state.sel[axis].indexOf(key);
-        if (at >= 0) {
-          state.sel[axis].splice(at, 1);
-        } else if (axis === DEPT_AXIS) {
-          // A department replaces everything, including another department.
-          AXES.forEach(function (a) { state.sel[a] = []; });
-          state.sel[axis] = [key];
-        } else {
-          // And anything else lets the department go, rather than quietly
-          // subtracting from it.
-          state.sel[DEPT_AXIS] = [];
-          state.sel[axis].push(key);
-        }
+        // And anything else lets the department go, rather than quietly
+        // subtracting from it.
+        state.sel[DEPT_AXIS] = [];
+        state.sel[axis].push(key);
       }
       savePrefs();
       renderAll();
