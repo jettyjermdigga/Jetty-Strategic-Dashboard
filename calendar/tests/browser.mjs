@@ -334,11 +334,13 @@ await t('hands out one stable link', async () =>
   (await page.locator('#feedUrl').textContent()).includes('token=' + 'a'.repeat(64)));
 await t('warns that nothing ticked means all of it', async () =>
   (await page.locator('.sub-scope.warn').textContent()).includes('every email and SMS'));
+// Counted off the taxonomy rather than written out, so adding a sub-type or a
+// department is not a test failure.
 await t('offers every axis to choose from', async () =>
-  (await page.locator('.sync-opt[data-param="dept"]').count()) === 11
-  && (await page.locator('.sync-opt[data-param="kind"]').count()) === 2
-  && (await page.locator('.sync-opt[data-param="sub"]').count()) === 10
-  && (await page.locator('.sync-opt[data-param="status"]').count()) === 3);
+  (await page.locator('.sync-opt[data-param="dept"]').count()) === TAXONOMY.departments.length
+  && (await page.locator('.sync-opt[data-param="kind"]').count()) === TAXONOMY.eventTypes.length
+  && (await page.locator('.sync-opt[data-param="sub"]').count()) === TAXONOMY.subTypes.length
+  && (await page.locator('.sync-opt[data-param="status"]').count()) === TAXONOMY.statuses.length);
 await t('saves a choice without a Save button', async () => {
   await page.locator('.sync-opt[data-param="dept"][value="box-truck"]').check();
   await page.waitForFunction(() => !document.querySelector('.sub-scope.warn'));

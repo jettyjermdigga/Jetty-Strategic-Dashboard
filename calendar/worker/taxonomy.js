@@ -69,6 +69,7 @@ export const SUB_TYPES = [
   { key: 'promotion',   label: 'Promotion',   department: 'marketing' },
   { key: 'email',       label: 'Email',       department: 'marketing' },
   { key: 'sms',         label: 'SMS',         department: 'marketing' },
+  { key: 'social',      label: 'Social',      department: 'marketing' },
   { key: 'photo-video', label: 'Photo/Video', department: 'marketing' },
   { key: 'collab',      label: 'Collab',      department: 'marketing' },
   { key: 'ambassador',  label: 'Ambassador',  department: 'marketing' },
