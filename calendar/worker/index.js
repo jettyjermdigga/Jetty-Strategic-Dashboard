@@ -158,7 +158,7 @@ function clean(v, max) {
   return s.slice(0, max || 500);
 }
 
-// Turns whatever the form or import posted into a row we are willing to store,
+// Turns whatever the form posted into a row we are willing to store,
 // or an explanation of why we are not.
 function normalise(input, existing) {
   const base = existing || {};
@@ -330,98 +330,12 @@ async function listItems(db, from, to) {
   return (res.results || []).map(withRetail);
 }
 
-function parseCsv(text) {
-  // Minimal RFC 4180 reader: handles quoted fields, embedded commas, doubled
-  // quotes and CRLF. Enough for a spreadsheet paste, which is all this takes.
-  const rows = [];
-  let row = [];
-  let field = '';
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (quoted) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; } else { quoted = false; }
-      } else field += ch;
-    } else if (ch === '"') {
-      quoted = true;
-    } else if (ch === ',') {
-      row.push(field); field = '';
-    } else if (ch === '\n') {
-      row.push(field); field = '';
-      rows.push(row); row = [];
-    } else if (ch !== '\r') {
-      field += ch;
-    }
-  }
-  if (field || row.length) { row.push(field); rows.push(row); }
-  return rows.filter((r) => r.some((c) => c.trim() !== ''));
-}
-
-// Headers as they actually appear on the Jetty sheets, alongside plainer
-// spellings. Year / Week / Start (Week) / End (Week) / Month / Day are listed so
-// an import can check them against the date rather than silently ignore them.
-const IMPORT_ALIASES = {
-  'name': 'title', 'title': 'title', 'event name': 'title', 'event': 'title',
-  'booked': 'status', 'status': 'status',
-  'event type': 'event_type', 'event types': 'event_type', 'kind': 'event_type',
-  'departments': 'departments', 'department': 'departments', 'tags': 'departments',
-  'primary department': 'department',
-  'vehicle': 'vehicles', 'vehicles': 'vehicles',
-  'staff': 'staff_count', 'staff needed': 'staff_count', 'staff needed (#)': 'staff_count',
-  'sub-type': 'sub_types', 'sub type': 'sub_types', 'subtype': 'sub_types', 'sub-types': 'sub_types',
-  'need': 'needs', 'needs': 'needs',
-  'event \u{1F680}': 'start_date', 'start': 'start_date', 'start date': 'start_date', 'date': 'start_date',
-  'event \u{1F6D1}': 'end_date', 'end': 'end_date', 'end date': 'end_date',
-  'start \u{231A}': 'start_time', 'start time': 'start_time', 'event start time': 'start_time',
-  'end \u{231A}': 'end_time', 'end time': 'end_time', 'event end time': 'end_time',
-  'all day': 'all_day', 'allday': 'all_day',
-  'venue': 'venue', 'address': 'address', 'city': 'city', 'state': 'state', 'zip': 'zip',
-  'notes': 'notes', 'note': 'notes', 'url': 'url', 'link': 'url',
-  // Checked against the event date, never stored.
-  'year': '_year', 'week': '_week',
-  'start (week)': '_week_start', 'end (week)': '_week_end',
-  'month': '_month', 'day': '_day',
-  // The sheet's Type column is what Airtable calls Type: the sub-type. Category
-  // is read and discarded -- the axis it named no longer exists.
-  'type': 'sub_types', 'category': '_ignored',
-};
-
-const MONTH_ABBR = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
-                    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-const DOW_ABBR = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-
-// The sheet repeats facts that the event date already determines. Rather than
-// drop those columns on import, compare them -- a disagreement is a typo worth
-// naming, in the sheet or in the date.
-function retailMismatches(rec) {
-  const out = [];
-  const d = rec.start_date;
-  if (!d || !DATE_RE.test(d)) return out;
-  const r = retailWeek(d);
-  const parts = d.split('-').map(Number);
-  const utc = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
-  const check = (given, actual, label) => {
-    const g = String(given == null ? '' : given).trim();
-    if (g && g.toUpperCase() !== String(actual).toUpperCase()) {
-      out.push(label + ' says ' + g + ', but ' + d + ' is ' + actual);
-    }
-  };
-  check(rec._year, r.year, 'Year');
-  check(rec._week, r.week, 'Week');
-  check(rec._week_start, r.start, 'Start (Week)');
-  check(rec._week_end, r.end, 'End (Week)');
-  check(rec._month, MONTH_ABBR[utc.getUTCMonth()], 'Month');
-  check(rec._day, DOW_ABBR[utc.getUTCDay()], 'Day');
-  return out;
-}
-
 function slugify(v) {
   return String(v || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-// Import files are written by people, not machines: accept the label, the key
-// and the spelling the sheet actually uses.
+// Values reach us as people wrote them, not as keys: accept the label, the key
+// and the spelling the sheet used.
 function matchKey(list, raw) {
   const want = slugify(raw);
   if (!want) return null;
@@ -602,75 +516,6 @@ async function handleApi(request, env, url, who) {
     ).bind(id, ...COLS.map((c) => row[c]), who.email, now, who.email, now).run();
 
     return json({ item: withRetail({ id, ...row, created_by: who.email, created_at: now }) }, 201);
-  }
-
-  if (path === '/api/items/import' && method === 'POST') {
-    const denied = requireEditor(); if (denied) return denied;
-    const body = await request.json().catch(() => null);
-    if (!body) return json({ error: 'Expected a JSON body.' }, 400);
-
-    let records = [];
-    if (Array.isArray(body.items)) {
-      records = body.items;
-    } else if (typeof body.csv === 'string') {
-      const rows = parseCsv(body.csv);
-      if (rows.length < 2) return json({ error: 'The paste needs a header row and at least one item.' }, 400);
-      const header = rows[0].map((h) => IMPORT_ALIASES[h.trim().toLowerCase()] || null);
-      const unknown = rows[0].filter((h, i) => h.trim() && !header[i]);
-      records = rows.slice(1).map((cells) => {
-        const rec = {};
-        header.forEach((key, i) => {
-          if (!key || cells[i] == null || !cells[i].trim()) return;
-          const val = cells[i].trim();
-          // Type and Sub-type both feed the sub-type axis; a sheet can carry
-          // either or both, so join instead of letting the last column win.
-          rec[key] = (key === 'sub_types' && rec[key]) ? rec[key] + ',' + val : val;
-        });
-        return rec;
-      });
-      if (!records.length) return json({ error: 'No item rows found. Unrecognised columns: ' + (unknown.join(', ') || 'none') + '.' }, 400);
-    } else {
-      return json({ error: 'Send either { csv } or { items }.' }, 400);
-    }
-
-    // A year of a company calendar is legitimately ~600 rows -- the 2026 backfill
-    // alone is 587 -- so the cap has to clear a full year or it bites every January.
-    if (records.length > 2000) return json({ error: 'Import is capped at 2000 items per paste.' }, 400);
-
-    // Validate everything before writing anything -- a half-applied import is
-    // worse than a rejected one, because you cannot tell what landed.
-    const rows = [];
-    const problems = [];
-    const warnings = [];
-    records.forEach((rec, i) => {
-      const coerced = coerceKeys({ ...rec });
-      const { row, errors } = normalise(coerced, null);
-      if (errors.length) {
-        problems.push('Row ' + (i + 2) + ': ' + errors.join(' '));
-        return;
-      }
-      // Not fatal: the item is fine, the sheet's own derived columns are not.
-      retailMismatches({ ...coerced, start_date: row.start_date })
-        .forEach((m) => warnings.push('Row ' + (i + 2) + ': ' + m));
-      rows.push(row);
-    });
-    if (problems.length) return json({ error: 'Nothing was imported.', problems: problems.slice(0, 25) }, 400);
-
-    const now = new Date().toISOString();
-    const stmt = db.prepare(
-      'INSERT INTO items (id,' + COLS.join(',') + ',created_by,created_at,updated_by,updated_at) '
-      + 'VALUES (?' + ',?'.repeat(COLS.length + 4) + ')',
-    );
-    // D1 caps how many bound statements one batch may carry, so write in chunks.
-    // Validation already passed for every row, so a chunk cannot fail on bad data.
-    const BATCH = 200;
-    for (let i = 0; i < rows.length; i += BATCH) {
-      await db.batch(rows.slice(i, i + BATCH).map((row) => stmt.bind(
-        crypto.randomUUID(), ...COLS.map((c) => row[c]), who.email, now, who.email, now,
-      )));
-    }
-
-    return json({ imported: rows.length, warnings: warnings.slice(0, 40) }, 201);
   }
 
   // Your own calendar sync: the link, and what it carries. Never anybody

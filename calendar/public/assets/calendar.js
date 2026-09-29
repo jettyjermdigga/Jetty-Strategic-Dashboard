@@ -1115,29 +1115,168 @@
     box.scrollIntoView({ block: 'nearest' });
   }
 
-  function showImport() {
-    var body = '<div class="form-err" id="formErr" hidden></div>'
-      + '<p class="modal-lede">Paste rows straight out of the calendar spreadsheet, saved as CSV. '
-      + 'The first row must be the column headers. Everything is checked before anything is '
-      + 'written &mdash; if one row is wrong, nothing is imported.</p>'
-      + '<div class="fld"><label>Columns it recognises</label>'
-      + '<div class="sub-url">Name, Booked, Event Type, Department, Sub-type, Needs, '
-      + 'Vehicles, Event \u{1F680}, Event \u{1F6D1}, Start ⌚, End ⌚, Venue, Address, City, '
-      + 'State, Zip, Notes, URL</div>'
-      + '<div class="hint">Only <strong>Name</strong>, <strong>Department</strong> and a '
-      + '<strong>start date</strong> are required. A Department column may list several; '
-      + 'the first one that owns events becomes the primary. Year, Week, Start (Week), End (Week), Month and '
-      + 'Day are read if present and checked against the date, but not stored &mdash; the calendar '
-      + 'works them out. Dates are YYYY-MM-DD, times are HH:MM on a 24-hour clock.</div></div>'
-      + '<div class="fld"><label for="f-csv">CSV</label>'
-      + '<textarea id="f-csv" style="min-height:190px;font-family:var(--mono);font-size:12px" '
-      + 'placeholder="Name,Booked,Type,Event Type,Event \u{1F680},Start ⌚,End ⌚,Venue,City,State&#10;'
-      + 'Rocking the Docks,checked,Event,Box Truck,2026-07-11,12:00,18:00,Dock Road,Beach Haven,NJ"></textarea></div>';
+  // ── export ─────────────────────────────────────────────────────────────
+
+  // The chips are the filter. Whatever is on screen is what leaves in the file,
+  // so there is no second filtering language to learn and no way for the export
+  // to disagree with the calendar it was taken from.
+  //
+  // This exists for partners -- Sunnyside pulling a slice into their own
+  // systems -- so the columns carry labels rather than internal keys, and the
+  // file is plain CSV every spreadsheet and ad platform already reads.
+  var EXPORT_RANGES = [
+    { key: 'all',   label: 'Every date in the calendar' },
+    { key: 'year',  label: 'This year' },
+    { key: 'month', label: 'The month on screen' },
+    { key: 'ahead', label: 'From today onwards' },
+  ];
+
+  function exportWindow(key) {
+    var c = state.cursor;
+    if (key === 'month') {
+      return { from: ymd(new Date(c.getFullYear(), c.getMonth(), 1)),
+               to:   ymd(new Date(c.getFullYear(), c.getMonth() + 1, 0)) };
+    }
+    if (key === 'year') {
+      return { from: c.getFullYear() + '-01-01', to: c.getFullYear() + '-12-31' };
+    }
+    if (key === 'ahead') return { from: todayYmd(), to: '' };
+    return { from: '', to: '' };
+  }
+
+  // An event counts as inside the window when it overlaps it, not when it
+  // starts in it -- the same rule the month grid uses, so a festival already
+  // running on the first of the month is not silently dropped.
+  function exportRows(rangeKey) {
+    var w = exportWindow(rangeKey);
+    return visible().filter(function (it) {
+      if (w.from && it.end_date < w.from) return false;
+      if (w.to && it.start_date > w.to) return false;
+      return true;
+    });
+  }
+
+  var EXPORT_COLS = [
+    ['Name',               function (it) { return it.title; }],
+    ['Status',             function (it) { return it.status; }],
+    ['Event Type',         function (it) { return labelIn(tax('eventTypes'), it.event_type); }],
+    ['Department',         function (it) { return it.department ? deptLabel(it.department) : ''; }],
+    ['Also Involved',      function (it) { return extraDeptsOf(it).map(deptLabel).join('; '); }],
+    ['Sub-types',          function (it) {
+      return subsOf(it).map(function (k) { return labelIn(tax('subTypes'), k); }).join('; '); }],
+    ['Needs',              function (it) {
+      return needsOf(it).map(function (k) { return labelIn(tax('needs'), k); }).join('; '); }],
+    ['Staff Needed',       function (it) { return it.staff_count || ''; }],
+    ['Vehicles',           function (it) {
+      return vehiclesOf(it).map(function (k) { return labelIn(tax('vehicles'), k); }).join('; '); }],
+    ['Start Date',         function (it) { return it.start_date; }],
+    ['End Date',           function (it) { return it.end_date; }],
+    ['All Day',            function (it) { return it.all_day ? 'Yes' : 'No'; }],
+    ['Start Time',         function (it) { return it.all_day ? '' : hhmm(it.start_time); }],
+    ['End Time',           function (it) { return it.all_day ? '' : hhmm(it.end_time); }],
+    ['Venue',              function (it) { return it.venue; }],
+    ['Address',            function (it) { return it.address; }],
+    ['City',               function (it) { return it.city; }],
+    ['State',              function (it) { return it.state; }],
+    ['Zip',                function (it) { return it.zip; }],
+    ['Retail Year',        function (it) { return it.retail ? it.retail.year : ''; }],
+    ['Retail Week',        function (it) { return it.retail ? it.retail.week : ''; }],
+    ['Notes',              function (it) { return it.notes; }],
+    ['URL',                function (it) { return it.url; }],
+    ['Attachments',        function (it) { return it.attachment_count || 0; }],
+  ];
+
+  // A cell opening with = + - @ is a formula to Excel and Sheets, not text, and
+  // this file is going to somebody outside the company. Quote it so it is read
+  // as what it says.
+  function csvCell(v) {
+    var s = v == null ? '' : String(v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return /["\n\r,]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function exportCsv(rows) {
+    var lines = [EXPORT_COLS.map(function (c) { return csvCell(c[0]); }).join(',')];
+    rows.forEach(function (it) {
+      lines.push(EXPORT_COLS.map(function (c) { return csvCell(c[1](it)); }).join(','));
+    });
+    // The BOM is what makes Excel read this as UTF-8 rather than mangling an
+    // accented venue name.
+    return '﻿' + lines.join('\r\n') + '\r\n';
+  }
+
+  function exportName(rangeKey) {
+    var bits = ['jetty-calendar'];
+    AXES.forEach(function (axis) {
+      state.sel[axis].forEach(function (key) {
+        bits.push(slug(selLabel(axis, key)));
+      });
+    });
+    if (rangeKey !== 'all') bits.push(rangeKey);
+    bits.push(todayYmd());
+    return bits.join('-') + '.csv';
+  }
+
+  function slug(v) {
+    return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  }
+
+  function download(name, text) {
+    var url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Freed on the next tick -- revoking it straight away races the download in
+    // some browsers and produces an empty file.
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function exportScopeText() {
+    var active = [];
+    AXES.forEach(function (axis) {
+      state.sel[axis].forEach(function (key) { active.push(selLabel(axis, key)); });
+    });
+    return active.length
+      ? 'Filtered to <strong>' + esc(active.join(' + ')) + '</strong>.'
+      : 'No filters are on, so this is the whole calendar. '
+        + 'Set the chips first if the partner only needs a slice.';
+  }
+
+  function renderExportCounts() {
+    var picked = $('input[name="xrange"]:checked');
+    var key = picked ? picked.value : 'all';
+    var el = $('#xCount');
+    if (!el) return;
+    var n = exportRows(key).length;
+    el.textContent = n === 1 ? '1 event' : n + ' events';
+    var btn = $('#xGo');
+    if (btn) btn.disabled = !n;
+  }
+
+  function showExport() {
+    var body = '<p class="modal-lede">' + exportScopeText() + ' '
+      + 'The file is CSV — one row per event, with the same labels the calendar '
+      + 'shows. Nothing leaves the building until you send it.</p>'
+      + '<div class="fld"><label>Dates</label><div class="chk-grid">'
+      + EXPORT_RANGES.map(function (r, i) {
+          return '<label class="fld-inline"><input type="radio" name="xrange" value="'
+            + r.key + '"' + (i ? '' : ' checked') + '> ' + esc(r.label) + '</label>';
+        }).join('')
+      + '</div></div>'
+      + '<div class="fld"><label>What comes out<span class="lbl-note" id="xCount">—</span></label>'
+      + '<div class="sub-url">' + EXPORT_COLS.map(function (c) { return esc(c[0]); }).join(', ')
+      + '</div></div>';
     var foot = '<div class="grow"></div>'
       + '<button class="cal-btn" data-act="close">Cancel</button>'
-      + '<button class="cal-btn primary" data-act="import">Import</button>';
-    openModal('Import events', body, foot);
-    $('#f-csv').focus();
+      + '<button class="cal-btn primary" id="xGo" data-act="export">Download CSV</button>';
+    openModal('Export events', body, foot);
+    // Assigned, not added: #modalBody outlives every modal opened in it, so
+    // addEventListener would stack a handler per open.
+    $('#modalBody').onchange = renderExportCounts;
+    renderExportCounts();
   }
 
   // Calendar sync is a setting, not a snapshot of the chips. The chips change
@@ -1344,7 +1483,7 @@
     $('#addBtn').addEventListener('click', function () {
       showForm(null, null);
     });
-    $('#importBtn').addEventListener('click', showImport);
+    $('#exportBtn').addEventListener('click', showExport);
 
     // One handler for every chip: each carries the axis it belongs to and the
     // value it selects, so there are no special cases and a new chip is a line
@@ -1486,25 +1625,11 @@
         return;
       }
 
-      if (act === 'import') {
-        var csv = $('#f-csv').value.trim();
-        if (!csv) return formError('Paste some rows first.');
-        b.disabled = true;
-        api('/api/items/import', { method: 'POST', body: JSON.stringify({ csv: csv }) })
-          .then(function (r) {
-            closeModal();
-            return loadItems().then(function () {
-              var msg = 'Imported ' + r.imported + (r.imported === 1 ? ' event.' : ' events.');
-              if (r.warnings && r.warnings.length) {
-                msg += '\n\nThe sheet disagrees with itself on ' + r.warnings.length
-                  + (r.warnings.length === 1 ? ' row' : ' rows')
-                  + '. The events are in; these columns were ignored:\n\n'
-                  + r.warnings.slice(0, 12).join('\n');
-              }
-              alert(msg);
-            });
-          })
-          .catch(function (err) { b.disabled = false; formError(err.message, err.problems); });
+      if (act === 'export') {
+        var picked = $('input[name="xrange"]:checked');
+        var key = picked ? picked.value : 'all';
+        download(exportName(key), exportCsv(exportRows(key)));
+        closeModal();
       }
     });
   }
@@ -1523,7 +1648,6 @@
       if (state.me.canEdit) {
         document.body.classList.add('can-edit');
         $('#addBtn').hidden = false;
-        $('#importBtn').hidden = false;
       }
       wire();
       return loadItems();

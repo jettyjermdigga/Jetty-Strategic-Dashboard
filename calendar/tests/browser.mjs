@@ -227,6 +227,53 @@ await t('moves a month at a time', async () => {
   return a === 'October 2026';
 });
 
+console.log('the export');
+// Reads the file the browser actually wrote, not the string that built it --
+// the BOM, the quoting and the line endings are the part a partner's importer
+// trips over.
+const grabCsv = async () => {
+  const [dl] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('#xGo').click(),
+  ]);
+  return fs.readFileSync(await dl.path(), 'utf8');
+};
+const csvRows = (text) => text.replace(/^﻿/, '').split('\r\n').filter(Boolean);
+
+await t('replaces Import in the header', async () =>
+  (await page.locator('#exportBtn').count()) === 1
+  && (await page.locator('#importBtn').count()) === 0);
+await page.locator('#exportBtn').click();
+await t('says how many events will come out', async () =>
+  (await page.locator('#xCount').textContent()) === ITEMS.length + ' events');
+await t('says the whole calendar is going when nothing is filtered', async () =>
+  (await page.locator('.modal-lede').textContent()).includes('whole calendar'));
+
+let csv = await grabCsv();
+await t('writes a header and one row per event', async () =>
+  csvRows(csv).length === ITEMS.length + 1);
+await t('leads with the columns a partner reads', async () =>
+  csvRows(csv)[0].startsWith('Name,Status,Event Type,Department'));
+await t('carries labels, not internal keys', async () =>
+  csv.includes('Box Truck') && csv.includes('Promotion') && !csv.includes('box-truck'));
+await t('is UTF-8 for Excel', async () => csv.startsWith('﻿'));
+
+await page.locator('.fchip[data-axis="depts"][data-key="marketing"]').click();
+await page.locator('#exportBtn').click();
+await t('exports only what the chips left on screen', async () =>
+  (await page.locator('#xCount').textContent()) === '2 events');
+await t('names the filter in the file name', async () => {
+  const [dl] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('#xGo').click(),
+  ]);
+  const name = dl.suggestedFilename();
+  csv = fs.readFileSync(await dl.path(), 'utf8');
+  return name.includes('marketing') && name.endsWith('.csv');
+});
+await t('and the rows agree with the count', async () => csvRows(csv).length === 3);
+await clearAll();
+
 console.log('adding an event');
 await page.locator('#addBtn').click();
 await t('opens on the kind question, with a trail', async () =>
