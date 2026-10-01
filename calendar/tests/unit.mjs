@@ -15,7 +15,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const root = (p) => path.join(HERE, '..', p);
 
 import { sqlStatements } from '../worker/sql.js';
-import { planMigration } from '../worker/migrate.js';
+import { planMigration, mergeEmailSms, mergeFeedFilters } from '../worker/migrate.js';
 import { buildIcs } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
 import {
@@ -103,7 +103,7 @@ describe('planMigration', () => {
   it('drops the retired sub-types and keeps the rest', () => {
     eq(planMigration({ event_types: 'jrf', sub_types: 'event,meeting,blog-post,seasonal' }).sub_types,
        null);
-    eq(planMigration({ event_types: 'marketing', sub_types: 'email,sms' }).sub_types, 'email,sms');
+    eq(planMigration({ event_types: 'marketing', sub_types: 'email,sms' }).sub_types, 'email-sms');
   });
   it('flags a primary it had to guess', () => {
     eq(planMigration({ event_types: 'jrf' }).guessedPrimary, false);
@@ -112,6 +112,40 @@ describe('planMigration', () => {
   it('is pure, so running it twice gives the same answer', () => {
     const row = { event_types: 'wholesale,jetty-ink,marketing', sub_types: 'tradeshow' };
     eq(planMigration(row), planMigration(row));
+  });
+});
+
+describe('merging Email and SMS', () => {
+  it('folds either one into the merged key', () => {
+    eq(mergeEmailSms('email'), 'email-sms');
+    eq(mergeEmailSms('sms'), 'email-sms');
+  });
+  it('does not leave two copies on an item that had both', () => {
+    eq(mergeEmailSms('email,sms'), 'email-sms');
+  });
+  it('leaves the other sub-types alone, in order', () => {
+    eq(mergeEmailSms('promotion,sms,website'), 'promotion,email-sms,website');
+  });
+  it('is idempotent, so a second run changes nothing', () => {
+    eq(mergeEmailSms(mergeEmailSms('email,sms,promotion')), mergeEmailSms('email,sms,promotion'));
+    eq(mergeEmailSms('email-sms'), 'email-sms');
+  });
+  it('gives null for an item with no sub-type', () => {
+    eq(mergeEmailSms(''), null);
+    eq(mergeEmailSms(null), null);
+  });
+
+  it('rewrites a calendar sync that asked for the old keys', () => {
+    eq(mergeFeedFilters('{"sub":["email","sms"],"dept":["marketing"]}'),
+       '{"sub":["email-sms"],"dept":["marketing"]}');
+  });
+  it('leaves a sync that never mentioned them untouched', () => {
+    eq(mergeFeedFilters('{"sub":["tradeshow"]}'), null);
+    eq(mergeFeedFilters('{"dept":["jrf"]}'), null);
+    eq(mergeFeedFilters(''), null);
+  });
+  it('survives a filters column that is not JSON', () => {
+    eq(mergeFeedFilters('not json at all'), null);
   });
 });
 

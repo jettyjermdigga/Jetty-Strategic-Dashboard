@@ -67,8 +67,11 @@ export const SUB_TYPES = [
   { key: 'tradeshow',   label: 'Tradeshow',   department: 'wholesale' },
   { key: 'campaign',    label: 'Campaign',    department: 'marketing' },
   { key: 'promotion',   label: 'Promotion',   department: 'marketing' },
-  { key: 'email',       label: 'Email',       department: 'marketing' },
-  { key: 'sms',         label: 'SMS',         department: 'marketing' },
+  // One axis value, not two. The same products, categories, SKUs and
+  // promotions go out on both -- they are staggered across the week, which is
+  // scheduling, not a difference in what the item is about.
+  { key: 'email-sms',   label: 'Email/SMS',   department: 'marketing',
+    sheetValues: ['Email', 'SMS', 'Email/SMS', 'Email / SMS'] },
   { key: 'social',      label: 'Social',      department: 'marketing' },
   { key: 'photo-video', label: 'Photo/Video', department: 'marketing' },
   { key: 'collab',      label: 'Collab',      department: 'marketing' },

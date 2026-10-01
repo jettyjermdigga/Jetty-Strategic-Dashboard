@@ -48,7 +48,14 @@ export function planMigration(row) {
   // which department is likelier to own an event it shares.
   depts.sort((a, b) => PRIMACY.indexOf(a) - PRIMACY.indexOf(b));
 
-  const subs = splitList(row.sub_types).filter((k) => SUB_TYPE_KEYS.includes(k));
+  // Old rows still spell these 'email' and 'sms'; fold them before checking
+  // the key is real, or a row that never reached the second migration would
+  // lose its sub-type instead of gaining the merged one.
+  const subs = [];
+  for (const raw of splitList(row.sub_types)) {
+    const k = MERGED_EMAIL_SMS[raw] || raw;
+    if (SUB_TYPE_KEYS.includes(k) && !subs.includes(k)) subs.push(k);
+  }
 
   const needs = [];
   const vehicles = [];
@@ -69,4 +76,38 @@ export function planMigration(row) {
     vehicles: vehicles.length ? vehicles.join(',') : null,
     guessedPrimary: depts.length > 1,
   };
+}
+
+// Email and SMS were two sub-types saying the same thing: the same products,
+// categories, SKUs and promotions, staggered onto different days of the same
+// week. They are one value now.
+//
+// Pure and idempotent on purpose -- 'email-sms' maps to itself, so a second
+// pass over an already-migrated row is a no-op rather than a duplicate.
+export const MERGED_EMAIL_SMS = { email: 'email-sms', sms: 'email-sms', 'email-sms': 'email-sms' };
+
+export function mergeEmailSms(subTypes) {
+  const out = [];
+  for (const raw of splitList(subTypes)) {
+    const key = MERGED_EMAIL_SMS[raw] || raw;
+    if (!out.includes(key)) out.push(key);
+  }
+  return out.length ? out.join(',') : null;
+}
+
+// The same merge over a saved calendar-sync selection, which is JSON rather
+// than a comma list. Returns null when nothing changed, so a feed row that
+// never mentioned either is left alone.
+export function mergeFeedFilters(filtersJson) {
+  let parsed;
+  try { parsed = JSON.parse(filtersJson || '{}'); } catch (e) { return null; }
+  if (!parsed || !Array.isArray(parsed.sub)) return null;
+  const before = parsed.sub.join(',');
+  const after = [];
+  for (const raw of parsed.sub) {
+    const key = MERGED_EMAIL_SMS[raw] || raw;
+    if (!after.includes(key)) after.push(key);
+  }
+  if (after.join(',') === before) return null;
+  return JSON.stringify({ ...parsed, sub: after });
 }

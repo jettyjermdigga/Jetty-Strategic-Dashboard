@@ -68,12 +68,27 @@
     } catch (e) { /* storage unavailable; the calendar still works */ }
   }
 
+  // Every key the taxonomy still recognises on an axis. Saved selections are
+  // checked against this: when a value is merged away or renamed -- Email and
+  // SMS becoming Email/SMS -- a browser that remembers the old key would
+  // otherwise come back to a calendar filtered to nothing, with a chip lit for
+  // a category that no longer exists.
+  function axisKeys(axis) {
+    if (axis === 'kinds') return tax('eventTypes').map(function (x) { return x.key; });
+    if (axis === 'subs') return tax('subTypes').map(function (x) { return x.key; });
+    if (axis === 'vehicles') return tax('vehicles').map(function (x) { return x.key; });
+    if (axis === 'stats') return tax('statuses').slice();
+    return tax('departments').map(function (x) { return x.key; }).concat([NO_DEPT]);
+  }
+
   function applyPrefs() {
     var p = readPrefs();
     if (!p) return;
     AXES.forEach(function (axis) {
       var saved = p.sel && p.sel[axis];
-      if (Array.isArray(saved)) state.sel[axis] = saved.slice();
+      if (!Array.isArray(saved)) return;
+      var known = axisKeys(axis);
+      state.sel[axis] = saved.filter(function (k) { return known.indexOf(k) >= 0; });
     });
   }
 
@@ -1340,7 +1355,7 @@
       + (any
           ? ''
           : '<p class="sub-scope warn"><strong>Nothing ticked means everything</strong> &mdash; all '
-            + state.items.length + ' events, including every email and SMS send. That is a lot to '
+            + state.items.length + ' events, including every Email/SMS send. That is a lot to '
             + 'put in a personal calendar. Tick the departments you work in.</p>')
       + '<p class="hint">Nothing ticked in a section means that section does not narrow anything. '
       + 'Ticking Box Truck and Meetings gives you both.</p>'

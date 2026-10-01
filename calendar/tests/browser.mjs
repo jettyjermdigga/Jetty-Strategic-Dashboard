@@ -32,9 +32,20 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 const ev = (o) => Object.assign({
   event_type: 'events-marketing', department: 'jrf', departments: '', sub_types: '',
   needs: '', staff_count: '', vehicles: '', status: 'Booked',
-  start_date: '2026-09-08', end_date: '2026-09-08', all_day: 1, start_time: '', end_time: '',
+  start_date: dayThis(8), end_date: dayThis(8), all_day: 1, start_time: '', end_time: '',
   venue: '', address: '', city: '', state: '', zip: '', notes: '', url: '', attachment_count: 0,
 }, o);
+
+// The calendar opens on the month containing today, so the fixture has to live
+// there too -- dates written out in full went stale the moment that month
+// passed, and the whole suite failed on a calendar that was working fine.
+const NOW = new Date();
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+                     'August', 'September', 'October', 'November', 'December'];
+const pad2 = (n) => String(n).padStart(2, '0');
+const dayThis = (d) => NOW.getFullYear() + '-' + pad2(NOW.getMonth() + 1) + '-' + pad2(d);
+const nextMonth = new Date(NOW.getFullYear(), NOW.getMonth() + 1, 1);
+const NEXT_MONTH_LABEL = MONTH_NAMES[nextMonth.getMonth()] + ' ' + nextMonth.getFullYear();
 
 // One per day: a month cell shows three chips and then "+N more".
 const ITEMS = [
@@ -42,21 +53,21 @@ const ITEMS = [
        departments: 'box-truck', vehicles: 'box-truck', attachment_count: 1 }),
   ev({ id: '22222222-2222-4222-8222-222222222222', title: 'LB Spring Sale',
        department: 'long-branch-store', departments: 'marketing', sub_types: 'promotion',
-       status: 'Pending', start_date: '2026-09-10', end_date: '2026-09-10' }),
+       status: 'Pending', start_date: dayThis(10), end_date: dayThis(10) }),
   ev({ id: '33333333-3333-4333-8333-333333333333', title: 'Fall Email',
-       department: 'marketing', sub_types: 'email',
-       start_date: '2026-09-14', end_date: '2026-09-14' }),
+       department: 'marketing', sub_types: 'email-sms',
+       start_date: dayThis(14), end_date: dayThis(14) }),
   ev({ id: '44444444-4444-4444-8444-444444444444', title: 'Buy Plan Meeting',
        event_type: 'meetings-deadlines', department: '',
-       start_date: '2026-09-17', end_date: '2026-09-17' }),
+       start_date: dayThis(17), end_date: dayThis(17) }),
   ev({ id: '55555555-5555-4555-8555-555555555555', title: 'Surf Expo',
        department: 'wholesale', departments: 'jetty-ink', sub_types: 'tradeshow',
-       vehicles: 'ink-van', start_date: '2026-09-22', end_date: '2026-09-22' }),
+       vehicles: 'ink-van', start_date: dayThis(22), end_date: dayThis(22) }),
 ];
 
 const ATTACHMENTS = [{
   id: 'aaaaaaaa-1111-4111-8111-111111111111', name: 'permit.pdf', size: 20480,
-  uploaded_by: 'jeremy@jettylife.com', uploaded_at: '2026-09-01T10:00:00Z',
+  uploaded_by: 'jeremy@jettylife.com', uploaded_at: dayThis(1) + 'T10:00:00Z',
 }];
 
 const seen = { posted: null, patched: null, uploads: [], deleted: [], savedFilters: null, resets: 0 };
@@ -182,7 +193,7 @@ await t('lists what the filter found', async () => {
   return l.length === 1 && l[0].includes('Surf Expo');
 });
 await t('lets a department go when another axis is picked', async () => {
-  await page.locator('.fchip[data-key="email"]').click();
+  await page.locator('.fchip[data-key="email-sms"]').click();
   return (await chip('Wholesale').getAttribute('aria-pressed')) === 'false';
 });
 await t('drops everything else when a department is picked', async () => {
@@ -200,7 +211,7 @@ await t('finds the events with no department at all', async () => {
 });
 await t('names every active filter, removably', async () => {
   await clearAll();
-  await page.locator('.fchip[data-key="email"]').click();
+  await page.locator('.fchip[data-key="email-sms"]').click();
   await page.locator('.fchip[data-key="Pending"]').click();
   const toks = await page.locator('.fs-tok').allTextContents();
   return toks.length === 2;
@@ -224,7 +235,7 @@ await t('moves a month at a time', async () => {
   await page.locator('#next').click();
   const a = (await page.locator('#period').textContent()).trim();
   await page.locator('#prev').click();
-  return a === 'October 2026';
+  return a === NEXT_MONTH_LABEL;
 });
 
 console.log('the export');
@@ -298,7 +309,7 @@ await page.locator('.f-extra[value="marketing"]').check();
 await page.locator('button[data-act="next"]').click();
 await t('offers sub-types from every department on the event', async () => {
   const vals = await page.locator('.f-sub').evaluateAll((els) => els.map((e) => e.value));
-  return vals.includes('email') && !vals.includes('tradeshow');
+  return vals.includes('email-sms') && !vals.includes('tradeshow');
 });
 await page.locator('button[data-act="next"]').click();
 await t('derives the retail week on screen', async () =>
@@ -380,7 +391,7 @@ await page.waitForSelector('#syncBox .sub-url');
 await t('hands out one stable link', async () =>
   (await page.locator('#feedUrl').textContent()).includes('token=' + 'a'.repeat(64)));
 await t('warns that nothing ticked means all of it', async () =>
-  (await page.locator('.sub-scope.warn').textContent()).includes('every email and SMS'));
+  (await page.locator('.sub-scope.warn').textContent()).includes('every Email/SMS send'));
 // Counted off the taxonomy rather than written out, so adding a sub-type or a
 // department is not a test failure.
 await t('offers every axis to choose from', async () =>
