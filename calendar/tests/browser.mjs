@@ -432,6 +432,60 @@ await t('tags the row image with the highlight it illustrates, and the file with
   return img.slot === seen.posted.products[0].id && !doc.slot;
 });
 
+console.log('a social post');
+await page.locator('#addBtn').click();
+await page.locator('.f-kind[value="social"]').check();
+await t('drops the venue, vehicle and needs questions', async () =>
+  (await page.locator('.trail-n').textContent()).includes('of 7'));
+
+// Walk to the social step the way a person would, picking a department when
+// asked. The sub-type step appears only once a department owns the event, so
+// the number of steps is not known in advance.
+const next = () => page.locator('button[data-act="next"]').click();
+await next();
+await page.locator('#f-title').fill('Sunset Reel');
+await t('never asks for a venue or a vehicle on the way', async () => {
+  for (let i = 0; i < 9; i++) {
+    if (await page.locator('#f-venue').isVisible()) return false;
+    if (await page.locator('#f-caption').isVisible()) return true;
+    if ((await page.locator('#deptPick').isVisible())
+        && !(await page.locator('.f-dept:checked').count())) {
+      await page.locator('.f-dept[value="marketing"]').check();
+    }
+    if (!(await page.locator('button[data-act="next"]').count())) break;
+    await next();
+  }
+  return false;
+});
+await t('asks the questions a post actually has', async () =>
+  (await page.locator('.f-stype').count()) === 4
+  && (await page.locator('.f-chan').count()) === 6
+  && (await page.locator('#f-pillar option').count()) === 9   // 8 pillars + the blank
+  && (await page.locator('.f-prod').count()) === 5);
+await t('keeps production state apart from Status', async () =>
+  (await page.locator('.step[data-step="social"] .step-q.sub').textContent())
+    .includes('not whether it is happening'));
+await page.locator('.f-stype[value="reel"]').check();
+await page.locator('.f-chan[value="instagram"]').check();
+await page.locator('.f-chan[value="tiktok"]').check();
+await page.locator('#f-pillar').selectOption('sea');
+await page.locator('#f-caption').fill('Golden hour at the jetty');
+await page.locator('#f-tags').fill('#TheJettyLife @someone');
+await page.locator('.f-prod[value="needs-caption"]').check();
+await next();                                   // past social, onto when
+await next();                                   // past when, onto final
+await page.locator('button[data-act="save"]').click();
+await page.waitForFunction(() => document.querySelector('#modal').hidden);
+await t('posts every social axis', async () => {
+  const p = seen.posted;
+  return p.event_type === 'social' && p.social_type === 'reel'
+    && JSON.stringify(p.channels) === '["instagram","tiktok"]'
+    && p.pillar === 'sea' && JSON.stringify(p.production) === '["needs-caption"]'
+    && p.caption === 'Golden hour at the jetty' && p.tags === '#TheJettyLife @someone';
+});
+await t('has a Social chip of its own on the filter bar', async () =>
+  (await page.locator('.fchip[data-axis="kinds"][data-key="social"]').count()) === 1);
+
 console.log('a meeting');
 await page.locator('#addBtn').click();
 await page.locator('.f-kind[value="meetings-deadlines"]').check();

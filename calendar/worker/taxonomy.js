@@ -37,6 +37,55 @@ export const EVENT_TYPES = [
     note: 'Anything that happens in the world, and the marketing around it.' },
   { key: 'meetings-deadlines', label: 'Meetings & Deadlines',
     note: 'Internal. Asks for far less -- who, when, and nothing more.' },
+  // Its own kind rather than a Marketing sub-type: a post carries a different
+  // set of facts from an event -- channel, caption, production state -- and
+  // there are more of them than everything else on the calendar put together.
+  { key: 'social', label: 'Social',
+    note: 'A post, story or reel. Asks about channel, caption and assets instead of a venue.' },
+];
+
+// Only ever one of these on a post.
+export const SOCIAL_TYPES = [
+  { key: 'post',     label: 'Post' },
+  { key: 'carousel', label: 'Carousel' },
+  { key: 'story',    label: 'Story' },
+  { key: 'reel',     label: 'Reel' },
+];
+
+// Where it goes out. Several at once is normal -- the same cut runs on
+// Instagram and Facebook.
+export const CHANNELS = [
+  { key: 'instagram', label: 'Instagram' },
+  { key: 'facebook',  label: 'Facebook' },
+  { key: 'linkedin',  label: 'LinkedIn' },
+  { key: 'tiktok',    label: 'TikTok' },
+  { key: 'youtube',   label: 'YouTube' },
+  { key: 'blog',      label: 'Blog' },
+];
+
+// What the post is about, as the MKG Comms sheet's Category column already
+// used them -- minus LinkedIn, which was a channel filed in with the subjects.
+export const PILLARS = [
+  { key: 'community',   label: 'Community',   sheetValues: ['COMMUNITY'] },
+  { key: 'buzz',        label: 'Buzz',        sheetValues: ['BUZZ'] },
+  { key: 'environment', label: 'Environment', sheetValues: ['ENVIRONMENT'] },
+  { key: 'product',     label: 'Product',     sheetValues: ['Product'] },
+  { key: 'sea',         label: 'Sea',         sheetValues: ['SEA'] },
+  { key: 'land',        label: 'Land',        sheetValues: ['LAND'] },
+  { key: 'ink',         label: 'Ink',         sheetValues: ['INK'] },
+  { key: 'everything-else', label: 'Everything Else', sheetValues: ['EVERYTHING ELSE'] },
+];
+
+// How far along the work is -- which is not the same question as whether the
+// post is happening. "Needs Caption" is about the asset; Booked is about the
+// date. Several at once, as the sheet already recorded them.
+export const PRODUCTION = [
+  { key: 'pending-review',   label: 'Pending Review' },
+  { key: 'needs-caption',    label: 'Needs Caption' },
+  { key: 'missing-assets',   label: 'Missing Assets' },
+  { key: 'needs-scheduling', label: 'Approved \u2014 Needs Scheduling',
+    sheetValues: ['Approved, Needs Scheduling'] },
+  { key: 'scheduled',        label: 'Scheduled' },
 ];
 
 export const DEPARTMENTS = [
@@ -84,7 +133,6 @@ export const SUB_TYPES = [
   // scheduling, not a difference in what the item is about.
   { key: 'email-sms',   label: 'Email/SMS',   department: 'marketing',
     sheetValues: ['Email', 'SMS', 'Email/SMS', 'Email / SMS'] },
-  { key: 'social',      label: 'Social',      department: 'marketing' },
   { key: 'photo-video', label: 'Photo/Video', department: 'marketing' },
   { key: 'collab',      label: 'Collab',      department: 'marketing' },
   { key: 'ambassador',  label: 'Ambassador',  department: 'marketing' },
@@ -123,6 +171,10 @@ export const RETAIL_EPOCH_YEAR = 2026;
 export const EVENT_TYPE_KEYS = EVENT_TYPES.map((e) => e.key);
 export const DEPARTMENT_KEYS = DEPARTMENTS.map((d) => d.key);
 export const DIVISION_KEYS = DIVISIONS.map((d) => d.key);
+export const SOCIAL_TYPE_KEYS = SOCIAL_TYPES.map((x) => x.key);
+export const CHANNEL_KEYS = CHANNELS.map((x) => x.key);
+export const PILLAR_KEYS = PILLARS.map((x) => x.key);
+export const PRODUCTION_KEYS = PRODUCTION.map((x) => x.key);
 export const SUB_TYPE_KEYS = SUB_TYPES.map((s) => s.key);
 export const NEED_KEYS = NEEDS.map((n) => n.key);
 export const VEHICLE_KEYS = VEHICLES.map((v) => v.key);
@@ -144,6 +196,10 @@ export const TAXONOMY = {
   eventTypes: EVENT_TYPES,
   departments: DEPARTMENTS,
   divisions: DIVISIONS,
+  socialTypes: SOCIAL_TYPES,
+  channels: CHANNELS,
+  pillars: PILLARS,
+  production: PRODUCTION,
   subTypes: SUB_TYPES,
   needs: NEEDS,
   vehicles: VEHICLES,

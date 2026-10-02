@@ -118,3 +118,16 @@ export function mergeFeedFilters(filtersJson) {
   if (after.join(',') === before) return null;
   return JSON.stringify({ ...parsed, sub: after });
 }
+
+// Social stopped being a Marketing sub-type and became an event type of its own.
+// Pure and idempotent: a row already carrying event_type 'social' and no social
+// sub-type comes back unchanged.
+export function promoteSocial(row) {
+  const subs = splitList(row.sub_types);
+  if (!subs.includes('social')) return null;
+  const kept = subs.filter((k) => k !== 'social');
+  return {
+    event_type: 'social',
+    sub_types: kept.length ? kept.join(',') : null,
+  };
+}

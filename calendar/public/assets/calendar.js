@@ -349,9 +349,10 @@
     // no way to tell "nothing is tagged Finance" from "Finance is broken".
     depts.push({ axis: 'depts', key: NO_DEPT, label: 'Unassigned' });
 
-    var meetings = tax('eventTypes')
-      .filter(function (e) { return e.key === 'meetings-deadlines'; })
-      .map(function (e) { return { axis: 'kinds', key: e.key, label: 'Meetings' }; });
+    var kinds = [
+      { axis: 'kinds', key: 'meetings-deadlines', label: 'Meetings' },
+      { axis: 'kinds', key: 'social', label: 'Social' },
+    ];
 
     var vehicles = tax('vehicles').map(function (v) {
       return { axis: 'vehicles', key: v.key, label: v.label, icon: VEHICLE_ICONS[v.key] };
@@ -374,7 +375,7 @@
     return [
       depts.filter(function (d) { return d.key !== 'marketing'; }),
       [].concat(marketingDept, marketing),
-      [].concat(meetings, [null], vehicles, [null], pending),
+      [].concat(kinds, [null], vehicles, [null], pending),
     ];
   }
 
@@ -781,6 +782,12 @@
       + esc(it.status) + '</span>');
     if (r) add('Retail week', 'Week ' + r.week + ' of ' + r.year + ' <span class="muted">('
       + esc(weekRangeLabel(r)) + ')</span>');
+    add('Shape', it.social_type ? esc(labelIn(tax('socialTypes'), it.social_type)) : '');
+    add('Channels', chips(listOf(it, 'channels'), tax('channels'), false));
+    add('About', it.pillar ? esc(labelIn(tax('pillars'), it.pillar)) : '');
+    add('Work', chips(listOf(it, 'production'), tax('production'), false));
+    add('Caption', it.caption ? '<span class="det-notes">' + esc(it.caption) + '</span>' : '');
+    add('Tags', esc(it.tags || ''));
     add('Needs', chips(needsOf(it), tax('needs'), false)
       + (it.staff_count ? ' <span class="muted">' + esc(it.staff_count) + ' staff</span>' : ''));
     add('Vehicles', chips(vehiclesOf(it), tax('vehicles'), false));
@@ -1031,6 +1038,49 @@
       + sect('subs', 'What kind of item is it for them?', 'optional',
           '<div class="chk-grid" id="subPick"></div>')
 
+      // Social asks an entirely different set of questions from an event, so it
+      // gets a step of its own rather than more optional boxes bolted onto
+      // "Anything else?". Everything here is cleared on save for a kind that
+      // never showed it.
+      + sect('social', 'What is the post?', '',
+          '<div class="fld"><label>Shape</label><div class="chk-grid">'
+          + tax('socialTypes').map(function (x) {
+              return '<label class="fld-inline"><input type="radio" name="f-stype" class="f-stype" '
+                + 'value="' + esc(x.key) + '"' + (x.key === it.social_type ? ' checked' : '') + '>'
+                + esc(x.label) + '</label>';
+            }).join('')
+          + '</div></div>'
+          + '<div class="fld"><label>Channels <span class="lbl-note">one or several</span></label>'
+          + '<div class="chk-grid">'
+          + tax('channels').map(function (x) {
+              return '<label class="fld-inline"><input type="checkbox" class="f-chan" value="'
+                + esc(x.key) + '"' + (listOf(it, 'channels').indexOf(x.key) >= 0 ? ' checked' : '')
+                + '>' + esc(x.label) + '</label>';
+            }).join('')
+          + '</div></div>'
+          + '<div class="fld"><label for="f-pillar">What is it about? <span class="lbl-note">optional</span></label>'
+          + '<select id="f-pillar"><option value="">\u2014</option>'
+          + tax('pillars').map(function (x) {
+              return '<option value="' + esc(x.key) + '"'
+                + (x.key === it.pillar ? ' selected' : '') + '>' + esc(x.label) + '</option>';
+            }).join('')
+          + '</select></div>'
+          + '<div class="fld"><label for="f-caption">Caption</label>'
+          + '<textarea id="f-caption" maxlength="4000" placeholder="The copy that goes out.">'
+          + esc(it.caption || '') + '</textarea></div>'
+          + '<div class="fld"><label for="f-tags">Tags and handles <span class="lbl-note">optional</span></label>'
+          + '<input type="text" id="f-tags" maxlength="500" value="' + esc(it.tags || '')
+          + '" placeholder="#TheJettyLife @someone"></div>'
+          + '<h4 class="step-q sub">Where the work stands '
+          + '<span class="lbl-note">not whether it is happening \u2014 that is Status</span></h4>'
+          + '<div class="chk-grid">'
+          + tax('production').map(function (x) {
+              return '<label class="fld-inline"><input type="checkbox" class="f-prod" value="'
+                + esc(x.key) + '"' + (listOf(it, 'production').indexOf(x.key) >= 0 ? ' checked' : '')
+                + '>' + esc(x.label) + '</label>';
+            }).join('')
+          + '</div>')
+
       + sect('when', 'When is it?', '',
           '<div class="fld-row">'
           + '<div class="fld"><label for="f-start">Starts</label>'
@@ -1152,6 +1202,13 @@
       if (kind() === 'meetings-deadlines') return ['kind', 'title', 'dept', 'when', 'final'];
       var out = ['kind', 'title', 'dept', 'extra'];
       if (subsAvailable().length) out.push('subs');
+      // A post happens online: no venue, no van, no extra staff. It keeps its
+      // sub-types, because a Collab post really is a collab, and it keeps the
+      // product highlights, which is half of why a product post exists.
+      if (kind() === 'social') {
+        out.push('social', 'when', 'final');
+        return out;
+      }
       out.push('when', 'where', 'needs', 'final');
       return out;
     }
@@ -1584,6 +1641,12 @@
       all_day: allDay ? 1 : 0,
       start_time: allDay ? '' : $('#f-stime').value,
       end_time: allDay ? '' : $('#f-etime').value,
+      social_type: one('.f-stype:checked'),
+      channels: vals('.f-chan:checked'),
+      pillar: $('#f-pillar') ? $('#f-pillar').value : '',
+      production: vals('.f-prod:checked'),
+      caption: $('#f-caption') ? $('#f-caption').value : '',
+      tags: $('#f-tags') ? $('#f-tags').value : '',
       venue: $('#f-venue') ? $('#f-venue').value : '',
       address: $('#f-address') ? $('#f-address').value : '',
       city: $('#f-city') ? $('#f-city').value : '',
@@ -1673,6 +1736,16 @@
     ['Retail Week',        function (it) { return it.retail ? it.retail.week : ''; }],
     ['Notes',              function (it) { return it.notes; }],
     ['URL',                function (it) { return it.url; }],
+    ['Shape',              function (it) { return labelIn(tax('socialTypes'), it.social_type); }],
+    ['Channels',           function (it) {
+      return listOf(it, 'channels').map(function (k) {
+        return labelIn(tax('channels'), k); }).join('; '); }],
+    ['About',              function (it) { return labelIn(tax('pillars'), it.pillar); }],
+    ['Work',               function (it) {
+      return listOf(it, 'production').map(function (k) {
+        return labelIn(tax('production'), k); }).join('; '); }],
+    ['Caption',            function (it) { return it.caption; }],
+    ['Tags',               function (it) { return it.tags; }],
     ['Product Highlights', function (it) {
       return productsOf(it).map(productLine).join('; '); }],
     ['Product Links',      function (it) {

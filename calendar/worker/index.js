@@ -10,12 +10,13 @@
 
 import { identify } from './access.js';
 import { buildIcs } from './ics.js';
+import { SOCIAL_TYPE_KEYS, CHANNEL_KEYS, PILLAR_KEYS, PRODUCTION_KEYS } from './taxonomy.js';
 import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, DEPARTMENTS, DEPARTMENT_KEYS,
          SUB_TYPES, SUB_TYPE_KEYS, NEEDS, NEED_KEYS, VEHICLES, VEHICLE_KEYS,
          STATUSES, PRIMACY } from './taxonomy.js';
 import { retailWeek, retailWeekStart } from './retail.js';
 import { sqlStatements } from './sql.js';
-import { planMigration, mergeSubTypes, mergeFeedFilters } from './migrate.js';
+import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial } from './migrate.js';
 import { normaliseProducts } from './products.js';
 import { commentMessage, dmMentions, displayName, eventUrl,
          fetchSlackPeople, slackHint } from './slack.js';
@@ -76,6 +77,8 @@ let schemaReady = false;
 const ADDED_COLUMNS = [
   'event_type TEXT', 'department TEXT', 'departments TEXT',
   'staff_count TEXT', 'vehicles TEXT', 'products TEXT',
+  'social_type TEXT', 'channels TEXT', 'pillar TEXT', 'production TEXT',
+  'caption TEXT', 'tags TEXT',
 ];
 
 // Same idea, on the attachments table.
@@ -101,6 +104,7 @@ async function ensureSchema(db) {
   }
   await migrateToDecisionTree(db);
   await migrateSubTypeMerges(db);
+  await migrateSocialKind(db);
   schemaReady = true;
 }
 
@@ -197,6 +201,51 @@ async function migrateSubTypeMerges(db) {
   await db.prepare(
     'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
     .bind(SUB_MERGE_KEY, JSON.stringify({ items: batch.length, feeds: feedBatch.length }),
+          new Date().toISOString()).run();
+}
+
+// One-time: anything tagged with the old Social sub-type becomes an event of
+// kind Social. Guarded by meta, and safe to re-run -- a row that has already
+// moved no longer carries the sub-type, so it is not selected a second time.
+const SOCIAL_KIND_KEY = 'social-event-type-2026-10';
+
+async function migrateSocialKind(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?')
+    .bind(SOCIAL_KIND_KEY).first();
+  if (done) return;
+
+  const res = await db.prepare(
+    "SELECT id, sub_types FROM items WHERE sub_types LIKE '%social%'").all();
+  const stmt = db.prepare('UPDATE items SET event_type = ?, sub_types = ? WHERE id = ?');
+  const batch = [];
+  for (const row of res.results || []) {
+    const next = promoteSocial(row);
+    if (next) batch.push(stmt.bind(next.event_type, next.sub_types, row.id));
+  }
+  const BATCH = 200;
+  for (let i = 0; i < batch.length; i += BATCH) {
+    await db.batch(batch.slice(i, i + BATCH));
+  }
+
+  // A saved calendar sync asking for the Social sub-type would otherwise go
+  // quiet, since nothing carries that sub-type any more.
+  const feeds = await db.prepare('SELECT token, filters FROM feeds').all();
+  const feedStmt = db.prepare('UPDATE feeds SET filters = ? WHERE token = ?');
+  const feedBatch = [];
+  for (const f of feeds.results || []) {
+    let parsed;
+    try { parsed = JSON.parse(f.filters || '{}'); } catch (e) { continue; }
+    if (!parsed || !Array.isArray(parsed.sub) || !parsed.sub.includes('social')) continue;
+    const sub = parsed.sub.filter((k) => k !== 'social');
+    const kind = Array.isArray(parsed.kind) ? parsed.kind.slice() : [];
+    if (!kind.includes('social')) kind.push('social');
+    feedBatch.push(feedStmt.bind(JSON.stringify({ ...parsed, sub, kind }), f.token));
+  }
+  if (feedBatch.length) await db.batch(feedBatch);
+
+  await db.prepare(
+    'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(SOCIAL_KIND_KEY, JSON.stringify({ items: batch.length, feeds: feedBatch.length }),
           new Date().toISOString()).run();
 }
 
@@ -340,11 +389,28 @@ function normalise(input, existing) {
   out.url = clean(pick('url'), 500);
   if (out.url && !/^https?:\/\//i.test(out.url)) errors.push('Link must start with http:// or https://.');
 
+  // The social axes. Kept out of the way of the event ones rather than
+  // overloading them: a channel is not a venue and a production state is not a
+  // status, however similar they look from a distance.
+  out.social_type = one('social_type', SOCIAL_TYPE_KEYS, 'social type');
+  const channels = multi('channels', CHANNEL_KEYS, 'channel');
+  out.channels = channels.length ? channels.join(',') : null;
+  out.pillar = one('pillar', PILLAR_KEYS, 'content pillar');
+  const production = multi('production', PRODUCTION_KEYS, 'production state');
+  out.production = production.length ? production.join(',') : null;
+  out.caption = clean(pick('caption'), 4000);
+  out.tags = clean(pick('tags'), 500);
+
   const prod = normaliseProducts(pick('products'));
   out.products = prod.products;
   for (const e of prod.errors) errors.push(e);
 
   if (isMeeting) for (const k of MEETING_BLANKS) out[k] = null;
+  // A post has no venue and takes no van; everything else has no caption. Each
+  // form clears what it never showed, so what is stored matches what the person
+  // who saved it was actually looking at.
+  if (out.event_type === 'social') for (const k of SOCIAL_BLANKS) out[k] = null;
+  else for (const k of SOCIAL_ONLY) out[k] = null;
 
   return { row: out, errors };
 }
@@ -353,6 +419,7 @@ const COLS = [
   'title', 'event_type', 'department', 'departments', 'sub_types', 'needs', 'staff_count',
   'vehicles', 'status', 'start_date', 'end_date', 'all_day', 'start_time', 'end_time',
   'venue', 'address', 'city', 'state', 'zip', 'notes', 'url', 'products',
+  'social_type', 'channels', 'pillar', 'production', 'caption', 'tags',
 ];
 
 // Meetings and deadlines take the short form: who, when, and nothing else. The
@@ -360,6 +427,13 @@ const COLS = [
 // what the form showed the person who saved it.
 const MEETING_BLANKS = ['sub_types', 'needs', 'staff_count', 'vehicles',
                         'venue', 'address', 'city', 'state', 'zip', 'products'];
+
+// A post happens online. It keeps its sub-types -- a Collab or an Ambassador
+// post really is one -- and its product highlights, which is half the point of
+// a product post.
+const SOCIAL_BLANKS = ['needs', 'staff_count', 'vehicles',
+                       'venue', 'address', 'city', 'state', 'zip'];
+const SOCIAL_ONLY = ['social_type', 'channels', 'pillar', 'production', 'caption', 'tags'];
 
 // Year / Week / Start (Week) / End (Week) / Month / Day are not stored; they are
 // attached here so every reader sees the same values.

@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS items (
   zip         TEXT,
   notes       TEXT,
   url         TEXT,
+  social_type TEXT,                       -- post | carousel | story | reel
+  channels    TEXT,                       -- comma-separated channel keys
+  pillar      TEXT,                       -- what the post is about; one of PILLARS
+  production  TEXT,                       -- comma-separated production states. How far
+                                          -- along the work is, NOT whether it is happening
+  caption     TEXT,                       -- the copy that goes out, not the internal note
+  tags        TEXT,                       -- hashtags and @handles, as typed
   products    TEXT,                       -- JSON list of product highlights:
                                           -- id, division, category, sku, url. See
                                           -- worker/products.js. An example image is an

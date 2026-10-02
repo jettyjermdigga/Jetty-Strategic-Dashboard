@@ -15,7 +15,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const root = (p) => path.join(HERE, '..', p);
 
 import { sqlStatements } from '../worker/sql.js';
-import { planMigration, mergeSubTypes, mergeFeedFilters, SUB_TYPE_MERGES } from '../worker/migrate.js';
+import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
+         SUB_TYPE_MERGES } from '../worker/migrate.js';
 import { normaliseProducts, readProducts, MAX_PRODUCTS } from '../worker/products.js';
 import { commentMessage, displayName, dmMentions, escapeSlack, eventUrl, eventWhen,
          slackHint } from '../worker/slack.js';
@@ -23,7 +24,7 @@ import { buildIcs } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
 import {
   DEPARTMENTS, DEPARTMENT_KEYS, DIVISIONS, EVENT_TYPE_KEYS, SUB_TYPES, NEEDS, VEHICLES,
-  STATUSES, PRIMACY, RETAIL_EPOCH,
+  STATUSES, PRIMACY, RETAIL_EPOCH, SOCIAL_TYPES, CHANNELS, PILLARS, PRODUCTION,
 } from '../worker/taxonomy.js';
 
 let failed = 0;
@@ -331,6 +332,51 @@ describe('the Slack mention', () => {
   });
 });
 
+describe('social becoming its own kind', () => {
+  it('moves a row off the sub-type and onto the event type', () => {
+    eq(promoteSocial({ sub_types: 'social' }), { event_type: 'social', sub_types: null });
+  });
+  it('keeps the sub-types that still mean something', () => {
+    eq(promoteSocial({ sub_types: 'social,collab' }),
+       { event_type: 'social', sub_types: 'collab' });
+  });
+  it('leaves a row that was never social alone', () => {
+    eq(promoteSocial({ sub_types: 'collab' }), null);
+    eq(promoteSocial({ sub_types: '' }), null);
+    eq(promoteSocial({}), null);
+  });
+  it('is idempotent -- a row that already moved is not selected again', () => {
+    const once = promoteSocial({ sub_types: 'social,collab' });
+    eq(promoteSocial({ sub_types: once.sub_types }), null);
+  });
+  it('is no longer offered as a Marketing sub-type', () => {
+    ok(!SUB_TYPES.some((s) => s.key === 'social'));
+  });
+});
+
+describe('the social axes', () => {
+  it('offers the four shapes a post takes', () => {
+    eq(SOCIAL_TYPES.map((x) => x.key), ['post', 'carousel', 'story', 'reel']);
+  });
+  it('offers every channel, Blog included', () => {
+    eq(CHANNELS.map((x) => x.key),
+       ['instagram', 'facebook', 'linkedin', 'tiktok', 'youtube', 'blog']);
+  });
+  it('carries the pillars the MKG Comms sheet already used', () => {
+    for (const want of ['COMMUNITY', 'BUZZ', 'ENVIRONMENT', 'SEA', 'LAND', 'EVERYTHING ELSE']) {
+      ok(PILLARS.some((p) => (p.sheetValues || []).includes(want)), want + ' has nowhere to land');
+    }
+  });
+  it('keeps production state apart from whether it is happening', () => {
+    for (const p of PRODUCTION) ok(!STATUSES.includes(p.label), p.label + ' collides with a status');
+  });
+  it('gives every axis unique keys', () => {
+    for (const list of [SOCIAL_TYPES, CHANNELS, PILLARS, PRODUCTION]) {
+      eq(new Set(list.map((x) => x.key)).size, list.length);
+    }
+  });
+});
+
 // ── the taxonomy ─────────────────────────────────────────────────────────
 
 describe('taxonomy', () => {
@@ -361,8 +407,8 @@ describe('taxonomy', () => {
     // They were scoped once, and a Flagship event could not record one at all.
     for (const n of NEEDS) ok(!n.department, n.key + ' is scoped again');
   });
-  it('keeps the two Event Types the form branches on', () => {
-    eq([...EVENT_TYPE_KEYS].sort(), ['events-marketing', 'meetings-deadlines']);
+  it('keeps the three Event Types the form branches on', () => {
+    eq([...EVENT_TYPE_KEYS].sort(), ['events-marketing', 'meetings-deadlines', 'social']);
   });
   it('keeps Cancelled, which the ICS feed and the strikethrough rely on', () => {
     eq(STATUSES, ['Booked', 'Pending', 'Cancelled']);
