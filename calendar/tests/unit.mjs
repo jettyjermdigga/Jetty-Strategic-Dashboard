@@ -20,11 +20,13 @@ import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial, splitKin
 import { normaliseProducts, readProducts, MAX_PRODUCTS } from '../worker/products.js';
 import { commentMessage, displayName, dmMentions, escapeSlack, eventUrl, eventWhen,
          slackHint } from '../worker/slack.js';
+import SOCIAL_BACKFILL from '../backfill/social.json' with { type: 'json' };
 import { buildIcs } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
 import {
   DEPARTMENTS, DEPARTMENT_KEYS, DIVISIONS, EVENT_TYPE_KEYS, SUB_TYPES, NEEDS, VEHICLES,
   STATUSES, PRIMACY, RETAIL_EPOCH, SOCIAL_TYPES, CHANNELS, PILLARS, PRODUCTION,
+  SUB_TYPE_KEYS, SOCIAL_TYPE_KEYS, CHANNEL_KEYS, PILLAR_KEYS, PRODUCTION_KEYS,
 } from '../worker/taxonomy.js';
 
 let failed = 0;
@@ -403,6 +405,67 @@ describe('the social axes', () => {
     for (const list of [SOCIAL_TYPES, CHANNELS, PILLARS, PRODUCTION]) {
       eq(new Set(list.map((x) => x.key)).size, list.length);
     }
+  });
+});
+
+// The backfill goes into the database without passing through normalise(), so
+// what the build script produced is checked here instead. A bad key would be
+// stored and then fail to render, which is a much worse way to find out.
+describe('the MKG Comms social backfill', () => {
+  const keys = (list) => list.map((x) => x.key);
+  const split = (v) => (v ? String(v).split(',').filter(Boolean) : []);
+
+  it('is a non-empty list', () => {
+    ok(Array.isArray(SOCIAL_BACKFILL) && SOCIAL_BACKFILL.length > 0);
+  });
+  it('gives every row its own id', () => {
+    const ids = SOCIAL_BACKFILL.map((r) => r.id);
+    eq(new Set(ids).size, ids.length, 'two rows share an id');
+    for (const id of ids) ok(/^[0-9a-f-]{36}$/.test(id), id + ' is not a uuid');
+  });
+  it('gives every row the things the table will not take null for', () => {
+    for (const r of SOCIAL_BACKFILL) {
+      ok(r.title && r.title.length <= 200, 'bad title: ' + JSON.stringify(r.title));
+      ok(/^\d{4}-\d{2}-\d{2}$/.test(r.start_date), 'bad start: ' + r.start_date);
+      ok(/^\d{4}-\d{2}-\d{2}$/.test(r.end_date), 'bad end: ' + r.end_date);
+      ok(STATUSES.includes(r.status), 'bad status: ' + r.status);
+      eq(r.event_type, 'social');
+    }
+  });
+  it('is all 2026 or later, as asked', () => {
+    for (const r of SOCIAL_BACKFILL) ok(r.start_date >= '2026-01-01', r.start_date);
+  });
+  it('uses only keys the taxonomy knows', () => {
+    for (const r of SOCIAL_BACKFILL) {
+      if (r.department) ok(DEPARTMENT_KEYS.includes(r.department), 'dept ' + r.department);
+      for (const d of split(r.departments)) ok(DEPARTMENT_KEYS.includes(d), 'dept ' + d);
+      for (const k of split(r.sub_types)) ok(SUB_TYPE_KEYS.includes(k), 'sub-type ' + k);
+      if (r.social_type) ok(SOCIAL_TYPE_KEYS.includes(r.social_type), 'shape ' + r.social_type);
+      for (const k of split(r.channels)) ok(CHANNEL_KEYS.includes(k), 'channel ' + k);
+      if (r.pillar) ok(PILLAR_KEYS.includes(r.pillar), 'pillar ' + r.pillar);
+      for (const k of split(r.production)) ok(PRODUCTION_KEYS.includes(k), 'production ' + k);
+    }
+  });
+  it('never repeats the primary department among the others', () => {
+    for (const r of SOCIAL_BACKFILL) {
+      ok(!split(r.departments).includes(r.department), r.title + ' repeats its primary');
+    }
+  });
+  it('gives a timed post a time and an all-day one none', () => {
+    for (const r of SOCIAL_BACKFILL) {
+      if (r.all_day) ok(!r.start_time, r.title + ' is all day with a time');
+      else ok(/^\d{2}:\d{2}$/.test(r.start_time || ''), r.title + ' is timed with no time');
+    }
+  });
+  it('ends on the day it starts -- a post is not a span', () => {
+    for (const r of SOCIAL_BACKFILL) eq(r.end_date, r.start_date);
+  });
+  // Unused here, but the suite should fail if the lists stop lining up.
+  it('matches the taxonomy lists it was built against', () => {
+    eq(keys(SOCIAL_TYPES), SOCIAL_TYPE_KEYS);
+    eq(keys(CHANNELS), CHANNEL_KEYS);
+    eq(keys(PILLARS), PILLAR_KEYS);
+    eq(keys(PRODUCTION), PRODUCTION_KEYS);
   });
 });
 

@@ -216,13 +216,14 @@ await t('greys an event with no department rather than borrowing one', async () 
 
 console.log('filtering');
 await t('offers one chip per department, plus Unassigned', async () =>
-  (await page.locator('.fchip[data-axis="depts"]').count()) === 12);
+  (await page.locator('.fchip[data-axis="depts"]').count())
+    === TAXONOMY.departments.length + 1);
 await t('is four levels, each one named', async () => {
   const hints = await page.locator('.frow .fhint').allTextContents();
   return JSON.stringify(hints)
     === JSON.stringify(['Kind', 'Department', 'Marketing', 'Vehicle schedule']);
 });
-await t('fits all twelve departments on one line', async () => {
+await t('fits every department on one line', async () => {
   // The row the bar is sized around. If a department ever wraps onto a second
   // line the hierarchy stops reading as four levels, so this is a guard, not a
   // nicety -- it catches the next department or the next longer label.

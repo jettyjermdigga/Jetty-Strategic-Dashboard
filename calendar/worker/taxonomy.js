@@ -106,6 +106,13 @@ export const DEPARTMENTS = [
   { key: 'logistics',           label: 'Logistics',                color: '#1baf7a', colorDark: '#199e70' },
   { key: 'product-development', label: 'ProDev',                    color: '#c05fd6', colorDark: '#c05fd6',
     sheetValues: ['ProDev', 'Product Development'] },
+  // The women's line. Its own department on volume -- 207 of the social rows
+  // are Women's -- rather than folded into Marketing, where it could not be
+  // filtered for. #a8324f clears dE 17.5 against every other department under
+  // simulated protanopia, deuteranopia and tritanopia; the palette's own worst
+  // existing pair is 3.1, so this does not make it harder to read.
+  { key: 'womens', label: "Women's", color: '#a8324f', colorDark: '#d4687f',
+    sheetValues: ["Women's", 'Womens'] },
   { key: 'culture',             label: 'Culture',                  color: '#7d8a3c', colorDark: '#8b9645',
     sheetValues: ['Team Building / Culture / Building', 'Team Building / Culture', 'Team Building'] },
   { key: 'finance',             label: 'Finance',                  color: '#a34a8f', colorDark: '#c06aab' },
@@ -196,7 +203,7 @@ export function subTypesFor(dept) { return SUB_TYPES.filter((s) => s.department 
 // is one dropdown to fix, and every event it touched is listed in the commit.
 export const PRIMACY = [
   'jrf', 'box-truck', 'flagship-store', 'long-branch-store', 'wholesale',
-  'jetty-ink', 'culture', 'logistics', 'product-development', 'finance', 'marketing',
+  'jetty-ink', 'culture', 'logistics', 'product-development', 'womens', 'finance', 'marketing',
 ];
 
 export const TAXONOMY = {

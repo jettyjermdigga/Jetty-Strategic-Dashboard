@@ -22,6 +22,7 @@ import { normaliseProducts } from './products.js';
 import { commentMessage, dmMentions, displayName, eventUrl,
          fetchSlackPeople, slackHint } from './slack.js';
 import SCHEMA from './schema.sql';
+import SOCIAL_BACKFILL from '../backfill/social.json';
 
 // Shown instead of the calendar when a request arrives with no Cloudflare
 // Access identity. Self-contained on purpose: it has to render before any of
@@ -107,6 +108,7 @@ async function ensureSchema(db) {
   await migrateSubTypeMerges(db);
   await migrateSocialKind(db);
   await migrateKindSplit(db);
+  await backfillSocial(db);
   schemaReady = true;
 }
 
@@ -302,6 +304,43 @@ async function migrateKindSplit(db) {
     'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
     .bind(KIND_SPLIT_KEY, JSON.stringify({ ...counts, feeds: feedBatch.length }),
           new Date().toISOString()).run();
+}
+
+// The 2026 social calendar, out of the MKG Comms export. See
+// backfill/build_social.py for how the file was made and what was left out:
+// undated rows, 2025 and earlier, and rows that were blank in the sheet.
+//
+// Every row carries an id derived from its own content, so this is safe to run
+// twice by construction -- a second pass collides on the primary key and
+// changes nothing. The meta guard is there to save the work, not the data.
+const SOCIAL_BACKFILL_KEY = 'mkg-comms-social-2026';
+const BACKFILL_AUTHOR = 'mkg-comms-backfill';
+
+async function backfillSocial(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?')
+    .bind(SOCIAL_BACKFILL_KEY).first();
+  if (done) return;
+
+  const now = new Date().toISOString();
+  // Built off COLS so a column added later cannot quietly fall out of the
+  // backfill while the insert still succeeds.
+  const stmt = db.prepare(
+    'INSERT OR IGNORE INTO items (id,' + COLS.join(',')
+    + ',created_by,created_at,updated_by,updated_at) '
+    + 'VALUES (?' + ',?'.repeat(COLS.length + 4) + ')');
+
+  const rows = Array.isArray(SOCIAL_BACKFILL) ? SOCIAL_BACKFILL : [];
+  const BATCH = 100;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    await db.batch(rows.slice(i, i + BATCH).map((r) => stmt.bind(
+      r.id,
+      ...COLS.map((c) => (r[c] === undefined ? null : r[c])),
+      BACKFILL_AUTHOR, now, BACKFILL_AUTHOR, now,
+    )));
+  }
+
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(SOCIAL_BACKFILL_KEY, JSON.stringify({ rows: rows.length }), now).run();
 }
 
 const json = (body, status) => new Response(JSON.stringify(body), {
