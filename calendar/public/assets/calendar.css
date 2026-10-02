@@ -104,7 +104,33 @@
 
 /* ── Attachments ────────────────────────────────────────────────────────── */
 
-.att-box{border:1px solid var(--surface-alt);border-radius:8px;padding:12px 14px}
+.att-box{
+  border:1px solid var(--surface-alt);border-radius:8px;padding:12px 14px;
+  transition:border-color .12s,background .12s;
+}
+/* A dashed border only while something is being dragged over it -- a drop
+   target that always looks like one is noise on an event that has no files. */
+.att-box.drag{
+  border:1px dashed var(--primary);
+  background:color-mix(in srgb, var(--primary) 7%, transparent);
+}
+.att-box.drag *{pointer-events:none}
+
+.att-drop-note{font-size:12.5px;opacity:.6;margin-left:10px}
+
+.att-queue:not(:empty){display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.att-q{
+  display:inline-flex;align-items:center;gap:7px;
+  border:1px solid var(--surface-alt);border-radius:999px;padding:4px 6px 4px 11px;
+  font-size:12.5px;max-width:100%;
+}
+.att-qn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px}
+.att-qs{font-family:var(--mono);font-size:10.5px;opacity:.5}
+.att-qx{
+  border:0;background:transparent;color:inherit;cursor:pointer;
+  font-size:15px;line-height:1;opacity:.5;padding:0 2px;
+}
+.att-qx:hover{opacity:1;color:var(--danger, #c0392b)}
 .att-row{
   display:flex;align-items:center;gap:8px;
   padding:5px 0;font-family:var(--body);font-size:13.5px;

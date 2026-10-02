@@ -846,8 +846,10 @@
           + (existing
               ? '<div class="att-list" id="attList"></div>'
               : '<p class="hint" id="attPending">Files are attached once the event is saved.</p>')
+          + '<div class="att-queue" id="attQueue"></div>'
           + '<label class="att-pick"><input type="file" id="f-files" multiple>'
           + '<span>Choose files\u2026</span></label>'
+          + '<span class="att-drop-note">or drop them here</span>'
           + '<div class="hint">Up to 10 MB each. Everyone who can open the calendar can '
           + 'download them; only editors can add or remove.</div>'
           + '</div></div>');
@@ -1023,10 +1025,78 @@
       }).catch(function () {});
     }
 
+    // Files picked or dropped but not yet uploaded. The file input is the one
+    // source of truth -- the save path reads it -- so a drop writes into it via
+    // DataTransfer rather than keeping a second list that could disagree.
+    //
+    // Before this, choosing files gave no feedback at all: you picked three,
+    // the box looked exactly the same, and you found out what you had attached
+    // after saving.
+    function queued() {
+      var input = $('#f-files');
+      return input ? Array.prototype.slice.call(input.files) : [];
+    }
+
+    function setQueue(files) {
+      var input = $('#f-files');
+      if (!input || typeof DataTransfer === 'undefined') return false;
+      var dt = new DataTransfer();
+      files.forEach(function (f) { dt.items.add(f); });
+      input.files = dt.files;
+      paintQueue();
+      return true;
+    }
+
+    function paintQueue() {
+      var box = $('#attQueue');
+      if (!box) return;
+      var files = queued();
+      box.innerHTML = files.map(function (f, i) {
+        return '<span class="att-q"><span class="att-qn">' + esc(f.name) + '</span>'
+          + '<span class="att-qs">' + fileSize(f.size) + '</span>'
+          + '<button type="button" class="att-qx" data-q="' + i + '" '
+          + 'title="Do not attach this one">\u00d7</button></span>';
+      }).join('');
+    }
+
+    var dropBox = $('#attBox');
+    if (dropBox) {
+      ['dragenter', 'dragover'].forEach(function (ev) {
+        dropBox.addEventListener(ev, function (e) {
+          e.preventDefault();
+          dropBox.classList.add('drag');
+        });
+      });
+      ['dragleave', 'dragend'].forEach(function (ev) {
+        dropBox.addEventListener(ev, function (e) {
+          // Moving over a child fires dragleave on the box; only a pointer that
+          // has actually left it should drop the highlight.
+          if (e.target !== dropBox && dropBox.contains(e.relatedTarget)) return;
+          dropBox.classList.remove('drag');
+        });
+      });
+      dropBox.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropBox.classList.remove('drag');
+        var dropped = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || []);
+        if (!dropped.length) return;
+        if (!setQueue(queued().concat(dropped))) {
+          formError('This browser cannot take dropped files. Use "Choose files" instead.');
+        }
+      });
+    }
+
     // Assigned rather than added: #modalBody outlives the form, so
     // addEventListener stacks a fresh handler every time the form is opened.
     // Three opens meant one click on a remove button firing three deletes.
     $('#modalBody').onclick = function (e) {
+      var drop = e.target.closest('.att-qx');
+      if (drop) {
+        e.preventDefault();
+        var keep = queued().filter(function (f, i) { return i !== Number(drop.dataset.q); });
+        setQueue(keep);
+        return;
+      }
       var x = e.target.closest('.att-x');
       if (!x) return;
       e.preventDefault();
@@ -1049,6 +1119,7 @@
       if (e.target.classList.contains('f-need')) return paintStaff();
       if (e.target.id === 'f-allday') { $('#timeRow').hidden = e.target.checked; return; }
       if (e.target.id === 'f-start') return startChanged(e.target);
+      if (e.target.id === 'f-files') return paintQueue();
     };
 
     // Year / Week / Start (Week) / End (Week) / Month / Day are shown as they

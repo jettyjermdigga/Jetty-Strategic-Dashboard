@@ -332,7 +332,23 @@ await t('holds files until the event has been saved', async () =>
   await page.locator('#attPending').isVisible());
 await page.locator('#f-files').setInputFiles([
   { name: 'flyer.pdf', mimeType: 'application/pdf', buffer: Buffer.from('one') },
+  { name: 'wrong-one.pdf', mimeType: 'application/pdf', buffer: Buffer.from('two') },
 ]);
+await t('names the files waiting to go up', async () =>
+  (await page.locator('.att-q .att-qn').allTextContents()).join() === 'flyer.pdf,wrong-one.pdf');
+await t('takes one back off before it is uploaded', async () => {
+  await page.locator('.att-qx[data-q="1"]').click();
+  return (await page.locator('.att-q').count()) === 1
+    && (await page.locator('.att-qn').textContent()) === 'flyer.pdf';
+});
+await t('marks the box while something is dragged over it', async () => {
+  const fire = (type) => page.evaluate((t) => document.querySelector('#attBox')
+    .dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true })), type);
+  await fire('dragover');
+  const on = await page.locator('#attBox.drag').count();
+  await fire('dragleave');
+  return on === 1 && (await page.locator('#attBox.drag').count()) === 0;
+});
 await page.locator('button[data-act="save"]').click();
 await page.waitForFunction(() => document.querySelector('#modal').hidden);
 await t('posts the five axes and the staff count', async () =>
