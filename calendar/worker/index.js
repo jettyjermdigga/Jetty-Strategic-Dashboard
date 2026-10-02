@@ -497,7 +497,12 @@ const EMAIL_RE = /^[^@\s,]+@[^@\s,]+\.[^@\s,]+$/;
 // Long enough that a workspace change shows up the same day, far enough apart
 // that a busy calendar is not calling Slack on every page load.
 const ROSTER_TTL_MS = 6 * 60 * 60 * 1000;
-const ROSTER_KEY = 'slack-roster-refreshed';
+// A failed attempt backs off minutes, not hours. The long interval is for a
+// roster that is merely stale; applying it to a failure would mean a missing
+// scope caught on the first call locks the picker out for the rest of the day,
+// long after the scope was added.
+const ROSTER_RETRY_MS = 5 * 60 * 1000;
+const ROSTER_KEY = 'slack-roster-next';
 
 function cleanMentions(raw) {
   const list = Array.isArray(raw) ? raw : String(raw == null ? '' : raw).split(',');
@@ -553,14 +558,18 @@ async function listPeople(db) {
 // the last roster in place rather than emptying the picker.
 async function refreshRoster(env, db) {
   if (!env.SLACK_BOT_TOKEN) return;
+  // The stored value is when to try again, not when it last worked, so success
+  // and failure can set their own distance without a second row to read.
   const row = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(ROSTER_KEY).first();
-  const at = row ? Number(row.value) : 0;
-  if (Date.now() - at < ROSTER_TTL_MS) return;
+  if (row && Date.now() < Number(row.value)) return;
 
-  // Written before the call, not after: a failing token should back off for the
-  // full interval rather than retry on every single request.
-  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
-    .bind(ROSTER_KEY, String(Date.now()), new Date().toISOString()).run();
+  const setNext = (ms) => db.prepare(
+    'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(ROSTER_KEY, String(Date.now() + ms), new Date().toISOString()).run();
+
+  // Claimed before the call so a bad token is not retried on every page load,
+  // and short enough that fixing the token is not followed by a long wait.
+  await setNext(ROSTER_RETRY_MS);
 
   const people = await fetchSlackPeople(env.SLACK_BOT_TOKEN);
   if (!people.length) return;
@@ -574,6 +583,7 @@ async function refreshRoster(env, db) {
     await db.batch(people.slice(i, i + BATCH)
       .map((p) => stmt.bind(p.email, p.name, p.slack_id, now)));
   }
+  await setNext(ROSTER_TTL_MS);
 }
 
 // One feed per person, created the first time they open Subscribe. The token
