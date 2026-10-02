@@ -352,7 +352,8 @@
     });
 
     var depts = tax('departments').map(function (d) {
-      return { axis: 'depts', key: d.key, label: d.label, color: deptVar(d.key) };
+      // The short name where there is one -- see chipLabel in the taxonomy.
+      return { axis: 'depts', key: d.key, label: d.short || d.label, color: deptVar(d.key) };
     });
     // Without this there is no way to find an event that has no department, and
     // no way to tell "nothing is tagged Finance" from "Finance is broken".
@@ -439,7 +440,8 @@
     el.innerHTML = rows.map(function (r) {
       return '<div class="frow">'
         + '<span class="fhint">' + esc(r.label) + '</span>'
-        + row(r.chips) + '</div>';
+        + '<span class="fchips">' + row(r.chips) + '</span>'
+        + '</div>';
     }).join('');
   }
 

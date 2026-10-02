@@ -222,6 +222,19 @@ await t('is four levels, each one named', async () => {
   return JSON.stringify(hints)
     === JSON.stringify(['Kind', 'Department', 'Marketing', 'Vehicle schedule']);
 });
+await t('fits all twelve departments on one line', async () => {
+  // The row the bar is sized around. If a department ever wraps onto a second
+  // line the hierarchy stops reading as four levels, so this is a guard, not a
+  // nicety -- it catches the next department or the next longer label.
+  const tops = await page.locator('.fchip[data-axis="depts"]')
+    .evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top));
+  return new Set(tops.map(Math.round)).size === 1;
+});
+await t('starts every row of chips at the same x', async () => {
+  const lefts = await page.locator('.frow .fchips')
+    .evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left)));
+  return lefts.length === 4 && new Set(lefts).size === 1;
+});
 await t('leads with every kind, Events first', async () =>
   (await page.locator('.fchip[data-axis="kinds"]').count()) === 5
   && (await page.locator('.fchip[data-axis="kinds"]').first().textContent()).startsWith('Events'));
@@ -242,12 +255,12 @@ await t('keeps a level on when another level is picked', async () => {
     && (await page.locator('.fs-tok').count()) === 2;
 });
 await t('replaces the answer when a second chip on the same row is picked', async () => {
-  await chip('Flagship Store').click();
+  await chip('Flagship').click();
   return (await chip('Wholesale').getAttribute('aria-pressed')) === 'false'
     && (await page.locator('.fs-tok').count()) === 2;   // still Events + one department
 });
 await t('turns a level off when its lit chip is clicked again', async () => {
-  await chip('Flagship Store').click();
+  await chip('Flagship').click();
   await page.locator('.fchip[data-axis="kinds"][data-key="event"]').click();
   return (await page.locator('.flt-status').count()) === 0;
 });

@@ -92,10 +92,10 @@ export const PRODUCTION = [
 export const DEPARTMENTS = [
   { key: 'box-truck',           label: 'Box Truck',                color: '#0b7aa8', colorDark: '#2790bd',
     sheetValues: ['Box Truck', 'Box Truck & Events'] },
-  { key: 'flagship-store',      label: 'Flagship Store',           color: '#eb6834', colorDark: '#d95926' },
-  { key: 'long-branch-store',   label: 'Long Branch Store',        color: '#4a3aa7', colorDark: '#9085e9',
+  { key: 'flagship-store',      label: 'Flagship Store', short: 'Flagship',           color: '#eb6834', colorDark: '#d95926' },
+  { key: 'long-branch-store',   label: 'Long Branch Store', short: 'Long Branch',        color: '#4a3aa7', colorDark: '#9085e9',
     sheetValues: ['Long Branch'] },
-  { key: 'jrf',                 label: 'Jetty Rock Foundation',    color: '#008300', colorDark: '#008300',
+  { key: 'jrf',                 label: 'Jetty Rock Foundation', short: 'JRF',    color: '#008300', colorDark: '#008300',
     sheetValues: ['JRF', 'Jetty Rock Foundation (JRF)'] },
   { key: 'jetty-ink',           label: 'Jetty INK',                color: '#e34948', colorDark: '#e66767',
     sheetValues: ['INK'] },
@@ -171,6 +171,12 @@ export const RETAIL_EPOCH_YEAR = 2026;
 
 export const EVENT_TYPE_KEYS = EVENT_TYPES.map((e) => e.key);
 export const DEPARTMENT_KEYS = DEPARTMENTS.map((d) => d.key);
+// What the filter bar calls a department. Twelve chips have to share one row
+// for the hierarchy to read as four levels, and "Jetty Rock Foundation" alone
+// was 188px of it. Everywhere a department is read rather than clicked -- the
+// form, the event, the export -- still says the whole name.
+export function chipLabel(x) { return (x && (x.short || x.label)) || ''; }
+
 export const DIVISION_KEYS = DIVISIONS.map((d) => d.key);
 export const SOCIAL_TYPE_KEYS = SOCIAL_TYPES.map((x) => x.key);
 export const CHANNEL_KEYS = CHANNELS.map((x) => x.key);
