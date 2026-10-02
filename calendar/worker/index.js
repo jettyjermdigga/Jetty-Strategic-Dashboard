@@ -15,7 +15,7 @@ import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, DEPARTMENTS, DEPARTMENT_KEYS,
          STATUSES, PRIMACY } from './taxonomy.js';
 import { retailWeek, retailWeekStart } from './retail.js';
 import { sqlStatements } from './sql.js';
-import { planMigration, mergeEmailSms, mergeFeedFilters } from './migrate.js';
+import { planMigration, mergeSubTypes, mergeFeedFilters } from './migrate.js';
 import SCHEMA from './schema.sql';
 
 // Shown instead of the calendar when a request arrives with no Cloudflare
@@ -92,7 +92,7 @@ async function ensureSchema(db) {
     }
   }
   await migrateToDecisionTree(db);
-  await migrateEmailSms(db);
+  await migrateSubTypeMerges(db);
   schemaReady = true;
 }
 
@@ -144,28 +144,30 @@ async function migrateToDecisionTree(db) {
     .bind(MIGRATION_KEY, JSON.stringify(counts), new Date().toISOString()).run();
 }
 
-// One-time: Email and SMS become the single Email/SMS sub-type, on stored
-// events and on the saved calendar-sync selections that named them.
-const EMAIL_SMS_KEY = 'email-sms-2026-10';
+// Fold the merged sub-types (see SUB_TYPE_MERGES) onto their single key, on
+// stored events and on the saved calendar-sync selections that named the old
+// ones. The key carries the merge set, so adding a pair to the map and bumping
+// this runs the fold again -- which is safe, because it is idempotent.
+const SUB_MERGE_KEY = 'sub-type-merges-2026-10b';
 
-async function migrateEmailSms(db) {
+async function migrateSubTypeMerges(db) {
   const done = await db.prepare('SELECT value FROM meta WHERE key = ?')
-    .bind(EMAIL_SMS_KEY).first();
+    .bind(SUB_MERGE_KEY).first();
   if (done) return;
 
-  // Deliberately a wide net: 'email-sms' matches both patterns, so a re-run
-  // re-reads the same rows and writes back what is already there. Unlike the
-  // decision-tree migration this one cannot destroy a later edit -- it only
-  // ever folds two keys into one and leaves every other sub-type in place.
+  // Every row that has a sub-type at all, rather than a LIKE per merged key
+  // that has to be kept in step with the map. Only the rows that actually
+  // change are written. Unlike the decision-tree migration this one cannot
+  // destroy a later edit -- it only ever folds two keys into one and leaves
+  // every other sub-type in place.
   const res = await db.prepare(
-    "SELECT id, sub_types FROM items "
-    + "WHERE sub_types LIKE '%email%' OR sub_types LIKE '%sms%'").all();
+    "SELECT id, sub_types FROM items WHERE sub_types IS NOT NULL AND sub_types != ''").all();
   const rows = res.results || [];
 
   const stmt = db.prepare('UPDATE items SET sub_types = ? WHERE id = ?');
   const batch = [];
   for (const row of rows) {
-    const merged = mergeEmailSms(row.sub_types);
+    const merged = mergeSubTypes(row.sub_types);
     if (merged !== row.sub_types) batch.push(stmt.bind(merged, row.id));
   }
   const BATCH = 200;
@@ -173,8 +175,8 @@ async function migrateEmailSms(db) {
     await db.batch(batch.slice(i, i + BATCH));
   }
 
-  // Somebody subscribing to just the email sends should keep getting them
-  // rather than quietly receiving nothing.
+  // Somebody subscribing to just the email sends, or just the promotions,
+  // should keep getting them rather than quietly receiving nothing.
   const feeds = await db.prepare('SELECT token, filters FROM feeds').all();
   const feedStmt = db.prepare('UPDATE feeds SET filters = ? WHERE token = ?');
   const feedBatch = [];
@@ -186,7 +188,7 @@ async function migrateEmailSms(db) {
 
   await db.prepare(
     'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
-    .bind(EMAIL_SMS_KEY, JSON.stringify({ items: batch.length, feeds: feedBatch.length }),
+    .bind(SUB_MERGE_KEY, JSON.stringify({ items: batch.length, feeds: feedBatch.length }),
           new Date().toISOString()).run();
 }
 

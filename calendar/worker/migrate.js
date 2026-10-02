@@ -48,12 +48,12 @@ export function planMigration(row) {
   // which department is likelier to own an event it shares.
   depts.sort((a, b) => PRIMACY.indexOf(a) - PRIMACY.indexOf(b));
 
-  // Old rows still spell these 'email' and 'sms'; fold them before checking
-  // the key is real, or a row that never reached the second migration would
-  // lose its sub-type instead of gaining the merged one.
+  // Old rows still spell these the unmerged way; fold them before checking the
+  // key is real, or a row that never reached the merge migration would lose its
+  // sub-type instead of gaining the merged one.
   const subs = [];
   for (const raw of splitList(row.sub_types)) {
-    const k = MERGED_EMAIL_SMS[raw] || raw;
+    const k = SUB_TYPE_MERGES[raw] || raw;
     if (SUB_TYPE_KEYS.includes(k) && !subs.includes(k)) subs.push(k);
   }
 
@@ -78,18 +78,25 @@ export function planMigration(row) {
   };
 }
 
-// Email and SMS were two sub-types saying the same thing: the same products,
-// categories, SKUs and promotions, staggered onto different days of the same
-// week. They are one value now.
+// Sub-types that turned out to name the same thing, folded onto one key.
 //
-// Pure and idempotent on purpose -- 'email-sms' maps to itself, so a second
-// pass over an already-migrated row is a no-op rather than a duplicate.
-export const MERGED_EMAIL_SMS = { email: 'email-sms', sms: 'email-sms', 'email-sms': 'email-sms' };
+// Email and SMS carry the same products, categories, SKUs and promotions and
+// differ only in which day of the week they land on. A promotion is how a
+// campaign reaches people rather than a different kind of item.
+//
+// Every merged key maps to itself, which is what makes this idempotent: a
+// second pass over an already-migrated row writes back what is already there
+// instead of duplicating it. Add a pair here and the migration picks it up.
+export const SUB_TYPE_MERGES = {
+  email: 'email-sms', sms: 'email-sms', 'email-sms': 'email-sms',
+  campaign: 'campaign-promotion', promotion: 'campaign-promotion',
+  'campaign-promotion': 'campaign-promotion',
+};
 
-export function mergeEmailSms(subTypes) {
+export function mergeSubTypes(subTypes) {
   const out = [];
   for (const raw of splitList(subTypes)) {
-    const key = MERGED_EMAIL_SMS[raw] || raw;
+    const key = SUB_TYPE_MERGES[raw] || raw;
     if (!out.includes(key)) out.push(key);
   }
   return out.length ? out.join(',') : null;
@@ -105,7 +112,7 @@ export function mergeFeedFilters(filtersJson) {
   const before = parsed.sub.join(',');
   const after = [];
   for (const raw of parsed.sub) {
-    const key = MERGED_EMAIL_SMS[raw] || raw;
+    const key = SUB_TYPE_MERGES[raw] || raw;
     if (!after.includes(key)) after.push(key);
   }
   if (after.join(',') === before) return null;

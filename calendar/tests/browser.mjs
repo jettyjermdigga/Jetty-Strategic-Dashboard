@@ -52,7 +52,7 @@ const ITEMS = [
   ev({ id: '11111111-1111-4111-8111-111111111111', title: 'Coquina Jam',
        departments: 'box-truck', vehicles: 'box-truck', attachment_count: 1 }),
   ev({ id: '22222222-2222-4222-8222-222222222222', title: 'LB Spring Sale',
-       department: 'long-branch-store', departments: 'marketing', sub_types: 'promotion',
+       department: 'long-branch-store', departments: 'marketing', sub_types: 'campaign-promotion',
        status: 'Pending', start_date: dayThis(10), end_date: dayThis(10) }),
   ev({ id: '33333333-3333-4333-8333-333333333333', title: 'Fall Email',
        department: 'marketing', sub_types: 'email-sms',
@@ -266,7 +266,8 @@ await t('writes a header and one row per event', async () =>
 await t('leads with the columns a partner reads', async () =>
   csvRows(csv)[0].startsWith('Name,Status,Event Type,Department'));
 await t('carries labels, not internal keys', async () =>
-  csv.includes('Box Truck') && csv.includes('Promotion') && !csv.includes('box-truck'));
+  csv.includes('Box Truck') && csv.includes('Campaign/Promo')
+  && !csv.includes('box-truck') && !csv.includes('campaign-promotion'));
 await t('is UTF-8 for Excel', async () => csv.startsWith('﻿'));
 
 await page.locator('.fchip[data-axis="depts"][data-key="marketing"]').click();

@@ -15,7 +15,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const root = (p) => path.join(HERE, '..', p);
 
 import { sqlStatements } from '../worker/sql.js';
-import { planMigration, mergeEmailSms, mergeFeedFilters } from '../worker/migrate.js';
+import { planMigration, mergeSubTypes, mergeFeedFilters, SUB_TYPE_MERGES } from '../worker/migrate.js';
 import { buildIcs } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
 import {
@@ -104,6 +104,8 @@ describe('planMigration', () => {
     eq(planMigration({ event_types: 'jrf', sub_types: 'event,meeting,blog-post,seasonal' }).sub_types,
        null);
     eq(planMigration({ event_types: 'marketing', sub_types: 'email,sms' }).sub_types, 'email-sms');
+    eq(planMigration({ event_types: 'marketing', sub_types: 'campaign,promotion' }).sub_types,
+       'campaign-promotion');
   });
   it('flags a primary it had to guess', () => {
     eq(planMigration({ event_types: 'jrf' }).guessedPrimary, false);
@@ -115,29 +117,45 @@ describe('planMigration', () => {
   });
 });
 
-describe('merging Email and SMS', () => {
-  it('folds either one into the merged key', () => {
-    eq(mergeEmailSms('email'), 'email-sms');
-    eq(mergeEmailSms('sms'), 'email-sms');
+describe('merging the sub-types that said the same thing', () => {
+  it('folds either half of a pair onto one key', () => {
+    eq(mergeSubTypes('email'), 'email-sms');
+    eq(mergeSubTypes('sms'), 'email-sms');
+    eq(mergeSubTypes('campaign'), 'campaign-promotion');
+    eq(mergeSubTypes('promotion'), 'campaign-promotion');
   });
   it('does not leave two copies on an item that had both', () => {
-    eq(mergeEmailSms('email,sms'), 'email-sms');
+    eq(mergeSubTypes('email,sms'), 'email-sms');
+    eq(mergeSubTypes('campaign,promotion'), 'campaign-promotion');
+  });
+  it('folds both pairs on one item', () => {
+    eq(mergeSubTypes('campaign,email,promotion,sms'), 'campaign-promotion,email-sms');
   });
   it('leaves the other sub-types alone, in order', () => {
-    eq(mergeEmailSms('promotion,sms,website'), 'promotion,email-sms,website');
+    eq(mergeSubTypes('social,sms,website'), 'social,email-sms,website');
   });
   it('is idempotent, so a second run changes nothing', () => {
-    eq(mergeEmailSms(mergeEmailSms('email,sms,promotion')), mergeEmailSms('email,sms,promotion'));
-    eq(mergeEmailSms('email-sms'), 'email-sms');
+    const once = mergeSubTypes('email,sms,campaign,promotion');
+    eq(mergeSubTypes(once), once);
+    eq(mergeSubTypes('email-sms'), 'email-sms');
+    eq(mergeSubTypes('campaign-promotion'), 'campaign-promotion');
   });
   it('gives null for an item with no sub-type', () => {
-    eq(mergeEmailSms(''), null);
-    eq(mergeEmailSms(null), null);
+    eq(mergeSubTypes(''), null);
+    eq(mergeSubTypes(null), null);
+  });
+  it('only ever produces keys the taxonomy knows', () => {
+    const keys = SUB_TYPES.map((s) => s.key);
+    for (const merged of Object.values(SUB_TYPE_MERGES)) {
+      ok(keys.includes(merged), merged + ' is not a real sub-type');
+    }
   });
 
   it('rewrites a calendar sync that asked for the old keys', () => {
     eq(mergeFeedFilters('{"sub":["email","sms"],"dept":["marketing"]}'),
        '{"sub":["email-sms"],"dept":["marketing"]}');
+    eq(mergeFeedFilters('{"sub":["campaign","promotion"]}'),
+       '{"sub":["campaign-promotion"]}');
   });
   it('leaves a sync that never mentioned them untouched', () => {
     eq(mergeFeedFilters('{"sub":["tradeshow"]}'), null);

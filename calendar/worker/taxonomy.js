@@ -65,8 +65,10 @@ export const DEPARTMENTS = [
 // primary one, and offers none at all for the eight that have none.
 export const SUB_TYPES = [
   { key: 'tradeshow',   label: 'Tradeshow',   department: 'wholesale' },
-  { key: 'campaign',    label: 'Campaign',    department: 'marketing' },
-  { key: 'promotion',   label: 'Promotion',   department: 'marketing' },
+  // Same reasoning as Email/SMS below: a promotion is how a campaign reaches
+  // people, not a different kind of thing to put on a calendar.
+  { key: 'campaign-promotion', label: 'Campaign/Promo', department: 'marketing',
+    sheetValues: ['Campaign', 'Promotion', 'Promo', 'Campaign/Promo', 'Campaign/Promotion'] },
   // One axis value, not two. The same products, categories, SKUs and
   // promotions go out on both -- they are staggered across the week, which is
   // scheduling, not a difference in what the item is about.
