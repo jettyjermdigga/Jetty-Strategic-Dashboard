@@ -27,6 +27,8 @@
     // clicking one chip cannot be vetoed by an axis nobody has touched.
     sel: { kinds: [], depts: [], subs: [], vehicles: [], stats: [] },
     attachments: [],   // of the event currently open, fetched on demand
+    comments: [],      // likewise
+    people: [],        // the mention roster, fetched once
   };
 
   // ── remembered preferences ─────────────────────────────────────────────
@@ -482,6 +484,60 @@
       + '</div>';
   }
 
+  // ── people and comments ────────────────────────────────────────────────
+
+  // The mention roster: everyone in Slack when a token is configured, plus
+  // anyone who has used the calendar. Fetched once per page rather than per
+  // event -- it is the same list every time, and the picker has to feel
+  // instant to be worth using.
+  var peopleLoaded = null;
+  function loadPeople() {
+    if (!peopleLoaded) {
+      peopleLoaded = api('/api/people')
+        .then(function (r) { state.people = r.people || []; return state.people; })
+        .catch(function () { state.people = []; return state.people; });
+    }
+    return peopleLoaded;
+  }
+
+  function personName(email) {
+    var p = state.people.filter(function (x) { return x.email === email; })[0];
+    return p ? p.name : (String(email || '').split('@')[0] || email);
+  }
+
+  function commentMentions(c) {
+    return c.mentions ? c.mentions.split(',').filter(Boolean) : [];
+  }
+
+  function whenStamp(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d)) return iso.slice(0, 10);
+    return MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getDate()
+      + ', ' + hhmm(pad(d.getHours()) + ':' + pad(d.getMinutes()));
+  }
+
+  function commentHtml(c) {
+    var mine = c.author === state.me.email;
+    var mentions = commentMentions(c);
+    return '<div class="cmt" data-cmt="' + esc(c.id) + '">'
+      + '<div class="cmt-head">'
+      + '<span class="cmt-who">' + esc(personName(c.author)) + '</span>'
+      + '<span class="cmt-when">' + esc(whenStamp(c.created_at)) + '</span>'
+      + ((mine || state.me.canEdit)
+          ? '<button type="button" class="cmt-x" data-cmt="' + esc(c.id)
+            + '" title="Delete this comment">×</button>'
+          : '')
+      + '</div>'
+      + '<div class="cmt-body">' + esc(c.body) + '</div>'
+      + (mentions.length
+          ? '<div class="cmt-tags">' + mentions.map(function (m) {
+              return '<span class="cmt-tag">@' + esc(personName(m)) + '</span>';
+            }).join('') + '</div>'
+          : '')
+      + '</div>';
+  }
+
   // ── views ──────────────────────────────────────────────────────────────
 
   // With colour reserved for the calendar, these dots are the only at-a-glance
@@ -743,7 +799,24 @@
       + '<h3 class="det-title">' + esc(it.title) + '</h3>'
       + '<div class="det-when">' + esc(whenText(it)) + '</div>'
       + (rows ? '<dl class="det-grid">' + rows + '</dl>' : '')
-      + (stamp ? '<div class="det-stamp">' + stamp + '</div>' : '');
+      + (stamp ? '<div class="det-stamp">' + stamp + '</div>' : '')
+      // Anyone who can open the calendar can post: a comment changes no event
+      // data, and a calendar only seven people may ask a question on is a
+      // noticeboard rather than a conversation.
+      + '<div class="cmt-wrap">'
+      + '<h4 class="cmt-h">Comments</h4>'
+      + '<div class="cmt-list" id="cmtList"><span class="muted">Loading\u2026</span></div>'
+      + (state.me.email
+          ? '<div class="cmt-new">'
+            + '<textarea id="cmtBody" maxlength="4000" rows="2" '
+            + 'placeholder="Add a comment. Type @ to notify someone."></textarea>'
+            + '<div class="cmt-pick" id="cmtPick" hidden></div>'
+            + '<div class="cmt-foot">'
+            + '<span class="cmt-note" id="cmtNote"></span>'
+            + '<button type="button" class="cal-btn small primary" id="cmtPost">Post</button>'
+            + '</div></div>'
+          : '')
+      + '</div>';
 
     var foot = state.me.canEdit
       ? '<button class="cal-btn danger" data-act="delete" data-id="' + esc(it.id) + '">Delete</button>'
@@ -753,6 +826,134 @@
       : '<div class="grow"></div><button class="cal-btn" data-act="close">Close</button>';
 
     openModal('Event', body, foot);
+
+    state.comments = [];
+    function paintComments() {
+      var box = $('#cmtList');
+      if (!box) return;
+      box.innerHTML = state.comments.length
+        ? state.comments.map(commentHtml).join('')
+        : '<p class="hint">No comments yet.</p>';
+    }
+    // The roster first, so a comment never renders a raw address for a second
+    // and then swaps it for a name.
+    loadPeople()
+      .then(function () { return api('/api/items/' + id + '/comments'); })
+      .then(function (r) { state.comments = r.comments || []; paintComments(); })
+      .catch(function () {
+        var box = $('#cmtList');
+        if (box) box.innerHTML = '<p class="hint">Comments could not be loaded.</p>';
+      });
+
+    wireComments(id, paintComments);
+  }
+
+  // Mentions are picked, never parsed out of the text: a typed "@amy" is a
+  // string, and guessing which Amy it meant is how the wrong person gets
+  // pinged. Picking from the list is what puts an address on the comment.
+  function wireComments(itemId, paintComments) {
+    var box = $('#cmtBody');
+    var picked = [];
+
+    function note() {
+      var el = $('#cmtNote');
+      if (!el) return;
+      el.innerHTML = picked.length
+        ? 'Notifying ' + picked.map(function (e) {
+            return '<span class="cmt-tag">@' + esc(personName(e))
+              + '<button type="button" class="cmt-untag" data-who="' + esc(e) + '">\u00d7</button></span>';
+          }).join('')
+        : '';
+    }
+
+    function closePicker() {
+      var p = $('#cmtPick');
+      if (p) { p.hidden = true; p.innerHTML = ''; }
+    }
+
+    function openPicker(term) {
+      var p = $('#cmtPick');
+      if (!p) return;
+      var hits = state.people.filter(function (x) {
+        return picked.indexOf(x.email) < 0
+          && (x.name.toLowerCase().indexOf(term) >= 0 || x.email.indexOf(term) >= 0);
+      }).slice(0, 8);
+      if (!hits.length) return closePicker();
+      p.innerHTML = hits.map(function (x) {
+        return '<button type="button" class="cmt-opt" data-who="' + esc(x.email) + '">'
+          + '<span class="cmt-opt-n">' + esc(x.name) + '</span>'
+          + '<span class="cmt-opt-e">' + esc(x.email) + '</span>'
+          + (x.slack_id ? '<span class="cmt-opt-s" title="Will be sent a Slack DM">Slack</span>' : '')
+          + '</button>';
+      }).join('');
+      p.hidden = false;
+    }
+
+    if (box) {
+      box.oninput = function () {
+        // The @ being typed right now: the last one with no space after it.
+        var upto = box.value.slice(0, box.selectionStart);
+        var m = upto.match(/@([^\s@]*)$/);
+        if (!m) return closePicker();
+        openPicker(m[1].toLowerCase());
+      };
+      box.onblur = function () { setTimeout(closePicker, 150); };
+    }
+
+    $('#modalBody').onclick = function (e) {
+      var opt = e.target.closest('.cmt-opt');
+      if (opt) {
+        e.preventDefault();
+        if (picked.indexOf(opt.dataset.who) < 0) picked.push(opt.dataset.who);
+        // Take the half-typed @term back out -- the mention is on the comment
+        // now, so leaving "@am" in the text would read as a second one.
+        if (box) {
+          var upto = box.value.slice(0, box.selectionStart);
+          box.value = upto.replace(/@[^\s@]*$/, '') + box.value.slice(box.selectionStart);
+          box.focus();
+        }
+        closePicker();
+        return note();
+      }
+      var untag = e.target.closest('.cmt-untag');
+      if (untag) {
+        e.preventDefault();
+        picked = picked.filter(function (x) { return x !== untag.dataset.who; });
+        return note();
+      }
+      var post = e.target.closest('#cmtPost');
+      if (post) {
+        e.preventDefault();
+        var text = box ? box.value.trim() : '';
+        if (!text) return;
+        post.disabled = true;
+        api('/api/items/' + itemId + '/comments', {
+          method: 'POST',
+          body: JSON.stringify({ body: text, mentions: picked }),
+        }).then(function (r) {
+          state.comments = state.comments.concat([r.comment]);
+          box.value = '';
+          picked = [];
+          note();
+          paintComments();
+        }).catch(function (err) {
+          alert(err.message);
+        }).then(function () { post.disabled = false; });
+        return;
+      }
+      var del = e.target.closest('.cmt-x');
+      if (del) {
+        e.preventDefault();
+        if (!confirm('Delete this comment?')) return;
+        del.disabled = true;
+        api('/api/comments/' + del.dataset.cmt, { method: 'DELETE' })
+          .then(function () {
+            state.comments = state.comments.filter(function (c) { return c.id !== del.dataset.cmt; });
+            paintComments();
+          })
+          .catch(function (err) { del.disabled = false; alert(err.message); });
+      }
+    };
   }
 
   // ── add / edit form ────────────────────────────────────────────────────
@@ -1931,6 +2132,18 @@
       }
       wire();
       return loadItems();
+    })
+    .then(function () {
+      // The Slack DM links to /?event=<id>. Open it, and move the calendar to
+      // the month it is in -- landing on today's month with the event off
+      // screen behind a modal is worse than not linking at all.
+      var want = new URLSearchParams(location.search).get('event');
+      if (!want) return;
+      var it = state.items.filter(function (x) { return x.id === want; })[0];
+      if (!it) return;
+      state.cursor = fromYmd(it.start_date);
+      render();
+      showDetail(want);
     })
     .catch(function (err) {
       $('#view').innerHTML = emptyHtml('The calendar could not load', esc(err.message));

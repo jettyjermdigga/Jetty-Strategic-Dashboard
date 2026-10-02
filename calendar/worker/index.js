@@ -17,6 +17,8 @@ import { retailWeek, retailWeekStart } from './retail.js';
 import { sqlStatements } from './sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters } from './migrate.js';
 import { normaliseProducts } from './products.js';
+import { commentMessage, dmMentions, displayName, eventUrl,
+         fetchSlackPeople } from './slack.js';
 import SCHEMA from './schema.sql';
 
 // Shown instead of the calendar when a request arrives with no Cloudflare
@@ -489,6 +491,91 @@ async function listAttachments(db, itemId) {
   return res.results || [];
 }
 
+const MAX_COMMENT = 4000;
+const MAX_MENTIONS = 25;
+const EMAIL_RE = /^[^@\s,]+@[^@\s,]+\.[^@\s,]+$/;
+// Long enough that a workspace change shows up the same day, far enough apart
+// that a busy calendar is not calling Slack on every page load.
+const ROSTER_TTL_MS = 6 * 60 * 60 * 1000;
+const ROSTER_KEY = 'slack-roster-refreshed';
+
+function cleanMentions(raw) {
+  const list = Array.isArray(raw) ? raw : String(raw == null ? '' : raw).split(',');
+  const out = [];
+  for (const item of list) {
+    const email = clean(item, 200);
+    if (!email) continue;
+    const low = email.toLowerCase();
+    if (!EMAIL_RE.test(low) || out.includes(low)) continue;
+    out.push(low);
+    if (out.length >= MAX_MENTIONS) break;
+  }
+  return out;
+}
+
+async function listComments(db, itemId) {
+  const res = await db.prepare(
+    'SELECT id, body, mentions, author, created_at FROM comments '
+    + 'WHERE item_id = ? ORDER BY created_at ASC').bind(itemId).all();
+  return res.results || [];
+}
+
+// Everyone worth offering in the mention picker: the Slack roster when there is
+// one, plus anyone who has touched this calendar, so the feature is usable the
+// day it ships rather than the day the Slack app is approved.
+async function listPeople(db) {
+  const byEmail = new Map();
+  const add = (email, name, slackId) => {
+    const low = String(email || '').toLowerCase();
+    if (!low || !EMAIL_RE.test(low)) return;
+    const was = byEmail.get(low) || {};
+    byEmail.set(low, {
+      email: low,
+      name: was.name || name || displayName(low, ''),
+      slack_id: was.slack_id || slackId || null,
+    });
+  };
+
+  const roster = await db.prepare('SELECT email, name, slack_id FROM people').all();
+  for (const p of roster.results || []) add(p.email, p.name, p.slack_id);
+
+  const seen = await db.prepare(
+    'SELECT created_by AS e FROM items WHERE created_by IS NOT NULL '
+    + 'UNION SELECT updated_by FROM items WHERE updated_by IS NOT NULL '
+    + 'UNION SELECT author FROM comments '
+    + 'UNION SELECT email FROM feeds').all();
+  for (const r of seen.results || []) add(r.e, '', null);
+
+  return [...byEmail.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Refreshed in the background off a timestamp in meta. A Slack outage leaves
+// the last roster in place rather than emptying the picker.
+async function refreshRoster(env, db) {
+  if (!env.SLACK_BOT_TOKEN) return;
+  const row = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(ROSTER_KEY).first();
+  const at = row ? Number(row.value) : 0;
+  if (Date.now() - at < ROSTER_TTL_MS) return;
+
+  // Written before the call, not after: a failing token should back off for the
+  // full interval rather than retry on every single request.
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(ROSTER_KEY, String(Date.now()), new Date().toISOString()).run();
+
+  const people = await fetchSlackPeople(env.SLACK_BOT_TOKEN);
+  if (!people.length) return;
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    'INSERT INTO people (email, name, slack_id, updated_at) VALUES (?, ?, ?, ?) '
+    + 'ON CONFLICT(email) DO UPDATE SET name = excluded.name, '
+    + 'slack_id = excluded.slack_id, updated_at = excluded.updated_at');
+  const BATCH = 200;
+  for (let i = 0; i < people.length; i += BATCH) {
+    await db.batch(people.slice(i, i + BATCH)
+      .map((p) => stmt.bind(p.email, p.name, p.slack_id, now)));
+  }
+}
+
 // One feed per person, created the first time they open Subscribe. The token
 // is the credential -- 32 random bytes, not derived from the email, so knowing
 // who works here tells you nothing about their link.
@@ -528,7 +615,7 @@ async function feedFor(db, email) {
   return { token, email, filters: '{}', created_at: now, updated_at: now };
 }
 
-async function handleApi(request, env, url, who) {
+async function handleApi(request, env, url, who, ctx) {
   const db = env.DB;
   if (!db) {
     return json({ error: 'The calendar database is not bound to this Worker yet.' }, 503);
@@ -667,6 +754,81 @@ async function handleApi(request, env, url, who) {
     return json({ error: 'Method not allowed.' }, 405);
   }
 
+  // Who can be mentioned. Readable by anyone signed in -- it is a staff list,
+  // and the picker is useless without it.
+  if (path === '/api/people' && method === 'GET') {
+    try {
+      await refreshRoster(env, db);
+    } catch (e) {
+      // A Slack problem costs the list its freshness, not its existence.
+    }
+    return json({ people: await listPeople(db), slackConfigured: Boolean(env.SLACK_BOT_TOKEN) });
+  }
+
+  const cmtMatch = path.match(new RegExp('^/api/items/(' + UUID + ')/comments$', 'i'));
+  if (cmtMatch) {
+    const itemId = cmtMatch[1];
+    if (method === 'GET') return json({ comments: await listComments(db, itemId) });
+
+    if (method === 'POST') {
+      // Deliberately not requireEditor: a comment changes no event data, and a
+      // calendar nobody but the seven editors can ask a question on is a
+      // noticeboard rather than a conversation.
+      if (!who.email) return json({ error: 'Not signed in.' }, 403);
+
+      const body = await request.json().catch(() => null);
+      if (!body) return json({ error: 'Expected a JSON body.' }, 400);
+      const text = clean(body.body, MAX_COMMENT);
+      if (!text) return json({ error: 'Write something first.' }, 400);
+
+      const item = await db.prepare('SELECT * FROM items WHERE id = ?').bind(itemId).first();
+      if (!item) return json({ error: 'No calendar item with that id.' }, 404);
+
+      const mentions = cleanMentions(body.mentions);
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      await db.prepare(
+        'INSERT INTO comments (id, item_id, body, mentions, author, created_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?)',
+      ).bind(id, itemId, text, mentions.join(',') || null, who.email, now).run();
+
+      // The comment is stored and the response does not wait on Slack. A DM
+      // that fails must not look like a comment that failed -- the comment is
+      // on the event either way, which is where it actually lives.
+      if (mentions.length && env.SLACK_BOT_TOKEN) {
+        const notify = (async () => {
+          const roster = await listPeople(db);
+          const targets = roster.filter((p) => mentions.includes(p.email) && p.slack_id);
+          if (!targets.length) return;
+          const me = roster.find((p) => p.email === String(who.email).toLowerCase());
+          await dmMentions(env.SLACK_BOT_TOKEN, targets, commentMessage({
+            authorName: displayName(who.email, me && me.name),
+            item,
+            body: text,
+            url: eventUrl(url.origin, itemId),
+          }));
+        })().catch(() => {});
+        if (ctx && ctx.waitUntil) ctx.waitUntil(notify);
+      }
+
+      return json({ comment: { id, body: text, mentions: mentions.join(','),
+                               author: who.email, created_at: now } }, 201);
+    }
+    return json({ error: 'Method not allowed.' }, 405);
+  }
+
+  // Your own comment, or an editor tidying up. Nobody else's.
+  const cmtOne = path.match(new RegExp('^/api/comments/(' + UUID + ')$', 'i'));
+  if (cmtOne && method === 'DELETE') {
+    const row = await db.prepare('SELECT * FROM comments WHERE id = ?').bind(cmtOne[1]).first();
+    if (!row) return json({ error: 'No comment with that id.' }, 404);
+    if (row.author !== who.email && !who.canEdit) {
+      return json({ error: 'That is somebody else’s comment.' }, 403);
+    }
+    await db.prepare('DELETE FROM comments WHERE id = ?').bind(row.id).run();
+    return json({ deleted: row.id });
+  }
+
   const fileMatch = path.match(new RegExp('^/api/attachments/(' + UUID + ')$', 'i'));
   if (fileMatch) {
     const row = await db.prepare('SELECT * FROM attachments WHERE id = ?')
@@ -724,6 +886,7 @@ async function handleApi(request, env, url, who) {
         for (const f of (files.results || [])) await env.FILES.delete(f.r2_key);
       }
       await db.prepare('DELETE FROM attachments WHERE item_id = ?').bind(id).run();
+      await db.prepare('DELETE FROM comments WHERE item_id = ?').bind(id).run();
       await db.prepare('DELETE FROM items WHERE id = ?').bind(id).run();
       return json({ deleted: id });
     }
@@ -748,7 +911,7 @@ async function handleApi(request, env, url, who) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     const who = await identify(request, env);
@@ -790,7 +953,7 @@ export default {
       }
 
       try {
-        return await handleApi(request, env, url, who);
+        return await handleApi(request, env, url, who, ctx);
       } catch (err) {
         return json({ error: 'Calendar request failed: ' + (err && err.message ? err.message : String(err)) }, 500);
       }

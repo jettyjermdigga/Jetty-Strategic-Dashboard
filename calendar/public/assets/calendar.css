@@ -705,3 +705,58 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
   .prod-row{grid-template-columns:1fr 1fr;gap:5px}
   .prod-row .p-url{grid-column:1 / -1}
 }
+
+/* ── comments ────────────────────────────────────────────────────────────── */
+
+.cmt-wrap{margin-top:18px;border-top:1px solid var(--surface-alt);padding-top:14px}
+.cmt-h{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+  opacity:.5;margin:0 0 10px;
+}
+.cmt-list{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.cmt{border-left:2px solid var(--surface-alt);padding-left:10px}
+.cmt-head{display:flex;align-items:baseline;gap:8px}
+.cmt-who{font-weight:600;font-size:13px}
+.cmt-when{font-family:var(--mono);font-size:10.5px;opacity:.45}
+.cmt-x{
+  border:0;background:transparent;color:inherit;cursor:pointer;margin-left:auto;
+  font-size:15px;line-height:1;opacity:.35;padding:0 2px;
+}
+.cmt-x:hover{opacity:1;color:var(--danger,#c0392b)}
+.cmt-body{font-size:13.5px;white-space:pre-wrap;margin-top:2px}
+.cmt-tags{margin-top:5px;display:flex;flex-wrap:wrap;gap:4px}
+.cmt-tag{
+  display:inline-flex;align-items:center;gap:3px;
+  font-size:11.5px;border-radius:999px;padding:2px 8px;
+  background:color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.cmt-untag{
+  border:0;background:transparent;color:inherit;cursor:pointer;
+  font-size:13px;line-height:1;opacity:.55;padding:0;
+}
+.cmt-untag:hover{opacity:1}
+
+.cmt-new{position:relative}
+.cmt-new textarea{width:100%;font-size:13.5px;padding:9px 10px;resize:vertical}
+.cmt-foot{display:flex;align-items:center;gap:10px;margin-top:7px}
+.cmt-note{display:flex;flex-wrap:wrap;gap:4px;flex:1;min-width:0}
+
+/* Sits over the thread rather than pushing it down -- the list must not jump
+   while you are picking somebody out of it. */
+.cmt-pick{
+  position:absolute;left:0;right:0;top:100%;z-index:5;
+  background:var(--surface);border:1px solid var(--surface-alt);border-radius:8px;
+  box-shadow:0 10px 26px rgba(0,0,0,.18);overflow:hidden;max-height:230px;overflow-y:auto;
+}
+.cmt-opt{
+  display:flex;align-items:baseline;gap:8px;width:100%;text-align:left;
+  border:0;background:transparent;color:inherit;cursor:pointer;
+  padding:7px 11px;font-size:13px;
+}
+.cmt-opt:hover{background:color-mix(in srgb, var(--primary) 10%, transparent)}
+.cmt-opt-n{font-weight:600}
+.cmt-opt-e{font-size:11.5px;opacity:.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmt-opt-s{
+  margin-left:auto;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
+  text-transform:uppercase;opacity:.6;flex-shrink:0;
+}

@@ -17,6 +17,7 @@ const root = (p) => path.join(HERE, '..', p);
 import { sqlStatements } from '../worker/sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters, SUB_TYPE_MERGES } from '../worker/migrate.js';
 import { normaliseProducts, readProducts, MAX_PRODUCTS } from '../worker/products.js';
+import { commentMessage, displayName, escapeSlack, eventUrl, eventWhen } from '../worker/slack.js';
 import { buildIcs } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
 import {
@@ -230,6 +231,51 @@ describe('product highlights', () => {
   });
   it('names the four divisions the line is cut by', () => {
     eq(DIVISIONS.map((d) => d.key), ['mens', 'womens', 'yti', 'accessories']);
+  });
+});
+
+describe('the Slack mention', () => {
+  const ev = { title: 'Coquina Jam', start_date: '2026-07-11', end_date: '2026-07-11', all_day: 1 };
+
+  it('escapes what Slack reads as markup', () => {
+    eq(escapeSlack('A < B & C > D'), 'A &lt; B &amp; C &gt; D');
+  });
+  it('escapes the event title and the comment, not just one of them', () => {
+    const msg = commentMessage({ authorName: 'Jeremy', body: '1 < 2',
+                                 item: { ...ev, title: '<Jam>' }, url: '' });
+    ok(msg.includes('&lt;Jam&gt;') && msg.includes('1 &lt; 2'));
+  });
+  it('quotes the comment so it cannot read as a command or another mention', () => {
+    const msg = commentMessage({ authorName: 'Jeremy', body: '/remind @channel', item: ev, url: '' });
+    ok(msg.includes('> /remind @channel'));
+    ok(!/\n\/remind/.test(msg));
+  });
+  it('quotes every line of a multi-line comment', () => {
+    const msg = commentMessage({ authorName: 'A', body: 'one\ntwo\nthree', item: ev, url: '' });
+    eq(msg.split('\n').filter((l) => l.startsWith('> ')).length, 3);
+  });
+  it('links back to the event when there is somewhere to link', () => {
+    ok(commentMessage({ authorName: 'A', body: 'x', item: ev, url: 'https://c/?event=7' })
+      .includes('<https://c/?event=7|Open it'));
+    ok(!commentMessage({ authorName: 'A', body: 'x', item: ev, url: '' }).includes('Open it'));
+  });
+  it('builds the deep link off the origin it was asked on', () => {
+    eq(eventUrl('https://calendar.test', 'abc'), 'https://calendar.test/?event=abc');
+    eq(eventUrl('https://calendar.test/', 'abc'), 'https://calendar.test/?event=abc');
+    eq(eventUrl('', 'abc'), '');
+  });
+
+  it('says when, one day or several, timed or not', () => {
+    eq(eventWhen(ev), '2026-07-11');
+    eq(eventWhen({ ...ev, end_date: '2026-07-13' }), '2026-07-11 – 2026-07-13');
+    eq(eventWhen({ ...ev, all_day: 0, start_time: '12:00' }), '2026-07-11 at 12:00');
+  });
+
+  it('makes a name out of an address when the roster has none', () => {
+    eq(displayName('amy.smith@jettylife.com', ''), 'Amy Smith');
+    eq(displayName('joem@jettylife.com', ''), 'Joem');
+    eq(displayName('x@y.com', 'Real Name'), 'Real Name');
+    eq(displayName('', ''), 'Someone');
   });
 });
 

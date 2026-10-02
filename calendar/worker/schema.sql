@@ -85,3 +85,26 @@ CREATE TABLE IF NOT EXISTS meta (
   value      TEXT,
   applied_at TEXT
 );
+
+-- Comments on an event. Anyone who can open the calendar can post one; the
+-- author is the Access identity, never anything the caller sends, so a comment
+-- cannot be put in somebody else's mouth.
+CREATE TABLE IF NOT EXISTS comments (
+  id         TEXT PRIMARY KEY,
+  item_id    TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  mentions   TEXT,                      -- comma-separated lowercased emails
+  author     TEXT NOT NULL,             -- email, from the verified Access claims
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_comments_item ON comments(item_id);
+
+-- Who can be mentioned. Filled from Slack when a bot token is configured, so
+-- there is no list to maintain by hand; anyone who has used the calendar is
+-- offered too, so the picker works before Slack is wired up.
+CREATE TABLE IF NOT EXISTS people (
+  email      TEXT PRIMARY KEY,
+  name       TEXT,
+  slack_id   TEXT,
+  updated_at TEXT
+);

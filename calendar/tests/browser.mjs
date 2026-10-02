@@ -70,7 +70,14 @@ const ATTACHMENTS = [{
   uploaded_by: 'jeremy@jettylife.com', uploaded_at: dayThis(1) + 'T10:00:00Z',
 }];
 
-const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], deleted: [], savedFilters: null, resets: 0 };
+const COMMENTS = [{
+  id: 'cccccccc-0000-4000-8000-000000000000', body: 'Do we have the permit?',
+  mentions: 'amy@jettylife.com', author: 'dave@jettylife.com',
+  created_at: '2026-10-01T09:00:00Z',
+}];
+
+const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], deleted: [],
+               deletedComments: [], commented: null, savedFilters: null, resets: 0 };
 let feedRow = { url: 'https://feed.test/calendar.ics?token=' + 'a'.repeat(64), filters: {} };
 
 const browser = await chromium.launch();
@@ -97,6 +104,28 @@ await page.route('**/*', async (route) => {
       email: 'jeremy@jettylife.com', canEdit: true,
       accessConfigured: true, editorsConfigured: true,
     } });
+  }
+  if (p === '/api/people') {
+    return route.fulfill({ json: { slackConfigured: true, people: [
+      { email: 'jeremy@jettylife.com', name: 'Jeremy', slack_id: 'U1' },
+      { email: 'amy@jettylife.com', name: 'Amy Smith', slack_id: 'U2' },
+      { email: 'dave@jettylife.com', name: 'Dave', slack_id: null },
+    ] } });
+  }
+  if (/\/comments$/.test(p) && method === 'GET') {
+    return route.fulfill({ json: { comments: COMMENTS } });
+  }
+  if (/\/comments$/.test(p) && method === 'POST') {
+    seen.commented = req.postDataJSON();
+    return route.fulfill({ status: 201, json: { comment: {
+      id: 'cccccccc-1111-4111-8111-111111111111', body: seen.commented.body,
+      mentions: (seen.commented.mentions || []).join(','),
+      author: 'jeremy@jettylife.com', created_at: '2026-10-02T12:00:00Z',
+    } } });
+  }
+  if (/^\/api\/comments\//.test(p) && method === 'DELETE') {
+    seen.deletedComments.push(p.split('/').pop());
+    return route.fulfill({ json: { deleted: 'ok' } });
   }
   if (/\/attachments$/.test(p) && method === 'POST') {
     const name = decodeURIComponent(req.headers()['x-file-name'] || '');
@@ -500,6 +529,54 @@ await page.locator('#listPanel .day-item').first().click();
 await t('opens its event', async () =>
   await page.locator('#modal').isVisible()
   && (await page.locator('.det-title').textContent()).includes('Surf Expo'));
+
+console.log('comments');
+await t('shows the thread on the event, with names not addresses', async () => {
+  await page.waitForSelector('.cmt');
+  return (await page.locator('.cmt-who').textContent()) === 'Dave'
+    && (await page.locator('.cmt-body').textContent()) === 'Do we have the permit?'
+    && (await page.locator('.cmt-tag').textContent()) === '@Amy Smith';
+});
+await t('offers no delete on somebody else’s comment when you cannot edit', async () =>
+  (await page.locator('.cmt-x').count()) === 1);   // this viewer is an editor
+await t('opens the picker on @ and not before', async () => {
+  await page.locator('#cmtBody').fill('Checking with ');
+  const before = await page.locator('#cmtPick').isHidden();
+  await page.locator('#cmtBody').fill('Checking with @am');
+  await page.locator('#cmtBody').dispatchEvent('input');
+  return before && (await page.locator('.cmt-opt').count()) === 1;
+});
+await t('says who will actually get a Slack DM', async () =>
+  (await page.locator('.cmt-opt-s').count()) === 1);
+await t('takes the half-typed name back out of the comment', async () => {
+  await page.locator('.cmt-opt').click();
+  return (await page.locator('#cmtBody').inputValue()) === 'Checking with '
+    && (await page.locator('.cmt-note .cmt-tag').textContent()).includes('Amy Smith');
+});
+await t('posts the body and the picked address, not the typed text', async () => {
+  await page.locator('#cmtPost').click();
+  await page.waitForFunction(() => document.querySelectorAll('.cmt').length === 2);
+  // Trimmed on the way out: the trailing space is what the @term left behind.
+  return seen.commented.body === 'Checking with'
+    && JSON.stringify(seen.commented.mentions) === '["amy@jettylife.com"]';
+});
+await t('clears the box and the pending mentions once it is posted', async () =>
+  (await page.locator('#cmtBody').inputValue()) === ''
+  && (await page.locator('.cmt-note .cmt-tag').count()) === 0);
+await t('removes a comment on the spot', async () => {
+  await page.locator('.cmt').nth(1).locator('.cmt-x').click();
+  // The row goes once the DELETE comes back, not on the click -- a comment
+  // that vanishes and then reappears is worse than one that takes a moment.
+  await page.waitForFunction(() => document.querySelectorAll('.cmt').length === 1);
+  return seen.deletedComments.length === 1;
+});
+await page.locator('button[data-act="close"]').click();
+
+console.log('a Slack deep link');
+await page.goto('http://local.test/?event=' + ITEMS[4].id);
+await page.waitForSelector('.mo-grid');
+await t('opens the event the DM pointed at', async () =>
+  (await page.locator('.det-title').textContent()).includes('Surf Expo'));
 
 console.log('');
 if (errors.length) {
