@@ -33,15 +33,16 @@
 // every pair, which is why nothing here relies on colour by itself: every chip
 // carries its name, and the detail panel names the department outright.
 export const EVENT_TYPES = [
-  { key: 'events-marketing', label: 'Events & Marketing',
-    note: 'Anything that happens in the world, and the marketing around it.' },
-  { key: 'meetings-deadlines', label: 'Meetings & Deadlines',
-    note: 'Internal. Asks for far less -- who, when, and nothing more.' },
-  // Its own kind rather than a Marketing sub-type: a post carries a different
-  // set of facts from an event -- channel, caption, production state -- and
-  // there are more of them than everything else on the calendar put together.
+  { key: 'event', label: 'Event',
+    note: 'Something happening in the world. Asks where, and what it needs.' },
+  { key: 'marketing', label: 'Marketing',
+    note: 'A campaign, promo, send or shoot. Asks what kind, and where if it has one.' },
   { key: 'social', label: 'Social',
-    note: 'A post, story or reel. Asks about channel, caption and assets instead of a venue.' },
+    note: 'A post, story or reel. Asks about channel, caption and assets.' },
+  { key: 'meeting', label: 'Meeting',
+    note: 'Internal. Who and when, and nothing else.' },
+  { key: 'deadline', label: 'Deadline',
+    note: 'A date something is due. One date, no end.' },
 ];
 
 // Only ever one of these on a post.

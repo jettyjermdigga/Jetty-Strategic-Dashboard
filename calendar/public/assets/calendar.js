@@ -349,9 +349,13 @@
     // no way to tell "nothing is tagged Finance" from "Finance is broken".
     depts.push({ axis: 'depts', key: NO_DEPT, label: 'Unassigned' });
 
+    // Event and Marketing have no chip of their own: row 1 is departments and
+    // row 2 is Marketing's, so both are already reachable. These three are the
+    // kinds nothing else surfaces.
     var kinds = [
-      { axis: 'kinds', key: 'meetings-deadlines', label: 'Meetings' },
       { axis: 'kinds', key: 'social', label: 'Social' },
+      { axis: 'kinds', key: 'meeting', label: 'Meetings' },
+      { axis: 'kinds', key: 'deadline', label: 'Deadlines' },
     ];
 
     var vehicles = tax('vehicles').map(function (v) {
@@ -994,7 +998,7 @@
   // you go straight to the field you came to change.
   function showForm(existing, defaultDate) {
     var it = existing || {
-      title: '', event_type: 'events-marketing', department: '', departments: '',
+      title: '', event_type: 'event', department: '', departments: '',
       sub_types: '', needs: '', staff_count: '', vehicles: '',
       status: 'Booked', start_date: defaultDate || todayYmd(), end_date: defaultDate || todayYmd(),
       all_day: 1, start_time: '', end_time: '',
@@ -1174,7 +1178,7 @@
     // ── what the answers so far make relevant ────────────────────────────
     function kind() {
       var el = document.querySelector('.f-kind:checked');
-      return el ? el.value : 'events-marketing';
+      return el ? el.value : 'event';
     }
     function primary() {
       var el = document.querySelector('.f-dept:checked');
@@ -1198,17 +1202,25 @@
     // A meeting takes the short form: who, when, and nothing else. A step with
     // nothing to ask -- no department on the event has any sub-type -- is not
     // shown at all rather than shown empty.
+    // Five kinds, five sets of questions. Each one asks what that kind actually
+    // has and nothing else -- a post has no venue, a deadline has no end date,
+    // a meeting has neither.
     function activeSteps() {
-      if (kind() === 'meetings-deadlines') return ['kind', 'title', 'dept', 'when', 'final'];
+      var k = kind();
+      if (k === 'meeting' || k === 'deadline') return ['kind', 'title', 'dept', 'when', 'final'];
+
       var out = ['kind', 'title', 'dept', 'extra'];
       if (subsAvailable().length) out.push('subs');
-      // A post happens online: no venue, no van, no extra staff. It keeps its
-      // sub-types, because a Collab post really is a collab, and it keeps the
-      // product highlights, which is half of why a product post exists.
-      if (kind() === 'social') {
-        out.push('social', 'when', 'final');
-        return out;
-      }
+
+      // Online only: no venue, no van, no extra staff. It keeps its sub-types,
+      // because a Collab post really is a collab, and it keeps the product
+      // highlights, which is half of why a product post exists.
+      if (k === 'social') { out.push('social', 'when', 'final'); return out; }
+
+      // A shoot happens somewhere, so Marketing is asked where -- but staff,
+      // permits and vans are an Event's concern.
+      if (k === 'marketing') { out.push('when', 'where', 'final'); return out; }
+
       out.push('when', 'where', 'needs', 'final');
       return out;
     }
@@ -1285,7 +1297,14 @@
       });
 
       var prodWrap = $('#prodWrap');
-      if (prodWrap) prodWrap.hidden = kind() === 'meetings-deadlines';
+      var k = kind();
+      if (prodWrap) prodWrap.hidden = k === 'meeting' || k === 'deadline';
+
+      // A deadline falls on a day; it does not run until one. The end date is
+      // hidden and kept in step with the start rather than left to disagree.
+      var endWrap = $('#f-end') ? $('#f-end').closest('.fld') : null;
+      if (endWrap) endWrap.hidden = k === 'deadline';
+      if (k === 'deadline' && $('#f-end') && $('#f-start')) $('#f-end').value = $('#f-start').value;
 
       $('#stepTrail').innerHTML = !interview ? ''
         : '<span class="trail-n">Step ' + (at + 1) + ' of ' + active.length + '</span>'
@@ -1559,7 +1578,10 @@
       if (e.target.classList.contains('f-extra')) { paintScoped(); return paint(); }
       if (e.target.classList.contains('f-need')) return paintStaff();
       if (e.target.id === 'f-allday') { $('#timeRow').hidden = e.target.checked; return; }
-      if (e.target.id === 'f-start') return startChanged(e.target);
+      if (e.target.id === 'f-start') {
+        if (kind() === 'deadline' && $('#f-end')) $('#f-end').value = e.target.value;
+        return startChanged(e.target);
+      }
       if (e.target.id === 'f-files') return paintQueue();
       if (e.target.classList.contains('p-img')) {
         var f = e.target.files && e.target.files[0];

@@ -16,7 +16,8 @@ import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, DEPARTMENTS, DEPARTMENT_KEYS,
          STATUSES, PRIMACY } from './taxonomy.js';
 import { retailWeek, retailWeekStart } from './retail.js';
 import { sqlStatements } from './sql.js';
-import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial } from './migrate.js';
+import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
+         splitKind } from './migrate.js';
 import { normaliseProducts } from './products.js';
 import { commentMessage, dmMentions, displayName, eventUrl,
          fetchSlackPeople, slackHint } from './slack.js';
@@ -105,6 +106,7 @@ async function ensureSchema(db) {
   await migrateToDecisionTree(db);
   await migrateSubTypeMerges(db);
   await migrateSocialKind(db);
+  await migrateKindSplit(db);
   schemaReady = true;
 }
 
@@ -249,6 +251,59 @@ async function migrateSocialKind(db) {
           new Date().toISOString()).run();
 }
 
+// One-time: Event and Marketing were one kind, Meeting and Deadline another.
+// See splitKind for how each stored row is placed. Guarded by meta, and safe to
+// re-run -- a row that has already moved no longer carries an old key.
+const KIND_SPLIT_KEY = 'kind-split-2026-10';
+
+async function migrateKindSplit(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?')
+    .bind(KIND_SPLIT_KEY).first();
+  if (done) return;
+
+  const res = await db.prepare(
+    "SELECT id, event_type, sub_types, venue, address, city FROM items "
+    + "WHERE event_type IN ('events-marketing', 'meetings-deadlines')").all();
+  const stmt = db.prepare('UPDATE items SET event_type = ? WHERE id = ?');
+  const counts = { event: 0, marketing: 0, meeting: 0 };
+  const batch = [];
+  for (const row of res.results || []) {
+    const next = splitKind(row);
+    if (!next) continue;
+    counts[next] = (counts[next] || 0) + 1;
+    batch.push(stmt.bind(next, row.id));
+  }
+  const BATCH = 200;
+  for (let i = 0; i < batch.length; i += BATCH) {
+    await db.batch(batch.slice(i, i + BATCH));
+  }
+
+  // A saved sync asking for a kind that no longer exists would go quiet. The
+  // old key covered both halves, so both are subscribed rather than guessing.
+  const feeds = await db.prepare('SELECT token, filters FROM feeds').all();
+  const feedStmt = db.prepare('UPDATE feeds SET filters = ? WHERE token = ?');
+  const feedBatch = [];
+  for (const f of feeds.results || []) {
+    let parsed;
+    try { parsed = JSON.parse(f.filters || '{}'); } catch (e) { continue; }
+    if (!parsed || !Array.isArray(parsed.kind)) continue;
+    const kind = [];
+    let changed = false;
+    for (const k of parsed.kind) {
+      if (k === 'events-marketing') { changed = true; kind.push('event', 'marketing'); }
+      else if (k === 'meetings-deadlines') { changed = true; kind.push('meeting', 'deadline'); }
+      else kind.push(k);
+    }
+    if (changed) feedBatch.push(feedStmt.bind(JSON.stringify({ ...parsed, kind }), f.token));
+  }
+  if (feedBatch.length) await db.batch(feedBatch);
+
+  await db.prepare(
+    'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(KIND_SPLIT_KEY, JSON.stringify({ ...counts, feeds: feedBatch.length }),
+          new Date().toISOString()).run();
+}
+
 const json = (body, status) => new Response(JSON.stringify(body), {
   status: status || 200,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
@@ -299,8 +354,8 @@ function normalise(input, existing) {
   out.title = clean(pick('title'), 200);
   if (!out.title) errors.push('Event name is required.');
 
-  out.event_type = one('event_type', EVENT_TYPE_KEYS, 'Event Type') || 'events-marketing';
-  const isMeeting = out.event_type === 'meetings-deadlines';
+  out.event_type = one('event_type', EVENT_TYPE_KEYS, 'Event Type') || 'event';
+  const isMeeting = out.event_type === 'meeting' || out.event_type === 'deadline';
 
   // The primary department owns the event and gives it its colour. Everything
   // else on the event is along for the ride.
@@ -405,12 +460,14 @@ function normalise(input, existing) {
   out.products = prod.products;
   for (const e of prod.errors) errors.push(e);
 
+  // Each kind clears what its own form never showed, so what is stored matches
+  // what the person who saved it was actually looking at.
   if (isMeeting) for (const k of MEETING_BLANKS) out[k] = null;
-  // A post has no venue and takes no van; everything else has no caption. Each
-  // form clears what it never showed, so what is stored matches what the person
-  // who saved it was actually looking at.
   if (out.event_type === 'social') for (const k of SOCIAL_BLANKS) out[k] = null;
   else for (const k of SOCIAL_ONLY) out[k] = null;
+  if (out.event_type === 'marketing') for (const k of MARKETING_BLANKS) out[k] = null;
+  // A deadline is a point, not a span: it ends the day it falls on.
+  if (out.event_type === 'deadline') out.end_date = out.start_date;
 
   return { row: out, errors };
 }
@@ -434,6 +491,10 @@ const MEETING_BLANKS = ['sub_types', 'needs', 'staff_count', 'vehicles',
 const SOCIAL_BLANKS = ['needs', 'staff_count', 'vehicles',
                        'venue', 'address', 'city', 'state', 'zip'];
 const SOCIAL_ONLY = ['social_type', 'channels', 'pillar', 'production', 'caption', 'tags'];
+
+// Marketing can have a place -- a shoot happens somewhere -- but staff, permits
+// and vans are an Event's concern.
+const MARKETING_BLANKS = ['needs', 'staff_count', 'vehicles'];
 
 // Year / Week / Start (Week) / End (Week) / Month / Day are not stored; they are
 // attached here so every reader sees the same values.

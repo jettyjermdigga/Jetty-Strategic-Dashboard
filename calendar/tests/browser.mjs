@@ -30,7 +30,7 @@ const { TAXONOMY } = await import('../worker/taxonomy.js');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 
 const ev = (o) => Object.assign({
-  event_type: 'events-marketing', department: 'jrf', departments: '', sub_types: '',
+  event_type: 'event', department: 'jrf', departments: '', sub_types: '',
   needs: '', staff_count: '', vehicles: '', status: 'Booked',
   start_date: dayThis(8), end_date: dayThis(8), all_day: 1, start_time: '', end_time: '',
   venue: '', address: '', city: '', state: '', zip: '', notes: '', url: '', attachment_count: 0,
@@ -58,7 +58,7 @@ const ITEMS = [
        department: 'marketing', sub_types: 'email-sms',
        start_date: dayThis(14), end_date: dayThis(14) }),
   ev({ id: '44444444-4444-4444-8444-444444444444', title: 'Buy Plan Meeting',
-       event_type: 'meetings-deadlines', department: '',
+       event_type: 'meeting', department: '',
        start_date: dayThis(17), end_date: dayThis(17) }),
   ev({ id: '55555555-5555-4555-8555-555555555555', title: 'Surf Expo',
        department: 'wholesale', departments: 'jetty-ink', sub_types: 'tradeshow',
@@ -488,7 +488,7 @@ await t('has a Social chip of its own on the filter bar', async () =>
 
 console.log('a meeting');
 await page.locator('#addBtn').click();
-await page.locator('.f-kind[value="meetings-deadlines"]').check();
+await page.locator('.f-kind[value="meeting"]').check();
 await t('is five steps, not nine', async () =>
   (await page.locator('.trail-n').textContent()).includes('of 5'));
 await t('never asks about a venue', async () => {
@@ -502,6 +502,56 @@ await t('never asks about a venue', async () => {
     await page.locator('button[data-act="next"]').click();
   }
   return true;
+});
+await page.locator('button[data-act="close"]').click();
+
+console.log('a deadline');
+await page.locator('#addBtn').click();
+await page.locator('.f-kind[value="deadline"]').check();
+await t('takes the same short form as a meeting', async () =>
+  (await page.locator('.trail-n').textContent()).includes('of 5'));
+await page.locator('button[data-act="next"]').click();
+await page.locator('#f-title').fill('Line sheet due');
+await page.locator('button[data-act="next"]').click();
+await page.locator('.f-dept[value="wholesale"]').check();
+await page.locator('button[data-act="next"]').click();
+await t('falls on a day rather than running until one', async () =>
+  (await page.locator('#f-start').isVisible())
+  && !(await page.locator('#f-end').isVisible()));
+await t('keeps the hidden end date in step with the start', async () => {
+  await page.locator('#f-start').fill('2026-11-20');
+  await page.locator('#f-start').dispatchEvent('change');
+  return (await page.locator('#f-end').inputValue()) === '2026-11-20';
+});
+await page.locator('button[data-act="next"]').click();
+await page.locator('button[data-act="save"]').click();
+await page.waitForFunction(() => document.querySelector('#modal').hidden);
+await t('posts as its own kind, one date wide', async () =>
+  seen.posted.event_type === 'deadline'
+  && seen.posted.start_date === '2026-11-20' && seen.posted.end_date === '2026-11-20');
+await t('has a Deadlines chip beside Meetings and Social', async () =>
+  (await page.locator('.fchip[data-axis="kinds"][data-key="deadline"]').count()) === 1
+  && (await page.locator('.fchip[data-axis="kinds"][data-key="meeting"]').count()) === 1);
+
+console.log('marketing');
+await page.locator('#addBtn').click();
+await page.locator('.f-kind[value="marketing"]').check();
+await page.locator('button[data-act="next"]').click();
+await page.locator('#f-title').fill('Spring Lookbook Shoot');
+await t('is asked where, but not what staff or vans it needs', async () => {
+  let sawWhere = false;
+  for (let i = 0; i < 9; i++) {
+    if (await page.locator('.f-need').first().isVisible().catch(() => false)) return false;
+    if (await page.locator('#f-venue').isVisible()) sawWhere = true;
+    if (await page.locator('#f-status').isVisible()) return sawWhere;
+    if ((await page.locator('#deptPick').isVisible())
+        && !(await page.locator('.f-dept:checked').count())) {
+      await page.locator('.f-dept[value="marketing"]').check();
+    }
+    if (!(await page.locator('button[data-act="next"]').count())) break;
+    await page.locator('button[data-act="next"]').click();
+  }
+  return false;
 });
 await page.locator('button[data-act="close"]').click();
 

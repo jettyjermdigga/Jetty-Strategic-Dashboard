@@ -68,7 +68,7 @@ export function planMigration(row) {
   }
 
   return {
-    event_type: isMeeting ? 'meetings-deadlines' : 'events-marketing',
+    event_type: isMeeting ? 'meeting' : 'event',
     department: depts[0] || null,
     departments: depts.length > 1 ? depts.slice(1).join(',') : null,
     sub_types: subs.length ? subs.join(',') : null,
@@ -130,4 +130,31 @@ export function promoteSocial(row) {
     event_type: 'social',
     sub_types: kept.length ? kept.join(',') : null,
   };
+}
+
+// Event and Marketing were one kind, as were Meeting and Deadline. Splitting
+// them means deciding which half each stored row belongs to.
+//
+// The evidence, in order: an item with a place is an Event, whatever else is
+// true of it -- a photo shoot at the flagship store is still something
+// happening somewhere. Otherwise, an item carrying a Marketing sub-type is
+// Marketing. Everything else is an Event, which is the safer default: an Event
+// form asks more questions than a Marketing one, so nothing is hidden by being
+// put there.
+//
+// Deadlines are not guessed at. Nothing stored says which meetings were really
+// deadlines, and inventing it from a title would be worse than leaving them
+// where they are for somebody to re-tag.
+const MARKETING_SUBS = ['campaign-promotion', 'email-sms', 'photo-video', 'collab',
+                        'ambassador', 'influencer', 'website'];
+
+export function splitKind(row) {
+  const was = (row.event_type || '').trim();
+  if (was === 'meetings-deadlines') return 'meeting';
+  if (was !== 'events-marketing') return null;   // social, or already split
+  if ((row.venue || '').trim() || (row.address || '').trim() || (row.city || '').trim()) {
+    return 'event';
+  }
+  const subs = splitList(row.sub_types);
+  return subs.some((k) => MARKETING_SUBS.includes(k)) ? 'marketing' : 'event';
 }

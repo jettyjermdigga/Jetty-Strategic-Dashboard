@@ -15,7 +15,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const root = (p) => path.join(HERE, '..', p);
 
 import { sqlStatements } from '../worker/sql.js';
-import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
+import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial, splitKind,
          SUB_TYPE_MERGES } from '../worker/migrate.js';
 import { normaliseProducts, readProducts, MAX_PRODUCTS } from '../worker/products.js';
 import { commentMessage, displayName, dmMentions, escapeSlack, eventUrl, eventWhen,
@@ -77,7 +77,7 @@ describe('planMigration', () => {
   it('keeps a single department', () => {
     const p = planMigration({ event_types: 'box-truck-events' });
     eq([p.event_type, p.department, p.departments],
-       ['events-marketing', 'box-truck', null]);
+       ['event', 'box-truck', null]);
   });
   it('leaves a store sale with the store, not with Marketing', () => {
     const p = planMigration({ event_types: 'long-branch-store,marketing' });
@@ -88,7 +88,7 @@ describe('planMigration', () => {
   });
   it('turns a meeting into an Event Type, not a department', () => {
     const p = planMigration({ event_types: 'meetings' });
-    eq([p.event_type, p.department], ['meetings-deadlines', null]);
+    eq([p.event_type, p.department], ['meeting', null]);
   });
   it('renames prodev', () => {
     eq(planMigration({ event_types: 'prodev' }).department, 'product-development');
@@ -354,6 +354,35 @@ describe('social becoming its own kind', () => {
   });
 });
 
+describe('splitting Event from Marketing', () => {
+  const old = (o) => Object.assign({ event_type: 'events-marketing' }, o);
+
+  it('calls anything with a place an Event, whatever else it carries', () => {
+    eq(splitKind(old({ venue: 'Dock Road', sub_types: 'photo-video' })), 'event');
+    eq(splitKind(old({ address: '1 Main St' })), 'event');
+    eq(splitKind(old({ city: 'Beach Haven' })), 'event');
+  });
+  it('calls a placeless item with a Marketing sub-type Marketing', () => {
+    eq(splitKind(old({ sub_types: 'email-sms' })), 'marketing');
+    eq(splitKind(old({ sub_types: 'campaign-promotion,collab' })), 'marketing');
+  });
+  it('falls back to Event, which asks more rather than less', () => {
+    eq(splitKind(old({})), 'event');
+    eq(splitKind(old({ sub_types: 'tradeshow' })), 'event');
+  });
+  it('sends every old meeting to Meeting and guesses no deadlines', () => {
+    eq(splitKind({ event_type: 'meetings-deadlines' }), 'meeting');
+  });
+  it('leaves a kind that was already split alone', () => {
+    eq(splitKind({ event_type: 'social' }), null);
+    eq(splitKind({ event_type: 'marketing' }), null);
+    eq(splitKind({ event_type: '' }), null);
+  });
+  it('is idempotent -- what it returns is not selected again', () => {
+    eq(splitKind({ event_type: splitKind(old({ sub_types: 'email-sms' })) }), null);
+  });
+});
+
 describe('the social axes', () => {
   it('offers the four shapes a post takes', () => {
     eq(SOCIAL_TYPES.map((x) => x.key), ['post', 'carousel', 'story', 'reel']);
@@ -407,8 +436,9 @@ describe('taxonomy', () => {
     // They were scoped once, and a Flagship event could not record one at all.
     for (const n of NEEDS) ok(!n.department, n.key + ' is scoped again');
   });
-  it('keeps the three Event Types the form branches on', () => {
-    eq([...EVENT_TYPE_KEYS].sort(), ['events-marketing', 'meetings-deadlines', 'social']);
+  it('keeps the five Event Types the form branches on', () => {
+    eq([...EVENT_TYPE_KEYS].sort(),
+       ['deadline', 'event', 'marketing', 'meeting', 'social']);
   });
   it('keeps Cancelled, which the ICS feed and the strikethrough rely on', () => {
     eq(STATUSES, ['Booked', 'Pending', 'Cancelled']);
