@@ -162,6 +162,25 @@
     return item[field] ? item[field].split(',').filter(Boolean) : [];
   }
   function subsOf(item)     { return listOf(item, 'sub_types'); }
+
+  // Product highlights are JSON rather than a comma list -- a row is five
+  // fields, not one key. A column holding anything else costs the event its
+  // highlights, never its page.
+  function productsOf(item) {
+    if (!item || !item.products) return [];
+    try {
+      var list = JSON.parse(item.products);
+      return Array.isArray(list) ? list : [];
+    } catch (e) { return []; }
+  }
+  function divLabel(k) { return labelIn(tax('divisions'), k); }
+  function productLine(p) {
+    return [divLabel(p.division), p.category, p.sku].filter(Boolean).join(' \u203a ');
+  }
+  // Good enough to name a row and short enough to live in an R2 object key.
+  function rowId() {
+    return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
   function needsOf(item)    { return listOf(item, 'needs'); }
   function vehiclesOf(item) { return listOf(item, 'vehicles'); }
 
@@ -699,6 +718,16 @@
     add('Link', it.url ? '<a href="' + esc(it.url) + '" target="_blank" rel="noopener">'
       + esc(it.url) + '</a>' : '');
     add('Description / Notes', it.notes ? '<span class="det-notes">' + esc(it.notes) + '</span>' : '');
+    var prods = productsOf(it);
+    add('Product highlights', prods.length
+      ? '<div class="det-prods">' + prods.map(function (p) {
+          var line = esc(productLine(p));
+          return '<div class="det-prod">'
+            + (p.url ? '<a href="' + esc(p.url) + '" target="_blank" rel="noopener">' + line + '</a>'
+                     : '<span>' + line + '</span>')
+            + '</div>';
+        }).join('') + '</div>'
+      : '');
     if (it.attachment_count) {
       add('Attachments', '<div class="att-slot"><span class="muted">Loading\u2026</span></div>');
     }
@@ -835,6 +864,18 @@
           + '</select></div>'
           + '<div class="fld"><label for="f-url">Link</label>'
           + '<input type="url" id="f-url" value="' + esc(it.url || '') + '" placeholder="https://"></div>'
+          // Product highlights sit in step 9 rather than a step of their own:
+          // most events have none, and an interview question that is usually
+          // skipped is worse than a section you can ignore. Hidden outright on
+          // a meeting, which stores none.
+          + '<div class="fld" id="prodWrap">'
+          + '<label>Product highlights <span class="lbl-note">optional</span></label>'
+          + '<div class="hint">Division is the only required part. Category and SKU are '
+          + 'free text \u2014 there is no product list to pick from \u2014 and the link points '
+          + 'at the category or product page on jettylife.com.</div>'
+          + '<div class="prod-rows" id="prodRows"></div>'
+          + '<button type="button" class="cal-btn small" id="prodAdd">+ Add a highlight</button>'
+          + '</div>'
           + '<div class="fld"><label for="f-notes">Description / Notes</label>'
           + '<textarea id="f-notes" maxlength="4000" placeholder="What is it, what has to happen, '
           + 'anything the next person needs to know.">' + esc(it.notes || '') + '</textarea></div>'
@@ -962,6 +1003,9 @@
         el.hidden = interview ? !(on && el.dataset.step === active[at]) : !on;
       });
 
+      var prodWrap = $('#prodWrap');
+      if (prodWrap) prodWrap.hidden = kind() === 'meetings-deadlines';
+
       $('#stepTrail').innerHTML = !interview ? ''
         : '<span class="trail-n">Step ' + (at + 1) + ' of ' + active.length + '</span>'
           + active.map(function (k, i) {
@@ -997,6 +1041,9 @@
     }
     // wire() reads these off the modal footer, which is rebuilt on every step.
     showForm.step = step;
+    // The example images cannot go up until the event has an id, exactly like
+    // the general attachments. The save path collects them from here.
+    showForm.pendingImages = function () { return prodImages; };
     showForm.atLastStep = function () {
       var active = activeSteps();
       return !interview || at === active.length - 1;
@@ -1012,8 +1059,11 @@
     function paintFiles() {
       var box = $('#attList');
       if (!box) return;
-      box.innerHTML = state.attachments.length
-        ? attachHtml(state.attachments, true)
+      // The example images belong to their highlight row, not to the general
+      // list -- showing them twice would offer two Remove buttons for one file.
+      var loose = state.attachments.filter(function (a) { return !a.slot; });
+      box.innerHTML = loose.length
+        ? attachHtml(loose, true)
         : '<p class="hint">Nothing attached yet.</p>';
     }
     if (existing) {
@@ -1022,8 +1072,92 @@
       api('/api/items/' + existing.id).then(function (r) {
         state.attachments = r.attachments || [];
         paintFiles();
+        paintProds();
       }).catch(function () {});
     }
+
+    // ── product highlights ───────────────────────────────────────────────
+
+    // Rows live here rather than being read back out of the DOM on every
+    // keystroke: a row carries an id that an example image names before either
+    // of them has been saved, and repainting must not invent a new one.
+    var prodRows = productsOf(it).map(function (p) {
+      return { id: p.id || rowId(), division: p.division || '', category: p.category || '',
+               sku: p.sku || '', url: p.url || '' };
+    });
+    // rowId -> File, waiting for the event to exist before it can be uploaded.
+    var prodImages = {};
+
+    function readProdRows() {
+      Array.prototype.forEach.call(document.querySelectorAll('.prod-row'), function (el) {
+        var row = prodRows.filter(function (r) { return r.id === el.dataset.row; })[0];
+        if (!row) return;
+        row.division = el.querySelector('.p-div').value;
+        row.category = el.querySelector('.p-cat').value.trim();
+        row.sku = el.querySelector('.p-sku').value.trim();
+        row.url = el.querySelector('.p-url').value.trim();
+      });
+      return prodRows;
+    }
+
+    // An image already uploaded against this row. Served as a download rather
+    // than shown inline: attachments come back as octet-stream with a
+    // disposition header on purpose, and relaxing that to render a thumbnail
+    // would undo the one thing keeping an uploaded file from running in the
+    // calendar's own origin. A file not yet uploaded is a local File, so it
+    // previews safely.
+    function savedImage(id) {
+      return state.attachments.filter(function (a) { return a.slot === id; })[0];
+    }
+
+    function prodImageHtml(row) {
+      var pending = prodImages[row.id];
+      if (pending) {
+        return '<span class="prod-img-has">'
+          + '<img src="' + URL.createObjectURL(pending) + '" alt="">'
+          + '<span class="prod-img-n">' + esc(pending.name) + '</span>'
+          + '<button type="button" class="prod-img-x" data-row="' + esc(row.id) + '">\u00d7</button>'
+          + '</span>';
+      }
+      var saved = savedImage(row.id);
+      if (saved) {
+        return '<span class="prod-img-has">'
+          + '<a href="/api/attachments/' + esc(saved.id) + '">' + esc(saved.name) + '</a>'
+          + '<button type="button" class="att-x prod-img-x" data-att="' + esc(saved.id) + '">\u00d7</button>'
+          + '</span>';
+      }
+      return '<label class="prod-img"><input type="file" class="p-img" accept="image/*" '
+        + 'data-row="' + esc(row.id) + '"><span>Example\u2026</span></label>';
+    }
+
+    function paintProds() {
+      var box = $('#prodRows');
+      if (!box) return;
+      box.innerHTML = prodRows.map(function (row) {
+        return '<div class="prod-row" data-row="' + esc(row.id) + '">'
+          + '<select class="p-div">'
+          + '<option value="">Division\u2026</option>'
+          + tax('divisions').map(function (d) {
+              return '<option value="' + esc(d.key) + '"'
+                + (d.key === row.division ? ' selected' : '') + '>' + esc(d.label) + '</option>';
+            }).join('')
+          + '</select>'
+          + '<input type="text" class="p-cat" maxlength="120" placeholder="Category" value="'
+          + esc(row.category) + '">'
+          + '<input type="text" class="p-sku" maxlength="120" placeholder="SKU / style" value="'
+          + esc(row.sku) + '">'
+          + '<input type="url" class="p-url" maxlength="500" placeholder="jettylife.com link" value="'
+          + esc(row.url) + '">'
+          + prodImageHtml(row)
+          + '<button type="button" class="prod-x" data-row="' + esc(row.id) + '" '
+          + 'title="Remove this highlight">\u00d7</button>'
+          + '</div>';
+      }).join('') || '<p class="hint">None yet.</p>';
+    }
+
+    // Hoisting makes paintProds callable earlier than this; prodRows above is a
+    // var, so it would still be undefined. Paint once the state exists.
+    paintProds();
 
     // Files picked or dropped but not yet uploaded. The file input is the one
     // source of truth -- the save path reads it -- so a drop writes into it via
@@ -1097,6 +1231,31 @@
         setQueue(keep);
         return;
       }
+      if (e.target.closest('#prodAdd')) {
+        e.preventDefault();
+        readProdRows();
+        prodRows.push({ id: rowId(), division: '', category: '', sku: '', url: '' });
+        paintProds();
+        return;
+      }
+      var rm = e.target.closest('.prod-x');
+      if (rm) {
+        e.preventDefault();
+        readProdRows();
+        prodRows = prodRows.filter(function (r) { return r.id !== rm.dataset.row; });
+        delete prodImages[rm.dataset.row];
+        paintProds();
+        return;
+      }
+      var unpick = e.target.closest('.prod-img-x');
+      if (unpick && unpick.dataset.row) {
+        e.preventDefault();
+        readProdRows();
+        delete prodImages[unpick.dataset.row];
+        paintProds();
+        return;
+      }
+
       var x = e.target.closest('.att-x');
       if (!x) return;
       e.preventDefault();
@@ -1108,6 +1267,7 @@
             return a.id !== x.dataset.att;
           });
           paintFiles();
+          paintProds();
         })
         .catch(function (err) { x.disabled = false; formError(err.message); });
     };
@@ -1120,6 +1280,13 @@
       if (e.target.id === 'f-allday') { $('#timeRow').hidden = e.target.checked; return; }
       if (e.target.id === 'f-start') return startChanged(e.target);
       if (e.target.id === 'f-files') return paintQueue();
+      if (e.target.classList.contains('p-img')) {
+        var f = e.target.files && e.target.files[0];
+        if (!f) return;
+        readProdRows();
+        prodImages[e.target.dataset.row] = f;
+        return paintProds();
+      }
     };
 
     // Year / Week / Start (Week) / End (Week) / Month / Day are shown as they
@@ -1165,7 +1332,20 @@
       var el = document.querySelector(sel);
       return el ? el.value : '';
     };
+    // Read straight off the rows: each carries its own id, which an example
+    // image already names, so there is no second copy to drift out of step.
+    var products = Array.prototype.map.call(document.querySelectorAll('.prod-row'),
+      function (el) {
+        return {
+          id: el.dataset.row,
+          division: el.querySelector('.p-div').value,
+          category: el.querySelector('.p-cat').value,
+          sku: el.querySelector('.p-sku').value,
+          url: el.querySelector('.p-url').value,
+        };
+      });
     return {
+      products: products,
       title: $('#f-title').value,
       status: $('#f-status').value,
       event_type: one('.f-kind:checked'),
@@ -1269,6 +1449,10 @@
     ['Retail Week',        function (it) { return it.retail ? it.retail.week : ''; }],
     ['Notes',              function (it) { return it.notes; }],
     ['URL',                function (it) { return it.url; }],
+    ['Product Highlights', function (it) {
+      return productsOf(it).map(productLine).join('; '); }],
+    ['Product Links',      function (it) {
+      return productsOf(it).map(function (p) { return p.url; }).filter(Boolean).join('; '); }],
     ['Attachments',        function (it) { return it.attachment_count || 0; }],
   ];
 
@@ -1527,15 +1711,20 @@
   // One at a time rather than in parallel: a handful of 10 MB files fired at
   // once is the sort of thing that gets a Worker rate-limited, and the order
   // they arrive in is the order they were picked.
-  function uploadFiles(itemId, files) {
-    return files.reduce(function (chain, file) {
+  function uploadFiles(itemId, entries) {
+    return entries.reduce(function (chain, entry) {
+      var file = entry.file;
       return chain.then(function () {
+        var headers = {
+          'X-File-Name': encodeURIComponent(file.name).replace(/%20/g, ' '),
+          'content-type': file.type || 'application/octet-stream',
+        };
+        // Which product highlight this one illustrates. Absent on an ordinary
+        // attachment, which belongs to the event rather than to a row.
+        if (entry.slot) headers['X-File-Slot'] = entry.slot;
         return fetch('/api/items/' + itemId + '/attachments', {
           method: 'POST',
-          headers: {
-            'X-File-Name': encodeURIComponent(file.name).replace(/%20/g, ' '),
-            'content-type': file.type || 'application/octet-stream',
-          },
+          headers: headers,
           body: file,
         }).then(function (res) {
           if (res.ok) return res.json();
@@ -1690,7 +1879,12 @@
       if (act === 'save') {
         b.disabled = true;
         var id = b.dataset.id;
-        var picked = $('#f-files') ? Array.prototype.slice.call($('#f-files').files) : [];
+        var picked = ($('#f-files') ? Array.prototype.slice.call($('#f-files').files) : [])
+          .map(function (f) { return { file: f }; });
+        var images = showForm.pendingImages ? showForm.pendingImages() : {};
+        Object.keys(images).forEach(function (slot) {
+          picked.push({ file: images[slot], slot: slot });
+        });
         api(id ? '/api/items/' + id : '/api/items', {
           method: id ? 'PATCH' : 'POST',
           body: JSON.stringify(readForm()),

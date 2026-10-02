@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS items (
   zip         TEXT,
   notes       TEXT,
   url         TEXT,
+  products    TEXT,                       -- JSON list of product highlights:
+                                          -- id, division, category, sku, url. See
+                                          -- worker/products.js. An example image is an
+                                          -- ordinary attachment whose slot is the row id.
   event_types TEXT,                       -- retired. The pre-decision-tree "Event Type" axis,
                                           -- kept only so the one-time migration below has a
                                           -- source; nothing reads it afterwards.
@@ -51,6 +55,8 @@ CREATE TABLE IF NOT EXISTS attachments (
   size         INTEGER,
   content_type TEXT,                   -- what the browser claimed; NOT what we serve back
   r2_key       TEXT NOT NULL,          -- object key, never derived from the filename
+  slot         TEXT,                   -- which product highlight row this illustrates;
+                                       -- NULL for an ordinary attachment on the event
   uploaded_by  TEXT,
   uploaded_at  TEXT
 );

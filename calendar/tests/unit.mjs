@@ -16,10 +16,11 @@ const root = (p) => path.join(HERE, '..', p);
 
 import { sqlStatements } from '../worker/sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters, SUB_TYPE_MERGES } from '../worker/migrate.js';
+import { normaliseProducts, readProducts, MAX_PRODUCTS } from '../worker/products.js';
 import { buildIcs } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
 import {
-  DEPARTMENTS, DEPARTMENT_KEYS, EVENT_TYPE_KEYS, SUB_TYPES, NEEDS, VEHICLES,
+  DEPARTMENTS, DEPARTMENT_KEYS, DIVISIONS, EVENT_TYPE_KEYS, SUB_TYPES, NEEDS, VEHICLES,
   STATUSES, PRIMACY, RETAIL_EPOCH,
 } from '../worker/taxonomy.js';
 
@@ -164,6 +165,71 @@ describe('merging the sub-types that said the same thing', () => {
   });
   it('survives a filters column that is not JSON', () => {
     eq(mergeFeedFilters('not json at all'), null);
+  });
+});
+
+describe('product highlights', () => {
+  const row = (o) => Object.assign({ id: 'r1', division: 'mens' }, o);
+
+  it('keeps a row down to its division', () => {
+    const r = normaliseProducts([row({})]);
+    eq(r.errors, []);
+    eq(readProducts(r.products), [{ id: 'r1', division: 'mens', category: '', sku: '', url: '' }]);
+  });
+  it('carries the category, SKU and link through', () => {
+    const r = normaliseProducts([row({
+      category: 'Boardshorts', sku: 'JM-1234', url: 'https://jettylife.com/collections/boardshorts' })]);
+    eq(readProducts(r.products)[0].sku, 'JM-1234');
+    eq(readProducts(r.products)[0].url, 'https://jettylife.com/collections/boardshorts');
+  });
+  it('takes JSON as readily as a list, because that is what the column holds', () => {
+    eq(normaliseProducts(JSON.stringify([row({})])).products, normaliseProducts([row({})]).products);
+  });
+  it('stores nothing for an event with no highlights', () => {
+    eq(normaliseProducts(null).products, null);
+    eq(normaliseProducts([]).products, null);
+  });
+  it('drops a row that was started and abandoned', () => {
+    const r = normaliseProducts([{ id: 'r1', division: '', category: '', sku: '', url: '' }]);
+    eq(r.errors, []);
+    eq(r.products, null);
+  });
+  it('refuses a row with a category but no division', () => {
+    const r = normaliseProducts([{ id: 'r1', division: '', category: 'Tees' }]);
+    ok(r.errors.length === 1 && r.errors[0].includes('pick a division'));
+    eq(r.products, null);
+  });
+  it('refuses a division the taxonomy does not have', () => {
+    ok(normaliseProducts([row({ division: 'pets' })]).errors[0].includes('unknown division'));
+  });
+  it('refuses a link that is not http', () => {
+    ok(normaliseProducts([row({ url: 'javascript:alert(1)' })]).errors[0].includes('http://'));
+    ok(normaliseProducts([row({ url: '/collections/tees' })]).errors.length === 1);
+  });
+  it('refuses a row id that could not be an object key', () => {
+    ok(normaliseProducts([row({ id: '../../etc' })]).errors[0].includes('bad row id'));
+    ok(normaliseProducts([row({ id: '' })]).errors.length === 1);
+  });
+  it('refuses two rows claiming the same id', () => {
+    ok(normaliseProducts([row({}), row({ category: 'Tees' })]).errors[0].includes('duplicate'));
+  });
+  it('caps how many one event can carry', () => {
+    const many = [];
+    for (let i = 0; i <= MAX_PRODUCTS; i++) many.push({ id: 'r' + i, division: 'mens' });
+    ok(normaliseProducts(many).errors[0].includes(String(MAX_PRODUCTS)));
+  });
+  it('writes nothing at all when any row is wrong', () => {
+    const r = normaliseProducts([row({ category: 'Tees' }), { id: 'r2', division: 'pets' }]);
+    eq(r.products, null);
+  });
+  it('survives a column holding something that is not JSON', () => {
+    eq(readProducts('not json'), []);
+    eq(readProducts('{"a":1}'), []);
+    eq(readProducts(null), []);
+    eq(normaliseProducts('not json').errors.length, 1);
+  });
+  it('names the four divisions the line is cut by', () => {
+    eq(DIVISIONS.map((d) => d.key), ['mens', 'womens', 'yti', 'accessories']);
   });
 });
 

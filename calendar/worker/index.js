@@ -16,6 +16,7 @@ import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, DEPARTMENTS, DEPARTMENT_KEYS,
 import { retailWeek, retailWeekStart } from './retail.js';
 import { sqlStatements } from './sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters } from './migrate.js';
+import { normaliseProducts } from './products.js';
 import SCHEMA from './schema.sql';
 
 // Shown instead of the calendar when a request arrives with no Cloudflare
@@ -72,8 +73,11 @@ let schemaReady = false;
 // column that is already there is the expected case, not a failure.
 const ADDED_COLUMNS = [
   'event_type TEXT', 'department TEXT', 'departments TEXT',
-  'staff_count TEXT', 'vehicles TEXT',
+  'staff_count TEXT', 'vehicles TEXT', 'products TEXT',
 ];
+
+// Same idea, on the attachments table.
+const ADDED_ATTACHMENT_COLUMNS = ['slot TEXT'];
 
 async function ensureSchema(db) {
   if (schemaReady) return;
@@ -82,13 +86,15 @@ async function ensureSchema(db) {
   for (const sql of sqlStatements(SCHEMA)) {
     await db.prepare(sql).run();
   }
-  for (const col of ADDED_COLUMNS) {
-    try {
-      await db.prepare('ALTER TABLE items ADD COLUMN ' + col).run();
-    } catch (err) {
-      // "duplicate column name" every time after the first, and on any database
-      // created from the current schema. Anything else is worth surfacing.
-      if (!/duplicate column/i.test(String(err && err.message))) throw err;
+  for (const [table, cols] of [['items', ADDED_COLUMNS], ['attachments', ADDED_ATTACHMENT_COLUMNS]]) {
+    for (const col of cols) {
+      try {
+        await db.prepare('ALTER TABLE ' + table + ' ADD COLUMN ' + col).run();
+      } catch (err) {
+        // "duplicate column name" every time after the first, and on any database
+        // created from the current schema. Anything else is worth surfacing.
+        if (!/duplicate column/i.test(String(err && err.message))) throw err;
+      }
     }
   }
   await migrateToDecisionTree(db);
@@ -332,6 +338,10 @@ function normalise(input, existing) {
   out.url = clean(pick('url'), 500);
   if (out.url && !/^https?:\/\//i.test(out.url)) errors.push('Link must start with http:// or https://.');
 
+  const prod = normaliseProducts(pick('products'));
+  out.products = prod.products;
+  for (const e of prod.errors) errors.push(e);
+
   if (isMeeting) for (const k of MEETING_BLANKS) out[k] = null;
 
   return { row: out, errors };
@@ -340,14 +350,14 @@ function normalise(input, existing) {
 const COLS = [
   'title', 'event_type', 'department', 'departments', 'sub_types', 'needs', 'staff_count',
   'vehicles', 'status', 'start_date', 'end_date', 'all_day', 'start_time', 'end_time',
-  'venue', 'address', 'city', 'state', 'zip', 'notes', 'url',
+  'venue', 'address', 'city', 'state', 'zip', 'notes', 'url', 'products',
 ];
 
 // Meetings and deadlines take the short form: who, when, and nothing else. The
 // rest is cleared on write rather than merely hidden, so what is stored matches
 // what the form showed the person who saved it.
 const MEETING_BLANKS = ['sub_types', 'needs', 'staff_count', 'vehicles',
-                        'venue', 'address', 'city', 'state', 'zip'];
+                        'venue', 'address', 'city', 'state', 'zip', 'products'];
 
 // Year / Week / Start (Week) / End (Week) / Month / Day are not stored; they are
 // attached here so every reader sees the same values.
@@ -474,7 +484,7 @@ function asciiName(name) {
 
 async function listAttachments(db, itemId) {
   const res = await db.prepare(
-    'SELECT id, name, size, uploaded_by, uploaded_at FROM attachments '
+    'SELECT id, name, size, slot, uploaded_by, uploaded_at FROM attachments '
     + 'WHERE item_id = ? ORDER BY uploaded_at ASC').bind(itemId).all();
   return res.results || [];
 }
@@ -625,6 +635,10 @@ async function handleApi(request, env, url, who) {
       if (!owner) return json({ error: 'No calendar item with that id.' }, 404);
 
       const name = clean(request.headers.get('X-File-Name'), 200) || 'file';
+      // Which product highlight this one illustrates, if any. The row it names
+      // may not be stored yet -- the browser generates the id before the save --
+      // so this is kept as given rather than checked against the item.
+      const slot = clean(request.headers.get('X-File-Slot'), 40);
       const size = Number(request.headers.get('content-length') || 0);
       if (size > MAX_UPLOAD) {
         return json({ error: 'That file is larger than ' + (MAX_UPLOAD / 1048576) + ' MB.' }, 413);
@@ -642,12 +656,13 @@ async function handleApi(request, env, url, who) {
 
       const now = new Date().toISOString();
       await db.prepare(
-        'INSERT INTO attachments (id, item_id, name, size, content_type, r2_key, uploaded_by, uploaded_at) '
-        + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO attachments (id, item_id, name, size, content_type, r2_key, slot, uploaded_by, uploaded_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).bind(id, itemId, name, body.byteLength,
-             clean(request.headers.get('content-type'), 120), r2Key, who.email, now).run();
+             clean(request.headers.get('content-type'), 120), r2Key, slot, who.email, now).run();
 
-      return json({ attachment: { id, name, size: body.byteLength, uploaded_by: who.email, uploaded_at: now } }, 201);
+      return json({ attachment: { id, name, size: body.byteLength, slot,
+                                  uploaded_by: who.email, uploaded_at: now } }, 201);
     }
     return json({ error: 'Method not allowed.' }, 405);
   }

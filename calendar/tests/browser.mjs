@@ -70,7 +70,7 @@ const ATTACHMENTS = [{
   uploaded_by: 'jeremy@jettylife.com', uploaded_at: dayThis(1) + 'T10:00:00Z',
 }];
 
-const seen = { posted: null, patched: null, uploads: [], deleted: [], savedFilters: null, resets: 0 };
+const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], deleted: [], savedFilters: null, resets: 0 };
 let feedRow = { url: 'https://feed.test/calendar.ics?token=' + 'a'.repeat(64), filters: {} };
 
 const browser = await chromium.launch();
@@ -99,7 +99,9 @@ await page.route('**/*', async (route) => {
     } });
   }
   if (/\/attachments$/.test(p) && method === 'POST') {
-    seen.uploads.push(decodeURIComponent(req.headers()['x-file-name'] || ''));
+    const name = decodeURIComponent(req.headers()['x-file-name'] || '');
+    seen.uploads.push(name);
+    seen.uploadSlots.push({ name, slot: req.headers()['x-file-slot'] || '' });
     return route.fulfill({ status: 201, json: { attachment: { id: 'new', name: 'x', size: 1 } } });
   }
   if (/^\/api\/attachments\//.test(p) && method === 'DELETE') {
@@ -334,6 +336,33 @@ await page.locator('#f-files').setInputFiles([
   { name: 'flyer.pdf', mimeType: 'application/pdf', buffer: Buffer.from('one') },
   { name: 'wrong-one.pdf', mimeType: 'application/pdf', buffer: Buffer.from('two') },
 ]);
+await t('offers no product highlights until one is added', async () =>
+  (await page.locator('.prod-row').count()) === 0
+  && (await page.locator('#prodAdd').isVisible()));
+await page.locator('#prodAdd').click();
+await page.locator('#prodAdd').click();
+await t('adds a row at a time', async () => (await page.locator('.prod-row').count()) === 2);
+await t('offers the four divisions', async () => {
+  const opts = await page.locator('.prod-row').first().locator('.p-div option')
+    .evaluateAll((els) => els.map((e) => e.value));
+  return JSON.stringify(opts) === JSON.stringify(['', 'mens', 'womens', 'yti', 'accessories']);
+});
+await t('drops a row without disturbing the one next to it', async () => {
+  await page.locator('.prod-row').first().locator('.p-cat').fill('Boardshorts');
+  await page.locator('.prod-row').nth(1).locator('.p-cat').fill('Delete me');
+  await page.locator('.prod-row').nth(1).locator('.prod-x').click();
+  return (await page.locator('.prod-row').count()) === 1
+    && (await page.locator('.p-cat').inputValue()) === 'Boardshorts';
+});
+await page.locator('.prod-row .p-div').selectOption('womens');
+await page.locator('.prod-row .p-sku').fill('JW-9000');
+await page.locator('.prod-row .p-url').fill('https://jettylife.com/collections/boardshorts');
+await page.locator('.prod-row .p-img').setInputFiles([
+  { name: 'swatch.png', mimeType: 'image/png', buffer: Buffer.from('img') },
+]);
+await t('shows the example image it will attach to that row', async () =>
+  (await page.locator('.prod-img-n').textContent()) === 'swatch.png');
+
 await t('names the files waiting to go up', async () =>
   (await page.locator('.att-q .att-qn').allTextContents()).join() === 'flyer.pdf,wrong-one.pdf');
 await t('takes one back off before it is uploaded', async () => {
@@ -356,8 +385,20 @@ await t('posts the five axes and the staff count', async () =>
   && JSON.stringify(seen.posted.departments) === '["marketing"]'
   && JSON.stringify(seen.posted.needs) === '["extra-staff"]'
   && seen.posted.staff_count === '3');
-await t('uploads the file after the event exists', async () =>
-  seen.uploads.length === 1 && seen.uploads[0] === 'flyer.pdf');
+await t('posts the product highlight', async () => {
+  const p = seen.posted.products;
+  return p.length === 1 && p[0].division === 'womens' && p[0].category === 'Boardshorts'
+    && p[0].sku === 'JW-9000'
+    && p[0].url === 'https://jettylife.com/collections/boardshorts' && !!p[0].id;
+});
+await t('uploads the event file and the row image, after the event exists', async () =>
+  seen.uploads.length === 2
+  && seen.uploads.includes('flyer.pdf') && seen.uploads.includes('swatch.png'));
+await t('tags the row image with the highlight it illustrates, and the file with nothing', async () => {
+  const img = seen.uploadSlots.find((u) => u.name === 'swatch.png');
+  const doc = seen.uploadSlots.find((u) => u.name === 'flyer.pdf');
+  return img.slot === seen.posted.products[0].id && !doc.slot;
+});
 
 console.log('a meeting');
 await page.locator('#addBtn').click();

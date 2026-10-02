@@ -63,6 +63,16 @@ export const DEPARTMENTS = [
 
 // Scoped: the form offers a department's sub-types once that department is the
 // primary one, and offers none at all for the eight that have none.
+// How the line is cut when an item is about product. Fixed, short, and the
+// only required part of a product highlight -- everything else about a
+// highlight is free text, because there is no product feed to pick from.
+export const DIVISIONS = [
+  { key: 'mens',        label: "Men's" },
+  { key: 'womens',      label: "Women's" },
+  { key: 'yti',         label: 'Youth / Toddler / Infant', short: 'YTI' },
+  { key: 'accessories', label: 'Accessories' },
+];
+
 export const SUB_TYPES = [
   { key: 'tradeshow',   label: 'Tradeshow',   department: 'wholesale' },
   // Same reasoning as Email/SMS below: a promotion is how a campaign reaches
@@ -112,6 +122,7 @@ export const RETAIL_EPOCH_YEAR = 2026;
 
 export const EVENT_TYPE_KEYS = EVENT_TYPES.map((e) => e.key);
 export const DEPARTMENT_KEYS = DEPARTMENTS.map((d) => d.key);
+export const DIVISION_KEYS = DIVISIONS.map((d) => d.key);
 export const SUB_TYPE_KEYS = SUB_TYPES.map((s) => s.key);
 export const NEED_KEYS = NEEDS.map((n) => n.key);
 export const VEHICLE_KEYS = VEHICLES.map((v) => v.key);
@@ -132,6 +143,7 @@ export const PRIMACY = [
 export const TAXONOMY = {
   eventTypes: EVENT_TYPES,
   departments: DEPARTMENTS,
+  divisions: DIVISIONS,
   subTypes: SUB_TYPES,
   needs: NEEDS,
   vehicles: VEHICLES,
