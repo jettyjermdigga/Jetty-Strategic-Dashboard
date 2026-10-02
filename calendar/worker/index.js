@@ -18,7 +18,7 @@ import { sqlStatements } from './sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters } from './migrate.js';
 import { normaliseProducts } from './products.js';
 import { commentMessage, dmMentions, displayName, eventUrl,
-         fetchSlackPeople } from './slack.js';
+         fetchSlackPeople, slackHint } from './slack.js';
 import SCHEMA from './schema.sql';
 
 // Shown instead of the calendar when a request arrives with no Cloudflare
@@ -503,6 +503,34 @@ const ROSTER_TTL_MS = 6 * 60 * 60 * 1000;
 // long after the scope was added.
 const ROSTER_RETRY_MS = 5 * 60 * 1000;
 const ROSTER_KEY = 'slack-roster-next';
+// What happened the last time a mention was sent. Kept so a delivery that fails
+// in the background can still be reported on the next page load -- the request
+// that triggered it has long since gone.
+const SLACK_STATUS_KEY = 'slack-last-delivery';
+
+async function recordSlackResult(db, result) {
+  const value = JSON.stringify({
+    at: new Date().toISOString(),
+    sent: result.sent,
+    errors: (result.errors || []).slice(0, 5),
+  });
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(SLACK_STATUS_KEY, value, new Date().toISOString()).run();
+}
+
+async function readSlackStatus(db) {
+  const row = await db.prepare('SELECT value FROM meta WHERE key = ?')
+    .bind(SLACK_STATUS_KEY).first();
+  if (!row) return null;
+  try {
+    const st = JSON.parse(row.value);
+    if (!st.errors || !st.errors.length) return { at: st.at, sent: st.sent, errors: [] };
+    return { at: st.at, sent: st.sent, errors: st.errors,
+             hint: slackHint(st.errors[0] && st.errors[0].error) };
+  } catch (e) {
+    return null;
+  }
+}
 
 function cleanMentions(raw) {
   const list = Array.isArray(raw) ? raw : String(raw == null ? '' : raw).split(',');
@@ -772,7 +800,13 @@ async function handleApi(request, env, url, who, ctx) {
     } catch (e) {
       // A Slack problem costs the list its freshness, not its existence.
     }
-    return json({ people: await listPeople(db), slackConfigured: Boolean(env.SLACK_BOT_TOKEN) });
+    return json({
+      people: await listPeople(db),
+      slackConfigured: Boolean(env.SLACK_BOT_TOKEN),
+      // So a mention that is quietly not arriving shows up as a warning rather
+      // than as nothing at all.
+      slackStatus: env.SLACK_BOT_TOKEN ? await readSlackStatus(db) : null,
+    });
   }
 
   const cmtMatch = path.match(new RegExp('^/api/items/(' + UUID + ')/comments$', 'i'));
@@ -808,16 +842,21 @@ async function handleApi(request, env, url, who, ctx) {
       if (mentions.length && env.SLACK_BOT_TOKEN) {
         const notify = (async () => {
           const roster = await listPeople(db);
-          const targets = roster.filter((p) => mentions.includes(p.email) && p.slack_id);
+          // Everyone mentioned, not only those with a Slack id: a mention that
+          // cannot be delivered is exactly the case worth reporting.
+          const targets = roster.filter((p) => mentions.includes(p.email));
           if (!targets.length) return;
           const me = roster.find((p) => p.email === String(who.email).toLowerCase());
-          await dmMentions(env.SLACK_BOT_TOKEN, targets, commentMessage({
+          const result = await dmMentions(env.SLACK_BOT_TOKEN, targets, commentMessage({
             authorName: displayName(who.email, me && me.name),
             item,
             body: text,
             url: eventUrl(url.origin, itemId),
           }));
-        })().catch(() => {});
+          await recordSlackResult(db, result);
+        })().catch((e) => recordSlackResult(db, {
+          sent: 0, errors: [{ email: '', error: String((e && e.message) || e) }],
+        }).catch(() => {}));
         if (ctx && ctx.waitUntil) ctx.waitUntil(notify);
       }
 

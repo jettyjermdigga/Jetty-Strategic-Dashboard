@@ -76,6 +76,9 @@ const COMMENTS = [{
   created_at: '2026-10-01T09:00:00Z',
 }];
 
+// Flipped by the delivery-warning check below.
+let slackStatus = null;
+
 const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], deleted: [],
                deletedComments: [], commented: null, savedFilters: null, resets: 0 };
 let feedRow = { url: 'https://feed.test/calendar.ics?token=' + 'a'.repeat(64), filters: {} };
@@ -106,7 +109,7 @@ await page.route('**/*', async (route) => {
     } });
   }
   if (p === '/api/people') {
-    return route.fulfill({ json: { slackConfigured: true, people: [
+    return route.fulfill({ json: { slackConfigured: true, slackStatus: slackStatus, people: [
       { email: 'jeremy@jettylife.com', name: 'Jeremy', slack_id: 'U1' },
       { email: 'amy@jettylife.com', name: 'Amy Smith', slack_id: 'U2' },
       { email: 'dave@jettylife.com', name: 'Dave', slack_id: null },
@@ -570,7 +573,31 @@ await t('removes a comment on the spot', async () => {
   await page.waitForFunction(() => document.querySelectorAll('.cmt').length === 1);
   return seen.deletedComments.length === 1;
 });
+await t('says nothing about Slack while mentions are being delivered', async () =>
+  (await page.locator('.cmt-warn').count()) === 0);
 await page.locator('button[data-act="close"]').click();
+
+console.log('a Slack mention that did not arrive');
+slackStatus = {
+  at: '2026-10-02T12:00:00Z', sent: 0,
+  errors: [{ email: 'arlynn@jettylife.com', error: 'conversations.open: missing_scope' }],
+  hint: 'The Slack app is missing a scope. Add chat:write and im:write.',
+};
+await page.reload();
+await page.waitForSelector('.mo-grid');
+await page.locator('.chip').first().click();
+await t('warns on the event where the next mention would be written', async () => {
+  await page.waitForSelector('.cmt-warn');
+  const txt = await page.locator('.cmt-warn').textContent();
+  return txt.includes('not being delivered')
+    && txt.includes('missing_scope')
+    && txt.includes('arlynn@jettylife.com');
+});
+await t('says what to actually go and do about it', async () =>
+  (await page.locator('.cmt-warn').textContent()).includes('reinstall')
+  || (await page.locator('.cmt-warn').textContent()).includes('im:write'));
+await page.locator('button[data-act="close"]').click();
+slackStatus = null;
 
 console.log('a Slack deep link');
 await page.goto('http://local.test/?event=' + ITEMS[4].id);

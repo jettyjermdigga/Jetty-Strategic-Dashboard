@@ -17,7 +17,8 @@ const root = (p) => path.join(HERE, '..', p);
 import { sqlStatements } from '../worker/sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters, SUB_TYPE_MERGES } from '../worker/migrate.js';
 import { normaliseProducts, readProducts, MAX_PRODUCTS } from '../worker/products.js';
-import { commentMessage, displayName, escapeSlack, eventUrl, eventWhen } from '../worker/slack.js';
+import { commentMessage, displayName, dmMentions, escapeSlack, eventUrl, eventWhen,
+         slackHint } from '../worker/slack.js';
 import { buildIcs } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
 import {
@@ -231,6 +232,57 @@ describe('product highlights', () => {
   });
   it('names the four divisions the line is cut by', () => {
     eq(DIVISIONS.map((d) => d.key), ['mens', 'womens', 'yti', 'accessories']);
+  });
+});
+
+describe('a Slack delivery that fails', () => {
+  const withFetch = async (handler, fn) => {
+    const real = globalThis.fetch;
+    globalThis.fetch = handler;
+    try { return await fn(); } finally { globalThis.fetch = real; }
+  };
+  const replies = (...bodies) => {
+    let i = 0;
+    return async () => ({ json: async () => bodies[Math.min(i++, bodies.length - 1)] });
+  };
+
+  it('reports the Slack error rather than swallowing it', async () => {
+    const r = await withFetch(replies({ ok: false, error: 'missing_scope' }), () =>
+      dmMentions('x', [{ email: 'a@b.com', slack_id: 'U1' }], 'hi'));
+    eq(r.sent, 0);
+    ok(r.errors[0].error.includes('missing_scope'));
+    ok(r.errors[0].email === 'a@b.com');
+  });
+  it('counts a delivery that worked', async () => {
+    const r = await withFetch(replies({ ok: true, channel: { id: 'D1' } }, { ok: true }), () =>
+      dmMentions('x', [{ email: 'a@b.com', slack_id: 'U1' }], 'hi'));
+    eq([r.sent, r.errors.length], [1, 0]);
+  });
+  it('does not let one bad recipient stop the rest', async () => {
+    let n = 0;
+    const handler = async () => {
+      n++;
+      // First recipient's conversations.open fails; the second succeeds.
+      if (n === 1) return { json: async () => ({ ok: false, error: 'user_not_found' }) };
+      return { json: async () => ({ ok: true, channel: { id: 'D1' } }) };
+    };
+    const r = await withFetch(handler, () => dmMentions('x', [
+      { email: 'bad@b.com', slack_id: 'U1' },
+      { email: 'good@b.com', slack_id: 'U2' },
+    ], 'hi'));
+    eq([r.sent, r.errors.length], [1, 1]);
+  });
+  it('calls out a mention of somebody with no Slack account', async () => {
+    const r = await dmMentions('x', [{ email: 'a@b.com', slack_id: null }], 'hi');
+    eq(r.sent, 0);
+    ok(r.errors[0].error.includes('no Slack account'));
+  });
+
+  it('turns Slack\u2019s error into the thing to go and do', () => {
+    ok(slackHint('conversations.open: missing_scope').includes('reinstall'));
+    ok(slackHint('chat.postMessage: invalid_auth').includes('SLACK_BOT_TOKEN'));
+    ok(slackHint('no Slack account for that address').includes('Slack email'));
+    eq(slackHint('something nobody has seen before'), '');
   });
 });
 

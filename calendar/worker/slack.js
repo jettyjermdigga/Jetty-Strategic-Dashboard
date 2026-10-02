@@ -101,23 +101,50 @@ export async function fetchSlackPeople(token) {
   return people;
 }
 
-// Returns how many were actually delivered. A person the roster has no Slack id
-// for is skipped rather than failing the batch -- they still see the comment on
-// the event, which is where it lives.
+// Returns { sent, errors } rather than throwing. One bad recipient -- a missing
+// scope, an account deactivated since the roster was cached -- must not stop
+// the rest, and must not cost the comment, which is already stored.
+//
+// The errors are kept and reported. A mention that silently fails to deliver is
+// indistinguishable from a calendar that is working, which is worse than a
+// mention that was never offered: people rely on the ping and never learn it is
+// not arriving.
 export async function dmMentions(token, targets, text) {
-  let sent = 0;
+  const out = { sent: 0, errors: [] };
   for (const t of targets) {
-    if (!t.slack_id) continue;
+    if (!t.slack_id) {
+      out.errors.push({ email: t.email, error: 'no Slack account for that address' });
+      continue;
+    }
     try {
       const im = await slackCall(token, 'conversations.open', { users: t.slack_id });
       const channel = im.channel && im.channel.id;
-      if (!channel) continue;
+      if (!channel) throw new Error('conversations.open: no channel returned');
       await slackCall(token, 'chat.postMessage', { channel, text, mrkdwn: true });
-      sent++;
+      out.sent++;
     } catch (e) {
-      // One bad recipient -- deactivated since the roster was cached, DMs
-      // closed -- must not stop the rest.
+      out.errors.push({ email: t.email, error: String((e && e.message) || e) });
     }
   }
-  return sent;
+  return out;
+}
+
+// Slack's own error strings, turned into the thing to actually go and do.
+export function slackHint(error) {
+  const e = String(error || '');
+  if (/missing_scope/.test(e)) {
+    return 'The Slack app is missing a scope. Add chat:write and im:write under '
+      + 'OAuth & Permissions, then reinstall the app -- a scope added after '
+      + 'installation does nothing until you do.';
+  }
+  if (/invalid_auth|not_authed|token_revoked|account_inactive/.test(e)) {
+    return 'The Slack token is no longer valid. Regenerate it and update the '
+      + 'SLACK_BOT_TOKEN secret on the calendar Worker.';
+  }
+  if (/no Slack account/.test(e)) {
+    return 'That address has no Slack account. Their Slack email probably '
+      + 'differs from the one the calendar knows them by.';
+  }
+  if (/ratelimited/.test(e)) return 'Slack is rate limiting us. It should settle on its own.';
+  return '';
 }

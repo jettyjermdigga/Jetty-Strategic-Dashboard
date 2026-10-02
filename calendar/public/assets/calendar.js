@@ -29,6 +29,7 @@
     attachments: [],   // of the event currently open, fetched on demand
     comments: [],      // likewise
     people: [],        // the mention roster, fetched once
+    slack: { configured: false, status: null },
   };
 
   // ── remembered preferences ─────────────────────────────────────────────
@@ -494,7 +495,11 @@
   function loadPeople() {
     if (!peopleLoaded) {
       peopleLoaded = api('/api/people')
-        .then(function (r) { state.people = r.people || []; return state.people; })
+        .then(function (r) {
+          state.people = r.people || [];
+          state.slack = { configured: !!r.slackConfigured, status: r.slackStatus || null };
+          return state.people;
+        })
         .catch(function () { state.people = []; return state.people; });
     }
     return peopleLoaded;
@@ -515,6 +520,19 @@
     if (isNaN(d)) return iso.slice(0, 10);
     return MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getDate()
       + ', ' + hhmm(pad(d.getHours()) + ':' + pad(d.getMinutes()));
+  }
+
+  // A mention that quietly fails to deliver is indistinguishable from a
+  // calendar that is working -- people come to rely on the ping and never learn
+  // it stopped arriving. If the last attempt had a problem, say so where the
+  // next one is about to be written.
+  function slackWarnHtml() {
+    var st = state.slack.status;
+    if (!state.slack.configured || !st || !st.errors || !st.errors.length) return '';
+    var first = st.errors[0];
+    return '<div class="cmt-warn"><strong>Slack mentions are not being delivered.</strong> '
+      + esc(first.email ? first.email + ': ' + first.error : first.error)
+      + (st.hint ? '<br>' + esc(st.hint) : '') + '</div>';
   }
 
   function commentHtml(c) {
@@ -806,6 +824,7 @@
       + '<div class="cmt-wrap">'
       + '<h4 class="cmt-h">Comments</h4>'
       + '<div class="cmt-list" id="cmtList"><span class="muted">Loading\u2026</span></div>'
+      + '<div id="cmtWarn"></div>'
       + (state.me.email
           ? '<div class="cmt-new">'
             + '<textarea id="cmtBody" maxlength="4000" rows="2" '
@@ -838,7 +857,11 @@
     // The roster first, so a comment never renders a raw address for a second
     // and then swaps it for a name.
     loadPeople()
-      .then(function () { return api('/api/items/' + id + '/comments'); })
+      .then(function () {
+        var warn = $('#cmtWarn');
+        if (warn) warn.innerHTML = slackWarnHtml();
+        return api('/api/items/' + id + '/comments');
+      })
       .then(function (r) { state.comments = r.comments || []; paintComments(); })
       .catch(function () {
         var box = $('#cmtList');
