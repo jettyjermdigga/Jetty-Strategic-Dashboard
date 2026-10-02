@@ -217,6 +217,14 @@ await t('greys an event with no department rather than borrowing one', async () 
 console.log('filtering');
 await t('offers one chip per department, plus Unassigned', async () =>
   (await page.locator('.fchip[data-axis="depts"]').count()) === 12);
+await t('is four levels, each one named', async () => {
+  const hints = await page.locator('.frow .fhint').allTextContents();
+  return JSON.stringify(hints)
+    === JSON.stringify(['Kind', 'Department', 'Marketing', 'Vehicle schedule']);
+});
+await t('leads with every kind, Events first', async () =>
+  (await page.locator('.fchip[data-axis="kinds"]').count()) === 5
+  && (await page.locator('.fchip[data-axis="kinds"]').first().textContent()).startsWith('Events'));
 await t('opens the list once something is picked', async () => {
   await chip('Wholesale').click();
   return await page.locator('#listPanel').isVisible()
@@ -226,20 +234,32 @@ await t('lists what the filter found', async () => {
   const l = await listed();
   return l.length === 1 && l[0].includes('Surf Expo');
 });
-await t('lets a department go when another axis is picked', async () => {
-  await page.locator('.fchip[data-key="email-sms"]').click();
-  return (await chip('Wholesale').getAttribute('aria-pressed')) === 'false';
+await t('keeps a level on when another level is picked', async () => {
+  // The whole point of the hierarchy: Kind, Department, Marketing and Vehicle
+  // are separate questions that narrow together.
+  await page.locator('.fchip[data-axis="kinds"][data-key="event"]').click();
+  return (await chip('Wholesale').getAttribute('aria-pressed')) === 'true'
+    && (await page.locator('.fs-tok').count()) === 2;
 });
-await t('drops everything else when a department is picked', async () => {
-  await chip('Marketing (All)').click();
-  return (await page.locator('.fs-tok').count()) === 1;
+await t('replaces the answer when a second chip on the same row is picked', async () => {
+  await chip('Flagship Store').click();
+  return (await chip('Wholesale').getAttribute('aria-pressed')) === 'false'
+    && (await page.locator('.fs-tok').count()) === 2;   // still Events + one department
+});
+await t('turns a level off when its lit chip is clicked again', async () => {
+  await chip('Flagship Store').click();
+  await page.locator('.fchip[data-axis="kinds"][data-key="event"]').click();
+  return (await page.locator('.flt-status').count()) === 0;
 });
 await t('keeps an event its department only promotes', async () => {
+  // Marketing names a kind and a department; the rows say which, so the test
+  // has to as well.
+  await page.locator('.fchip[data-axis="depts"][data-key="marketing"]').click();
   const l = await listed();
   return l.length === 2;     // its own email, and the store sale it promotes
 });
 await t('finds the events with no department at all', async () => {
-  await chip('Unassigned').click();
+  await page.locator('.fchip[data-axis="depts"][data-key="\u2014none\u2014"]').click();
   const l = await listed();
   return l.length === 1 && l[0].includes('Buy Plan');
 });

@@ -51,7 +51,6 @@
   //
   // So a department clears everything else, and anything else clears the
   // department. Chips on rows two and three still combine among themselves.
-  var DEPT_AXIS = 'depts';
   var NO_DEPT = '\u2014none\u2014';
   // v3: preferences used to record what was switched OFF, which only made
   // sense when everything started on. Chips record what is switched ON, so an
@@ -341,7 +340,17 @@
 
   // Each chip names an axis and a value on it, so the click handler needs no
   // special cases and adding one later is a line in this function.
+  // Four levels, narrowing as you go down. Each level asks one question, so at
+  // most one chip is lit per row -- within a row the chips are alternatives.
+  // Between rows they are conditions that combine: Marketing + JRF + Pending is
+  // three questions, not three competing answers.
   function chipRows() {
+    var kinds = tax('eventTypes').map(function (e) {
+      // "Events" reads better than "Event" on a filter, where every other chip
+      // names a set rather than one thing.
+      return { axis: 'kinds', key: e.key, label: e.key === 'event' ? 'Events' : e.label };
+    });
+
     var depts = tax('departments').map(function (d) {
       return { axis: 'depts', key: d.key, label: d.label, color: deptVar(d.key) };
     });
@@ -349,37 +358,25 @@
     // no way to tell "nothing is tagged Finance" from "Finance is broken".
     depts.push({ axis: 'depts', key: NO_DEPT, label: 'Unassigned' });
 
-    // Event and Marketing have no chip of their own: row 1 is departments and
-    // row 2 is Marketing's, so both are already reachable. These three are the
-    // kinds nothing else surfaces.
-    var kinds = [
-      { axis: 'kinds', key: 'social', label: 'Social' },
-      { axis: 'kinds', key: 'meeting', label: 'Meetings' },
-      { axis: 'kinds', key: 'deadline', label: 'Deadlines' },
-    ];
+    // Wholesale's single Tradeshow sub-type stays with Wholesale rather than
+    // earning a place on Marketing's row.
+    var marketing = tax('subTypes')
+      .filter(function (st) { return st.department === 'marketing'; })
+      .map(function (st) { return { axis: 'subs', key: st.key, label: st.label }; });
 
     var vehicles = tax('vehicles').map(function (v) {
       return { axis: 'vehicles', key: v.key, label: v.label, icon: VEHICLE_ICONS[v.key] };
     });
 
+    // Not a level: it asks what state something is in rather than what kind of
+    // thing it is. Sits at the end of the last row, behind a separator.
     var pending = [{ axis: 'stats', key: 'Pending', label: 'Pending' }];
 
-    // Marketing's nine. Wholesale's single Tradeshow sub-type sits with
-    // Wholesale rather than earning a row of its own.
-    var marketing = tax('subTypes')
-      .filter(function (st) { return st.department === 'marketing'; })
-      .map(function (st) { return { axis: 'subs', key: st.key, label: st.label }; });
-
-    // Marketing leads its own row rather than sitting in the department list,
-    // so its sub-types read as its sub-types. "(All)" because the nine chips
-    // beside it are the parts.
-    var marketingDept = depts.filter(function (d) { return d.key === 'marketing'; })
-      .map(function (d) { return { axis: 'depts', key: d.key, label: 'Marketing (All)', color: d.color }; });
-
     return [
-      depts.filter(function (d) { return d.key !== 'marketing'; }),
-      [].concat(marketingDept, marketing),
-      [].concat(kinds, [null], vehicles, [null], pending),
+      { label: 'Kind', chips: kinds },
+      { label: 'Department', chips: depts },
+      { label: 'Marketing', chips: marketing },
+      { label: 'Vehicle schedule', chips: [].concat(vehicles, [null], pending) },
     ];
   }
 
@@ -439,13 +436,11 @@
       }).join('');
     };
 
-    el.innerHTML =
-      '<div class="frow">'
-      + '<span class="fhint">Choose one department</span>'
-      + row(rows[0])
-      + '</div>'
-      + '<div class="frow">' + row(rows[1]) + '</div>'
-      + '<div class="frow">' + row(rows[2]) + '</div>';
+    el.innerHTML = rows.map(function (r) {
+      return '<div class="frow">'
+        + '<span class="fhint">' + esc(r.label) + '</span>'
+        + row(r.chips) + '</div>';
+    }).join('');
   }
 
   // What is selected, spelled out. Chips are spread over three rows and a lit
@@ -2088,21 +2083,10 @@
       var axis = btn.dataset.axis;
       var key = btn.dataset.key;
       if (!axis || !state.sel[axis]) return;
-      var at = state.sel[axis].indexOf(key);
-      if (at >= 0) {
-        // Clicking a lit chip turns it off -- with no Everything chip, this
-        // and Clear all in the status bar are how a filter is taken back off.
-        state.sel[axis].splice(at, 1);
-      } else if (axis === DEPT_AXIS) {
-        // A department replaces everything, including another department.
-        AXES.forEach(function (a) { state.sel[a] = []; });
-        state.sel[axis] = [key];
-      } else {
-        // And anything else lets the department go, rather than quietly
-        // subtracting from it.
-        state.sel[DEPT_AXIS] = [];
-        state.sel[axis].push(key);
-      }
+      // One answer per level. A second chip on the same row replaces the first,
+      // because they are alternatives; a chip on another row is kept, because
+      // the levels narrow together. Clicking the lit one turns that level off.
+      state.sel[axis] = state.sel[axis].indexOf(key) >= 0 ? [] : [key];
       savePrefs();
       renderAll();
     });
