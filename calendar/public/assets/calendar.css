@@ -778,3 +778,13 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
   background:color-mix(in srgb, #c0392b 10%, transparent);
   border:1px solid color-mix(in srgb, #c0392b 35%, transparent);
 }
+
+/* The derived figure, shown rather than stored: two numbers go in, the third
+   is arithmetic and would only ever disagree with them. */
+.aov-readout{
+  font-size:13px;padding:7px 0 0;
+}
+.aov-readout .rl{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  opacity:.55;margin-right:6px;
+}

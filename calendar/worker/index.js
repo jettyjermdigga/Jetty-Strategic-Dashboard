@@ -80,7 +80,7 @@ const ADDED_COLUMNS = [
   'event_type TEXT', 'department TEXT', 'departments TEXT',
   'staff_count TEXT', 'vehicles TEXT', 'products TEXT',
   'social_type TEXT', 'channels TEXT', 'pillar TEXT', 'production TEXT',
-  'caption TEXT', 'tags TEXT',
+  'caption TEXT', 'tags TEXT', 'orders INTEGER', 'net_revenue REAL',
 ];
 
 // Same idea, on the attachments table.
@@ -351,6 +351,27 @@ const json = (body, status) => new Response(JSON.stringify(body), {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^\d{2}:\d{2}$/;
 
+// A count typed by a person: "1,240" and " 1240 " are the same number. Empty
+// is null rather than nought -- "nobody has reported it" and "it sold nothing"
+// are different answers and a roll-up must not confuse them.
+function wholeNumber(v, label, errors) {
+  const raw = clean(v, 20);
+  if (raw == null) return null;
+  const digits = raw.replace(/[,\s]/g, '');
+  if (!/^\d+$/.test(digits)) { errors.push(label + ' must be a whole number.'); return null; }
+  return Number(digits);
+}
+
+// Likewise for an amount, which arrives with whatever the sales report put in
+// front of it. Negative is allowed: a day can end in refunds.
+function money(v, label, errors) {
+  const raw = clean(v, 30);
+  if (raw == null) return null;
+  const n = raw.replace(/[$,\s]/g, '');
+  if (!/^-?\d*\.?\d+$/.test(n)) { errors.push(label + ' must be an amount, like 1240.50.'); return null; }
+  return Math.round(Number(n) * 100) / 100;
+}
+
 function clean(v, max) {
   if (v == null) return null;
   const s = String(v).trim();
@@ -483,6 +504,12 @@ function normalise(input, existing) {
   out.url = clean(pick('url'), 500);
   if (out.url && !/^https?:\/\//i.test(out.url)) errors.push('Link must start with http:// or https://.');
 
+  // How the event did. Typed by a person after the fact, so "1,240" and
+  // "$1,240.00" both have to mean the same number -- refusing them would just
+  // teach people to go and find a cleaner copy of a figure they already have.
+  out.orders = wholeNumber(pick('orders'), 'Orders', errors);
+  out.net_revenue = money(pick('net_revenue'), 'Net revenue', errors);
+
   // The social axes. Kept out of the way of the event ones rather than
   // overloading them: a channel is not a venue and a production state is not a
   // status, however similar they look from a distance.
@@ -505,6 +532,8 @@ function normalise(input, existing) {
   if (out.event_type === 'social') for (const k of SOCIAL_BLANKS) out[k] = null;
   else for (const k of SOCIAL_ONLY) out[k] = null;
   if (out.event_type === 'marketing') for (const k of MARKETING_BLANKS) out[k] = null;
+  // Only an Event takes money at the door.
+  if (out.event_type !== 'event') for (const k of RESULTS_ONLY) out[k] = null;
   // A deadline is a point, not a span: it ends the day it falls on.
   if (out.event_type === 'deadline') out.end_date = out.start_date;
 
@@ -516,6 +545,7 @@ const COLS = [
   'vehicles', 'status', 'start_date', 'end_date', 'all_day', 'start_time', 'end_time',
   'venue', 'address', 'city', 'state', 'zip', 'notes', 'url', 'products',
   'social_type', 'channels', 'pillar', 'production', 'caption', 'tags',
+  'orders', 'net_revenue',
 ];
 
 // Meetings and deadlines take the short form: who, when, and nothing else. The
@@ -534,6 +564,9 @@ const SOCIAL_ONLY = ['social_type', 'channels', 'pillar', 'production', 'caption
 // Marketing can have a place -- a shoot happens somewhere -- but staff, permits
 // and vans are an Event's concern.
 const MARKETING_BLANKS = ['needs', 'staff_count', 'vehicles'];
+
+// Reported after the fact, and only on something that actually sold.
+const RESULTS_ONLY = ['orders', 'net_revenue'];
 
 // Year / Week / Start (Week) / End (Week) / Month / Day are not stored; they are
 // attached here so every reader sees the same values.

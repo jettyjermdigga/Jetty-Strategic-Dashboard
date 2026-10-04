@@ -469,6 +469,69 @@ describe('the MKG Comms social backfill', () => {
   });
 });
 
+// Orders and net revenue are typed by a person off a sales report, so the
+// parsing is where this either works or quietly stores the wrong number.
+describe('reported figures', () => {
+  // Mirrors worker/index.js. Kept here as a spec: if the two drift, a figure
+  // is being accepted or rejected for a reason nobody wrote down.
+  const clean = (v, max) => {
+    if (v == null) return null;
+    const s = String(v).trim();
+    return s ? s.slice(0, max) : null;
+  };
+  const wholeNumber = (v, label, errors) => {
+    const raw = clean(v, 20);
+    if (raw == null) return null;
+    const digits = raw.replace(/[,\s]/g, '');
+    if (!/^\d+$/.test(digits)) { errors.push(label + ' must be a whole number.'); return null; }
+    return Number(digits);
+  };
+  const money = (v, label, errors) => {
+    const raw = clean(v, 30);
+    if (raw == null) return null;
+    const n = raw.replace(/[$,\s]/g, '');
+    if (!/^-?\d*\.?\d+$/.test(n)) { errors.push(label + ' must be an amount, like 1240.50.'); return null; }
+    return Math.round(Number(n) * 100) / 100;
+  };
+  const num = (fn, v) => { const e = []; return [fn(v, 'x', e), e.length]; };
+
+  it('takes a count however the report wrote it', () => {
+    eq(num(wholeNumber, '142'), [142, 0]);
+    eq(num(wholeNumber, '1,240'), [1240, 0]);
+    eq(num(wholeNumber, ' 1240 '), [1240, 0]);
+  });
+  it('takes an amount with or without its dollar sign', () => {
+    eq(num(money, '8420.50'), [8420.5, 0]);
+    eq(num(money, '$8,420.50'), [8420.5, 0]);
+    eq(num(money, '.5'), [0.5, 0]);
+  });
+  it('allows a negative amount, because a day can end in refunds', () => {
+    eq(num(money, '-120.40'), [-120.4, 0]);
+  });
+  it('rounds to the cent rather than storing a float tail', () => {
+    eq(num(money, '10.005'), [10.01, 0]);
+  });
+  it('tells someone their typo rather than storing a guess', () => {
+    eq(num(wholeNumber, '12.5'), [null, 1]);
+    eq(num(wholeNumber, 'twelve'), [null, 1]);
+    eq(num(money, '1.2.3'), [null, 1]);
+    eq(num(money, 'free'), [null, 1]);
+  });
+  it('reads a stray comma as a thousands separator, not as a typo', () => {
+    // "1,2," is not something anyone means, but commas are separators here and
+    // guessing otherwise would reject the ordinary "1,240" case too.
+    eq(num(money, '1,2,'), [12, 0]);
+  });
+  it('leaves unreported as null, not nought', () => {
+    // "Nobody has reported it" and "it sold nothing" are different answers and
+    // a total must not confuse them.
+    eq(num(wholeNumber, ''), [null, 0]);
+    eq(num(wholeNumber, null), [null, 0]);
+    eq(num(money, '   '), [null, 0]);
+    eq(num(wholeNumber, '0'), [0, 0]);
+  });
+});
+
 // ── the taxonomy ─────────────────────────────────────────────────────────
 
 describe('taxonomy', () => {

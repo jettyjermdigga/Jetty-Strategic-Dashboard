@@ -394,6 +394,21 @@ await t('asks how many only once extra staff is ticked', async () => {
 });
 await page.locator('#f-staff').fill('3');
 await page.locator('button[data-act="next"]').click();
+
+await t('asks how the event did, after everything else', async () =>
+  (await page.locator('#f-orders').isVisible())
+  && (await page.locator('#f-netrev').isVisible())
+  && (await page.locator('.step[data-step="results"] .lbl-note').textContent())
+       .includes('after the event'));
+await t('works out the average order value as the numbers go in', async () => {
+  const before = await page.locator('#aovOut').textContent();
+  await page.locator('#f-orders').fill('100');
+  await page.locator('#f-netrev').fill('$8,420.50');
+  await page.waitForFunction(() => document.querySelector('#aovOut').textContent.includes('84.20'));
+  return before.includes('appears once both are filled in');
+});
+await page.locator('button[data-act="next"]').click();
+
 await t('defaults a new event to Booked', async () =>
   (await page.locator('#f-status').inputValue()) === 'Booked');
 await t('holds files until the event has been saved', async () =>
@@ -446,6 +461,8 @@ await t('marks the box while something is dragged over it', async () => {
 });
 await page.locator('button[data-act="save"]').click();
 await page.waitForFunction(() => document.querySelector('#modal').hidden);
+await t('takes the typed figures however they were typed', async () =>
+  seen.posted.orders === '100' && seen.posted.net_revenue === '$8,420.50');
 await t('posts the five axes and the staff count', async () =>
   seen.posted.department === 'jrf'
   && JSON.stringify(seen.posted.departments) === '["marketing"]'

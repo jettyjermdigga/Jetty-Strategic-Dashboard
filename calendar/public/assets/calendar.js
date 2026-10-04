@@ -783,6 +783,18 @@
       + esc(it.status) + '</span>');
     if (r) add('Retail week', 'Week ' + r.week + ' of ' + r.year + ' <span class="muted">('
       + esc(weekRangeLabel(r)) + ')</span>');
+    if (it.orders != null || it.net_revenue != null) {
+      var aov = (it.orders > 0 && it.net_revenue != null)
+        ? ' <span class="muted">\u00b7 $' + (it.net_revenue / it.orders).toFixed(2) + ' AOV</span>'
+        : '';
+      add('Results',
+        (it.orders != null ? esc(it.orders) + (it.orders === 1 ? ' order' : ' orders') : '')
+        + (it.orders != null && it.net_revenue != null ? ' \u00b7 ' : '')
+        + (it.net_revenue != null
+            ? '$' + esc(it.net_revenue.toLocaleString('en-US', { minimumFractionDigits: 2 }))
+              + ' net' : '')
+        + aov);
+    }
     add('Shape', it.social_type ? esc(labelIn(tax('socialTypes'), it.social_type)) : '');
     add('Channels', chips(listOf(it, 'channels'), tax('channels'), false));
     add('About', it.pillar ? esc(labelIn(tax('pillars'), it.pillar)) : '');
@@ -1130,6 +1142,24 @@
             }).join('')
           + '</div>')
 
+      // Filled in after the event, not when it is booked -- which is why it is
+      // the last question rather than part of the booking, and why nothing
+      // here is required.
+      + sect('results', 'How did it do?', 'optional \u2014 fill this in after the event',
+          '<div class="fld-row">'
+          + '<div class="fld"><label for="f-orders">Orders</label>'
+          + '<input type="text" id="f-orders" inputmode="numeric" maxlength="20" value="'
+          + esc(it.orders == null ? '' : it.orders) + '" placeholder="e.g. 142"></div>'
+          + '<div class="fld"><label for="f-netrev">Net revenue</label>'
+          + '<input type="text" id="f-netrev" inputmode="decimal" maxlength="30" value="'
+          + esc(it.net_revenue == null ? '' : it.net_revenue) + '" placeholder="e.g. 8420.50"></div>'
+          + '</div>'
+          + '<div class="fld"><div class="aov-readout" id="aovOut"></div></div>'
+          + '<div class="fld"><label>Sales report</label>'
+          + '<div id="resultsFile"></div>'
+          + '<div class="hint">The export from the till or the platform, however it comes.</div>'
+          + '</div>')
+
       + sect('final', 'Anything else?', '',
           '<div class="fld"><label for="f-status">Status</label><select id="f-status">'
           + tax('statuses').map(function (st) {
@@ -1218,7 +1248,7 @@
       // permits and vans are an Event's concern.
       if (k === 'marketing') { out.push('when', 'where', 'final'); return out; }
 
-      out.push('when', 'where', 'needs', 'final');
+      out.push('when', 'where', 'needs', 'results', 'final');
       return out;
     }
 
@@ -1370,6 +1400,7 @@
         state.attachments = r.attachments || [];
         paintFiles();
         paintProds();
+        paintResults();
       }).catch(function () {});
     }
 
@@ -1407,11 +1438,12 @@
       return state.attachments.filter(function (a) { return a.slot === id; })[0];
     }
 
-    function prodImageHtml(row) {
+    function prodImageHtml(row, label) {
       var pending = prodImages[row.id];
       if (pending) {
         return '<span class="prod-img-has">'
-          + '<img src="' + URL.createObjectURL(pending) + '" alt="">'
+          + (/^image\//.test(pending.type)
+              ? '<img src="' + URL.createObjectURL(pending) + '" alt="">' : '')
           + '<span class="prod-img-n">' + esc(pending.name) + '</span>'
           + '<button type="button" class="prod-img-x" data-row="' + esc(row.id) + '">\u00d7</button>'
           + '</span>';
@@ -1423,8 +1455,31 @@
           + '<button type="button" class="att-x prod-img-x" data-att="' + esc(saved.id) + '">\u00d7</button>'
           + '</span>';
       }
-      return '<label class="prod-img"><input type="file" class="p-img" accept="image/*" '
-        + 'data-row="' + esc(row.id) + '"><span>Example\u2026</span></label>';
+      return '<label class="prod-img"><input type="file" class="p-img"'
+        + (label ? '' : ' accept="image/*"')
+        + ' data-row="' + esc(row.id) + '"><span>'
+        + esc(label || 'Example\u2026') + '</span></label>';
+    }
+
+    // The sales report hangs off the event in the same way a product image
+    // hangs off a highlight row: an ordinary attachment carrying a slot. Which
+    // means a new event's report waits for the save without any special case.
+    var RESULTS_SLOT = 'results';
+
+    function paintResults() {
+      var box = $('#resultsFile');
+      if (box) box.innerHTML = prodImageHtml({ id: RESULTS_SLOT }, 'Choose a file\u2026');
+
+      var out = $('#aovOut');
+      if (!out) return;
+      var n = Number(String(($('#f-orders') || {}).value || '').replace(/[,\s]/g, ''));
+      var rev = Number(String(($('#f-netrev') || {}).value || '').replace(/[$,\s]/g, ''));
+      // Only when both are there and the division means something -- an AOV of
+      // Infinity on an event with no orders yet is noise, not information.
+      out.innerHTML = (n > 0 && isFinite(rev) && String(($('#f-netrev') || {}).value || '').trim())
+        ? '<span class="rl">AOV</span> $' + (rev / n).toFixed(2)
+          + ' <span class="muted">across ' + n + (n === 1 ? ' order' : ' orders') + '</span>'
+        : '<span class="muted">Average order value appears once both are filled in.</span>';
     }
 
     function paintProds() {
@@ -1455,6 +1510,7 @@
     // Hoisting makes paintProds callable earlier than this; prodRows above is a
     // var, so it would still be undefined. Paint once the state exists.
     paintProds();
+    paintResults();
 
     // Files picked or dropped but not yet uploaded. The file input is the one
     // source of truth -- the save path reads it -- so a drop writes into it via
@@ -1547,8 +1603,10 @@
       var unpick = e.target.closest('.prod-img-x');
       if (unpick && unpick.dataset.row) {
         e.preventDefault();
+        var which = unpick.dataset.row;
+        delete prodImages[which];
+        if (which === RESULTS_SLOT) { paintResults(); return; }
         readProdRows();
-        delete prodImages[unpick.dataset.row];
         paintProds();
         return;
       }
@@ -1565,8 +1623,13 @@
           });
           paintFiles();
           paintProds();
+          paintResults();
         })
         .catch(function (err) { x.disabled = false; formError(err.message); });
+    };
+
+    $('#modalBody').oninput = function (e) {
+      if (e.target.id === 'f-orders' || e.target.id === 'f-netrev') paintResults();
     };
 
     $('#modalBody').onchange = function (e) {
@@ -1583,6 +1646,10 @@
       if (e.target.classList.contains('p-img')) {
         var f = e.target.files && e.target.files[0];
         if (!f) return;
+        if (e.target.dataset.row === RESULTS_SLOT) {
+          prodImages[RESULTS_SLOT] = f;
+          return paintResults();
+        }
         readProdRows();
         prodImages[e.target.dataset.row] = f;
         return paintProds();
@@ -1660,6 +1727,8 @@
       all_day: allDay ? 1 : 0,
       start_time: allDay ? '' : $('#f-stime').value,
       end_time: allDay ? '' : $('#f-etime').value,
+      orders: $('#f-orders') ? $('#f-orders').value : '',
+      net_revenue: $('#f-netrev') ? $('#f-netrev').value : '',
       social_type: one('.f-stype:checked'),
       channels: vals('.f-chan:checked'),
       pillar: $('#f-pillar') ? $('#f-pillar').value : '',
@@ -1755,6 +1824,11 @@
     ['Retail Week',        function (it) { return it.retail ? it.retail.week : ''; }],
     ['Notes',              function (it) { return it.notes; }],
     ['URL',                function (it) { return it.url; }],
+    ['Orders',             function (it) { return it.orders == null ? '' : it.orders; }],
+    ['Net Revenue',        function (it) { return it.net_revenue == null ? '' : it.net_revenue; }],
+    ['AOV',                function (it) {
+      return (it.orders > 0 && it.net_revenue != null)
+        ? (it.net_revenue / it.orders).toFixed(2) : ''; }],
     ['Shape',              function (it) { return labelIn(tax('socialTypes'), it.social_type); }],
     ['Channels',           function (it) {
       return listOf(it, 'channels').map(function (k) {

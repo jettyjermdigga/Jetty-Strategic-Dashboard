@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS items (
   zip         TEXT,
   notes       TEXT,
   url         TEXT,
+  orders      INTEGER,                    -- how many orders the event took
+  net_revenue REAL,                       -- net, in dollars. The sales report itself is
+                                          -- an attachment whose slot is 'results'
   social_type TEXT,                       -- post | carousel | story | reel
   channels    TEXT,                       -- comma-separated channel keys
   pillar      TEXT,                       -- what the post is about; one of PILLARS
