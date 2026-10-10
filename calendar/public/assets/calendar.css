@@ -788,3 +788,50 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
   font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
   opacity:.55;margin-right:6px;
 }
+
+/* ── the printed calendar ────────────────────────────────────────────────── */
+
+/* Only ever rendered on paper. On screen it takes no space at all. */
+.print-head{display:none}
+
+@media print{
+  /* Browsers drop background colours by default, which would take the whole
+     department palette out of a calendar that is read by colour. */
+  *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important }
+
+  @page{ size:landscape; margin:12mm }
+
+  /* Everything that is a control rather than content. */
+  .site-top,.cal-bar,.filterbar,#filterStatus,.modal-back,#notice{ display:none !important }
+
+  body{ background:#fff !important; color:#111 !important }
+  .cal-shell{ display:block !important; max-width:none; padding:0; margin:0 }
+  .cal-card{ border:0 !important; box-shadow:none !important }
+
+  .print-head{ display:block; margin:0 0 10px }
+  .ph-row{ display:flex; justify-content:space-between; align-items:baseline; gap:16px }
+  .ph-brand{ font-weight:700; font-size:15px }
+  .ph-when{ font-size:15px }
+  .ph-sub{
+    font-size:10.5px; opacity:.75; margin-top:3px;
+    border-bottom:1px solid #ccc; padding-bottom:6px;
+  }
+
+  /* A week should not be split across a page boundary -- half a row of days at
+     the foot of one sheet and half at the head of the next is unreadable. */
+  .mo-grid{ page-break-inside:auto }
+  .mo-cell{ page-break-inside:avoid; break-inside:avoid; min-height:0 }
+  .mo-head{ position:static }
+
+  /* Nothing is clipped on paper: a day with nine events gets a taller cell
+     rather than hiding six of them. */
+  .mo-cell,.chip{ overflow:visible !important }
+  .chip{ white-space:normal }
+  .chip .n{ white-space:normal; overflow:visible; text-overflow:clip }
+
+  /* The agenda list follows the grid on its own sheet when a filter is on. */
+  .cal-list{ display:block !important; width:auto; border:0; padding:0;
+             page-break-before:always; max-height:none; overflow:visible }
+  .cal-list[hidden]{ display:none !important }
+  .day-item{ page-break-inside:avoid }
+}

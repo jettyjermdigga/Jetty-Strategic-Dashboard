@@ -37,6 +37,7 @@
 
   <div class="cal-right">
     <button class="cal-btn" id="subscribe">Subscribe</button>
+    <button class="cal-btn" id="downloadBtn">Download</button>
     <button class="cal-btn" id="exportBtn">Export</button>
     <button class="cal-btn primary" id="addBtn" hidden>+ Add event</button>
   </div>
@@ -44,6 +45,10 @@
 
 <div class="filterbar" id="filterBar"></div>
 <div id="filterStatus"></div>
+
+<!-- Only ever seen on paper or in a PDF. A filtered view printed with no
+     label is a lie by omission: it looks like the whole calendar. -->
+<div class="print-head" id="printHead" aria-hidden="true"></div>
 
 <div class="cal-shell" id="shell">
   <main>

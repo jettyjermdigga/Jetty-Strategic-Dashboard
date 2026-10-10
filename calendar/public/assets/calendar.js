@@ -26,6 +26,7 @@
     // question, which is why an untouched calendar shows everything and why
     // clicking one chip cannot be vetoed by an axis nobody has touched.
     sel: { kinds: [], depts: [], subs: [], vehicles: [], stats: [] },
+    printing: false,   // drawing for paper rather than for a screen
     attachments: [],   // of the event currently open, fetched on demand
     comments: [],      // likewise
     people: [],        // the mention roster, fetched once
@@ -634,9 +635,12 @@
       var on = itemsOn(ds, pool);
       var out = day.getMonth() !== c.getMonth() ? ' out' : '';
       var isToday = ds === today ? ' today' : '';
-      var shown = on.slice(0, 3).map(function (it) { return chipHtml(it, ds); }).join('');
-      var more = on.length > 3
-        ? '<div class="mo-more" data-day="' + ds + '">+' + (on.length - 3) + ' more</div>' : '';
+      // On screen a cell shows three and offers the rest on a click. On paper
+      // there is nothing to click, so everything is drawn and the cell grows.
+      var cap = state.printing ? on.length : 3;
+      var shown = on.slice(0, cap).map(function (it) { return chipHtml(it, ds); }).join('');
+      var more = on.length > cap
+        ? '<div class="mo-more" data-day="' + ds + '">+' + (on.length - cap) + ' more</div>' : '';
       cells += '<div class="mo-cell' + out + isToday + '" data-day="' + ds + '">'
         + '<span class="mo-num">' + day.getDate() + '</span>' + shown + more + '</div>';
     }
@@ -699,6 +703,50 @@
   }
 
   function renderAll() { renderFilters(); render(); }
+
+  // ── download ───────────────────────────────────────────────────────────
+
+  // The browser's own print-to-PDF, rather than a canvas library: it is the one
+  // thing on every machine that turns a page into a file, it keeps the text
+  // selectable and the colours true, and it paginates a month that does not fit
+  // instead of scaling it into illegibility.
+  function printHeadHtml() {
+    var active = [];
+    AXES.forEach(function (axis) {
+      state.sel[axis].forEach(function (key) { active.push(selLabel(axis, key)); });
+    });
+    var shown = visible().length;
+    return '<div class="ph-row">'
+      + '<span class="ph-brand">Jetty Company Calendar</span>'
+      + '<span class="ph-when">' + esc(periodLabel()) + '</span>'
+      + '</div>'
+      + '<div class="ph-row ph-sub">'
+      + '<span>' + (active.length
+          ? 'Filtered to <strong>' + esc(active.join(' + ')) + '</strong> \u2014 '
+            + shown + (shown === 1 ? ' event' : ' events')
+          : 'Everything \u2014 ' + shown + (shown === 1 ? ' event' : ' events')) + '</span>'
+      + '<span>Printed ' + esc(todayYmd()) + '</span>'
+      + '</div>';
+  }
+
+  function downloadView() {
+    $('#printHead').innerHTML = printHeadHtml();
+    state.printing = true;
+    render();
+    // Restoring on afterprint rather than straight after print() -- some
+    // browsers return from print() before the dialog has read the page, and
+    // re-rendering underneath it prints the three-chip version.
+    var restore = function () {
+      if (!state.printing) return;
+      state.printing = false;
+      render();
+    };
+    window.addEventListener('afterprint', restore, { once: true });
+    window.print();
+    // afterprint does not fire everywhere. This cannot run before the dialog
+    // opens, because print() blocks until it does.
+    setTimeout(restore, 1500);
+  }
 
   // ── modal ──────────────────────────────────────────────────────────────
 
@@ -2149,6 +2197,7 @@
       showForm(null, null);
     });
     $('#exportBtn').addEventListener('click', showExport);
+    $('#downloadBtn').addEventListener('click', downloadView);
 
     // One handler for every chip: each carries the axis it belongs to and the
     // value it selects, so there are no special cases and a new chip is a line

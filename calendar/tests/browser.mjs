@@ -60,6 +60,14 @@ const ITEMS = [
   ev({ id: '44444444-4444-4444-8444-444444444444', title: 'Buy Plan Meeting',
        event_type: 'meeting', department: '',
        start_date: dayThis(17), end_date: dayThis(17) }),
+  // Four on one day: the month cell caps at three, which is what the download
+  // has to undo.
+  ev({ id: '66666666-6666-4666-8666-666666666666', title: 'Crowded A',
+       department: 'culture', start_date: dayThis(8), end_date: dayThis(8) }),
+  ev({ id: '77777777-7777-4777-8777-777777777777', title: 'Crowded B',
+       department: 'culture', start_date: dayThis(8), end_date: dayThis(8) }),
+  ev({ id: '88888888-8888-4888-8888-888888888888', title: 'Crowded C',
+       department: 'culture', start_date: dayThis(8), end_date: dayThis(8) }),
   ev({ id: '55555555-5555-4555-8555-555555555555', title: 'Surf Expo',
        department: 'wholesale', departments: 'jetty-ink', sub_types: 'tradeshow',
        vehicles: 'ink-van', start_date: dayThis(22), end_date: dayThis(22) }),
@@ -199,8 +207,14 @@ await page.waitForSelector('.mo-grid');
 page.on('dialog', (d) => d.accept());
 
 console.log('the calendar');
-await t('shows every event when nothing is picked', async () =>
-  (await page.locator('.chip').count()) === ITEMS.length);
+await t('shows every event when nothing is picked', async () => {
+  // A crowded cell draws three and counts the rest, so the grid accounts for
+  // every event without necessarily drawing every one.
+  const drawn = await page.locator('.chip').count();
+  const hidden = (await page.locator('.mo-more').allTextContents())
+    .reduce((n, t) => n + Number(t.replace(/\D/g, '')), 0);
+  return drawn + hidden === ITEMS.length;
+});
 await t('colours an event by its primary department', async () => await page.evaluate(() => {
   const c = [...document.querySelectorAll('.chip')].find((x) => x.textContent.includes('Coquina'));
   return getComputedStyle(c.querySelector('.bar i')).backgroundColor === 'rgb(0, 131, 0)';
@@ -304,6 +318,42 @@ await t('moves a month at a time', async () => {
   const a = (await page.locator('#period').textContent()).trim();
   await page.locator('#prev').click();
   return a === NEXT_MONTH_LABEL;
+});
+
+console.log('the download');
+await t('caps a crowded day on screen', async () => {
+  const cell = page.locator('.mo-cell[data-day="' + dayThis(8) + '"]');
+  return (await cell.locator('.chip').count()) === 3
+    && (await cell.locator('.mo-more').textContent()) === '+1 more';
+});
+await t('draws every event on the day once printing', async () => {
+  // window.print() blocks on a dialog that headless Chromium never shows, so
+  // it is stubbed. What is under test is the page the dialog would have read.
+  await page.evaluate(() => { window.print = () => {}; });
+  await page.locator('#downloadBtn').click();
+  const cell = page.locator('.mo-cell[data-day="' + dayThis(8) + '"]');
+  return (await cell.locator('.chip').count()) === 4
+    && (await cell.locator('.mo-more').count()) === 0;
+});
+await t('says on the page what the view actually is', async () => {
+  const txt = await page.locator('#printHead').textContent();
+  return txt.includes('Jetty Company Calendar')
+    && txt.includes('Everything')
+    && txt.includes(ITEMS.length + ' events');
+});
+await t('puts the filters on the paper, so a filtered print cannot mislead', async () => {
+  await page.locator('.fchip[data-axis="depts"][data-key="marketing"]').click();
+  await page.locator('#downloadBtn').click();
+  const txt = await page.locator('#printHead').textContent();
+  return txt.includes('Filtered to') && txt.includes('Marketing');
+});
+await t('goes back to the screen version afterwards', async () => {
+  await page.waitForFunction(() => !document.querySelector('.mo-cell .mo-more')
+    || document.querySelectorAll('.mo-cell[data-day] .chip').length >= 0);
+  await page.waitForTimeout(1700);   // the afterprint fallback
+  await clearAll();
+  const cell = page.locator('.mo-cell[data-day="' + dayThis(8) + '"]');
+  return (await cell.locator('.chip').count()) === 3;
 });
 
 console.log('the export');
@@ -755,7 +805,10 @@ await page.locator('button[data-act="close"]').click();
 slackStatus = null;
 
 console.log('a Slack deep link');
-await page.goto('http://local.test/?event=' + ITEMS[4].id);
+// By name, not by index -- the fixture grows and an index silently points at
+// a different event.
+await page.goto('http://local.test/?event='
+  + ITEMS.find((x) => x.title === 'Surf Expo').id);
 await page.waitForSelector('.mo-grid');
 await t('opens the event the DM pointed at', async () =>
   (await page.locator('.det-title').textContent()).includes('Surf Expo'));
