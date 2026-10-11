@@ -2308,6 +2308,78 @@ def rc_box2(group_label, a_lbl, a_val, b_lbl, b_val, var_val, cls):
             + rc_stat(a_lbl, a_val) + rc_stat(b_lbl, b_val) + rc_stat('Variance', var_val, cls)
             + '</div></div>')
 
+# What a dollar of carried cost actually returns in cash once it is discounted
+# through Q1. The one number in this projection that is a judgement rather than
+# a reading -- nothing in the workbook implies it. Change it here.
+CARRY_REALISATION = 0.50
+
+def build_inventory_projection(d):
+    """Where inventory lands at week 52, and what that is worth in Q1 cash.
+
+    The model is deliberately small, because Jeremy's own description of the
+    cycle is small: what is on hand at year end carries into 2027 -- S26, F26
+    and prior lines alike -- and gets discounted through Q1. The H2 on-order
+    book is wholesale F26 shipping against orders, so it passes through rather
+    than adding to the carry; the 2027 book is SP27 and SU27, which is next
+    year's buy arriving early, not carry.
+
+    So the projection is the current count run forward on last year's own
+    depletion curve. 2025 is the only read on how inventory actually behaves
+    between here and year end, and it is the same convention the cash-in
+    projection already uses.
+    """
+    lw = d.get('inv_latest_wk')
+    if not lw:
+        return ''
+    cog26, u26 = d.get('cog_2026') or {}, d.get('units_2026') or {}
+    cog25, u25 = d.get('cog_2025') or {}, d.get('units_2025') or {}
+    on_hand, on_units = cog26.get(lw), u26.get(lw)
+    start25, end25 = cog25.get(lw), cog25.get(52)
+    if not on_hand or not start25 or not end25:
+        return ''
+
+    # How much of its week-lw inventory 2025 still held at week 52.
+    decay = end25 / start25
+    proj_cog = on_hand * decay
+    u_decay = (u25.get(52) / u25.get(lw)) if (u25.get(lw) and u25.get(52)) else decay
+    proj_units = (on_units or 0) * u_decay
+    cash = proj_cog * CARRY_REALISATION
+
+    print('INVENTORY PROJECTION wk%d: on_hand=%.0f decay=%.4f proj_cog=%.0f '
+          'proj_units=%.0f cash_at_%d%%=%.0f (2025: %.0f -> %.0f)'
+          % (lw, on_hand, decay, proj_cog, proj_units, CARRY_REALISATION * 100,
+             cash, start25, end25), file=sys.stderr)
+
+    pct = str(int(round(CARRY_REALISATION * 100)))
+    return (rc_divider('EOY Inventory Projection')
+        + '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Where Inventory Lands \u2014 Week 52</div>'
+        '<div class="rc-desc">Week ' + str(lw) + ' on hand, run forward on 2025\u2019s own depletion '
+        'curve for the same weeks. The H2 on-order book is wholesale F26 shipping against orders, so '
+        'it passes through rather than adding to the carry; the 2027 book is SP27/SU27.</div></div>'
+        '<div class="rc-boxrow">'
+        + rc_box2('At Week 52',
+                  'On Hand (wk ' + str(lw) + ')', fk(on_hand),
+                  'Projected', fk(proj_cog), vk(proj_cog - on_hand), var_cls(proj_cog - on_hand, True))
+        + rc_box2('Units',
+                  'On Hand (wk ' + str(lw) + ')', format(int(on_units or 0), ','),
+                  'Projected', format(int(proj_units), ','),
+                  vk(0) if not on_units else format(int(proj_units - on_units), '+,'),
+                  var_cls(proj_units - (on_units or 0), True))
+        + '</div>'
+        '<div class="rc-boxrow">'
+        + rc_box2('Carries into 2027',
+                  'At Cost', fk(proj_cog),
+                  'Cash at ' + pct + '%', fk(cash), vk(cash - proj_cog), 'neg')
+        + '</div>'
+        '<div class="rc-desc" style="margin-top:10px">'
+        'Everything on hand at year end carries \u2014 S26, F26 and prior lines \u2014 and is '
+        'discounted through Q1. The ' + pct + '% realisation is a judgement, not a reading: it is the '
+        'only figure here the workbook does not imply, and it is what decides how much of the A/P - CNS '
+        'carryover this retires. 2025 held ' + fk(end25) + ' at week 52 against ' + fk(start25)
+        + ' at week ' + str(lw) + '.'
+        '</div></div>\n')
+
 def build_cash_summary(d):
     """Total cash in and out, off the Cash Flow - Weekly tab.
 
@@ -4265,6 +4337,7 @@ def build_html(d):
         + rc_stat('Avg Unit Cost', '$' + f'{avg_unit_cost:,.2f}' if tu else '—')
         + '</div></div></div>'
         '</div>\n'
+        + build_inventory_projection(d)
         + rc_divider("Total Inventory COG — Week by Week")
         + '<div class="rc-card" style="grid-column:1 / -1">'
         + '<div class="rc-headrow"><div class="rc-name">' + (yoy_cog_str or ' ') + '</div></div>'
