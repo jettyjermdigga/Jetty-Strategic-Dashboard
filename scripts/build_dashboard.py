@@ -2718,6 +2718,21 @@ def build_summary_panel(d):
                 return i + 1
         return None
     _cl = get(ty_year, 'cl_balance')
+    print('FIG3 ' + json.dumps({
+        'rev_trend_total': d.get('rev_trend_total'),
+        'net_income_trend': d.get('net_income_trend'),
+        'rev_lines': d.get('rev_lines'),
+        'inv_latest_wk': d.get('inv_latest_wk'),
+        'cog_2026': {k: v for k, v in sorted((d.get('cog_2026') or {}).items())[-3:]},
+        'units_2026': {k: v for k, v in sorted((d.get('units_2026') or {}).items())[-3:]},
+        'yoy_cog_2025': d.get('yoy_cog_2025'), 'yoy_units_2025': d.get('yoy_units_2025'),
+        'st_s26': {k: v for k, v in sorted((d.get('st_s26') or {}).items())[-2:]},
+        'st_s25': {k: v for k, v in sorted((d.get('st_s25') or {}).items())[-2:]},
+        'bp_ytd': d.get('bp_ytd'),
+        'events_n': len(d.get('events') or []),
+        'opex_lines': (d.get('opex_lines') or [])[:14],
+    }, default=str), file=sys.stderr)
+
     print('Summary panel: years=' + repr(sorted(hist.keys()))
           + ' ty_year=' + repr(ty_year)
           + ' WK=' + repr(WK)
