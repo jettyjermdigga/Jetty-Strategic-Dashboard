@@ -80,7 +80,8 @@ const ADDED_COLUMNS = [
   'event_type TEXT', 'department TEXT', 'departments TEXT',
   'staff_count TEXT', 'vehicles TEXT', 'products TEXT',
   'social_type TEXT', 'channels TEXT', 'pillar TEXT', 'production TEXT',
-  'caption TEXT', 'tags TEXT', 'orders INTEGER', 'net_revenue REAL',
+  'caption TEXT', 'tags TEXT',
+  'event_fee REAL', 'orders INTEGER', 'net_revenue REAL',
 ];
 
 // Same idea, on the attachments table.
@@ -507,6 +508,7 @@ function normalise(input, existing) {
   // How the event did. Typed by a person after the fact, so "1,240" and
   // "$1,240.00" both have to mean the same number -- refusing them would just
   // teach people to go and find a cleaner copy of a figure they already have.
+  out.event_fee = money(pick('event_fee'), 'Event fee', errors);
   out.orders = wholeNumber(pick('orders'), 'Orders', errors);
   out.net_revenue = money(pick('net_revenue'), 'Net revenue', errors);
 
@@ -545,7 +547,7 @@ const COLS = [
   'vehicles', 'status', 'start_date', 'end_date', 'all_day', 'start_time', 'end_time',
   'venue', 'address', 'city', 'state', 'zip', 'notes', 'url', 'products',
   'social_type', 'channels', 'pillar', 'production', 'caption', 'tags',
-  'orders', 'net_revenue',
+  'event_fee', 'orders', 'net_revenue',
 ];
 
 // Meetings and deadlines take the short form: who, when, and nothing else. The
@@ -566,7 +568,7 @@ const SOCIAL_ONLY = ['social_type', 'channels', 'pillar', 'production', 'caption
 const MARKETING_BLANKS = ['needs', 'staff_count', 'vehicles'];
 
 // Reported after the fact, and only on something that actually sold.
-const RESULTS_ONLY = ['orders', 'net_revenue'];
+const RESULTS_ONLY = ['event_fee', 'orders', 'net_revenue'];
 
 // Year / Week / Start (Week) / End (Week) / Month / Day are not stored; they are
 // attached here so every reader sees the same values.

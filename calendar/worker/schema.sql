@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS items (
   zip         TEXT,
   notes       TEXT,
   url         TEXT,
+  event_fee   REAL,                       -- what it cost to be there, in dollars
   orders      INTEGER,                    -- how many orders the event took
   net_revenue REAL,                       -- net, in dollars. The sales report itself is
                                           -- an attachment whose slot is 'results'

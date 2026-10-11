@@ -455,8 +455,21 @@ await t('works out the average order value as the numbers go in', async () => {
   await page.locator('#f-orders').fill('100');
   await page.locator('#f-netrev').fill('$8,420.50');
   await page.waitForFunction(() => document.querySelector('#aovOut').textContent.includes('84.20'));
-  return before.includes('appears once both are filled in');
+  return before.includes('appears once');
 });
+await t('says whether the day covered its fee', async () => {
+  await page.locator('#f-fee').fill('250');
+  await page.waitForFunction(() =>
+    document.querySelector('#aovOut').textContent.includes('Net of fee'));
+  return (await page.locator('#aovOut').textContent()).includes('8170.50');
+});
+await t('shows a fee the day did not cover as a loss', async () => {
+  await page.locator('#f-fee').fill('9000');
+  await page.waitForFunction(() =>
+    document.querySelector('#aovOut').textContent.includes('\u2212$'));
+  return (await page.locator('#aovOut').textContent()).includes('\u2212$579.50');
+});
+await page.locator('#f-fee').fill('250');
 await page.locator('button[data-act="next"]').click();
 
 await t('defaults a new event to Booked', async () =>

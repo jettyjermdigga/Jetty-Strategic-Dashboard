@@ -835,3 +835,4 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
   .cal-list[hidden]{ display:none !important }
   .day-item{ page-break-inside:avoid }
 }
+.aov-sep{opacity:.35;margin:0 9px}

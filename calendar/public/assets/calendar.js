@@ -831,6 +831,9 @@
       + esc(it.status) + '</span>');
     if (r) add('Retail week', 'Week ' + r.week + ' of ' + r.year + ' <span class="muted">('
       + esc(weekRangeLabel(r)) + ')</span>');
+    if (it.event_fee != null) {
+      add('Event fee', '$' + esc(it.event_fee.toLocaleString('en-US', { minimumFractionDigits: 2 })));
+    }
     if (it.orders != null || it.net_revenue != null) {
       var aov = (it.orders > 0 && it.net_revenue != null)
         ? ' <span class="muted">\u00b7 $' + (it.net_revenue / it.orders).toFixed(2) + ' AOV</span>'
@@ -1194,7 +1197,12 @@
       // the last question rather than part of the booking, and why nothing
       // here is required.
       + sect('results', 'How did it do?', 'optional \u2014 fill this in after the event',
-          '<div class="fld-row">'
+          '<div class="fld"><label for="f-fee">Event fee</label>'
+          + '<input type="text" id="f-fee" inputmode="decimal" maxlength="30" value="'
+          + esc(it.event_fee == null ? '' : it.event_fee) + '" placeholder="e.g. 250">'
+          + '<div class="hint">What it cost to be there \u2014 the pitch, the table, the '
+          + 'entry. Known when you book, not after.</div></div>'
+          + '<div class="fld-row">'
           + '<div class="fld"><label for="f-orders">Orders</label>'
           + '<input type="text" id="f-orders" inputmode="numeric" maxlength="20" value="'
           + esc(it.orders == null ? '' : it.orders) + '" placeholder="e.g. 142"></div>'
@@ -1524,10 +1532,23 @@
       var rev = Number(String(($('#f-netrev') || {}).value || '').replace(/[$,\s]/g, ''));
       // Only when both are there and the division means something -- an AOV of
       // Infinity on an event with no orders yet is noise, not information.
-      out.innerHTML = (n > 0 && isFinite(rev) && String(($('#f-netrev') || {}).value || '').trim())
-        ? '<span class="rl">AOV</span> $' + (rev / n).toFixed(2)
-          + ' <span class="muted">across ' + n + (n === 1 ? ' order' : ' orders') + '</span>'
-        : '<span class="muted">Average order value appears once both are filled in.</span>';
+      var feeRaw = String(($('#f-fee') || {}).value || '').trim();
+      var fee = Number(feeRaw.replace(/[$,\s]/g, ''));
+      var hasRev = isFinite(rev) && String(($('#f-netrev') || {}).value || '').trim();
+
+      var bits = [];
+      if (n > 0 && hasRev) {
+        bits.push('<span class="rl">AOV</span> $' + (rev / n).toFixed(2)
+          + ' <span class="muted">across ' + n + (n === 1 ? ' order' : ' orders') + '</span>');
+      }
+      // The question a fee actually raises: did the day cover it.
+      if (hasRev && feeRaw && isFinite(fee)) {
+        var net = rev - fee;
+        bits.push('<span class="rl">Net of fee</span> '
+          + (net < 0 ? '\u2212$' + Math.abs(net).toFixed(2) : '$' + net.toFixed(2)));
+      }
+      out.innerHTML = bits.length ? bits.join('<span class="aov-sep">\u00b7</span>')
+        : '<span class="muted">Average order value appears once orders and revenue are in.</span>';
     }
 
     function paintProds() {
@@ -1677,7 +1698,8 @@
     };
 
     $('#modalBody').oninput = function (e) {
-      if (e.target.id === 'f-orders' || e.target.id === 'f-netrev') paintResults();
+      if (e.target.id === 'f-orders' || e.target.id === 'f-netrev'
+          || e.target.id === 'f-fee') paintResults();
     };
 
     $('#modalBody').onchange = function (e) {
@@ -1775,6 +1797,7 @@
       all_day: allDay ? 1 : 0,
       start_time: allDay ? '' : $('#f-stime').value,
       end_time: allDay ? '' : $('#f-etime').value,
+      event_fee: $('#f-fee') ? $('#f-fee').value : '',
       orders: $('#f-orders') ? $('#f-orders').value : '',
       net_revenue: $('#f-netrev') ? $('#f-netrev').value : '',
       social_type: one('.f-stype:checked'),
@@ -1872,6 +1895,7 @@
     ['Retail Week',        function (it) { return it.retail ? it.retail.week : ''; }],
     ['Notes',              function (it) { return it.notes; }],
     ['URL',                function (it) { return it.url; }],
+    ['Event Fee',          function (it) { return it.event_fee == null ? '' : it.event_fee; }],
     ['Orders',             function (it) { return it.orders == null ? '' : it.orders; }],
     ['Net Revenue',        function (it) { return it.net_revenue == null ? '' : it.net_revenue; }],
     ['AOV',                function (it) {
