@@ -515,20 +515,17 @@ def build_week_notes(d):
         if i > wk:     cls += ' ahead'
         if i == wk:    cls += ' now'
         chips.append('<button type="button" class="' + cls + '" data-wk="' + str(i)
-                     + '" aria-pressed="' + ('true' if i == wk else 'false') + '">'
+                     + '" aria-pressed="false">'
                      + str(i) + '</button>')
 
-    # The week shown first is the latest one actually written about, which is
-    # usually the current week and is never an empty panel when a note exists.
-    opens = max([w for w in notes if w <= wk], default=wk)
-
+    # Nothing is open until a week is clicked. The strip is the thing worth
+    # seeing at a glance; a note is something you go and ask for.
     panels = []
     for i in range(1, 53):
         body = notes.get(i)
         if not body:
             body = ('<p class="wk-none">No note for week ' + str(i) + '.</p>')
-        panels.append('<div class="wk-note" data-wk="' + str(i) + '"'
-                      + ('' if i == opens else ' hidden') + '>'
+        panels.append('<div class="wk-note" data-wk="' + str(i) + '" hidden>'
                       + '<div class="wk-note-h">Week ' + str(i) + ' \u00b7 ' + str(year)
                       + ('' if i in notes else ' \u2014 nothing written') + '</div>'
                       + body + '</div>')
@@ -546,19 +543,18 @@ WEEK_NOTES_JS = '''
   card.addEventListener("click", function(e){
     var b = e.target.closest(".wk-chip");
     if (!b) return;
+    // Clicking the week that is already open closes it, so the section can be
+    // put away again without having to find something else to click.
+    var reopen = !b.classList.contains("open");
     card.querySelectorAll(".wk-chip").forEach(function(x){
       x.classList.remove("open"); x.setAttribute("aria-pressed", "false");
     });
+    card.querySelectorAll(".wk-note").forEach(function(n){ n.hidden = true; });
+    if (!reopen) return;
     b.classList.add("open"); b.setAttribute("aria-pressed", "true");
-    card.querySelectorAll(".wk-note").forEach(function(n){
-      n.hidden = n.dataset.wk !== b.dataset.wk;
-    });
+    var note = card.querySelector('.wk-note[data-wk="' + b.dataset.wk + '"]');
+    if (note) note.hidden = false;
   });
-  var now = card.querySelector(".wk-note:not([hidden])");
-  if (now) {
-    var chip = card.querySelector('.wk-chip[data-wk="' + now.dataset.wk + '"]');
-    if (chip) chip.classList.add("open");
-  }
 })();
 '''
 
@@ -2096,6 +2092,9 @@ EXTRA_CSS = '''
   text-transform:uppercase;opacity:.5;margin-bottom:8px;
 }
 .wk-body{max-width:70ch}
+/* Collapsed, the card is just the strip -- no empty space under it waiting
+   for a week to be clicked. */
+.wk-body:not(:has(.wk-note:not([hidden]))){display:none}
 .wk-h{font-size:13px;margin:16px 0 6px;letter-spacing:.01em}
 .wk-body p{margin:0 0 9px;font-size:13.5px;line-height:1.55}
 .wk-ul{margin:0 0 10px;padding-left:18px}
