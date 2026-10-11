@@ -1698,7 +1698,16 @@ def read_all():
     # more per-category COG/units breakdown. Col 7 (Avg Cost/Unit) is a
     # formula-error placeholder in the export and is ignored; we compute the
     # average ourselves from COG/units instead.
-    inv_wks = []
+    # inv_wks is every week the sheet has a ROW for; inv_real_wks is every week
+    # it has a READING for. The two are not the same: a row is usually laid in
+    # ahead of the count, so the latest row and the latest count differ by
+    # however long it has been since anybody counted.
+    #
+    # Taking the latest row as the latest week is what made the snapshot claim
+    # to be current when it was not -- carry_forward had quietly filled the
+    # empty week with the previous one's figures, and the "pending" note, which
+    # only fires when the latest week is behind the current week, never fired.
+    inv_wks = []; inv_real_wks = []
     pairs_c = []; pairs_u = []
     for _,row in df_inv[df_inv[0]==2026].iterrows():
         if not pd.notna(row[2]): continue
@@ -1707,6 +1716,7 @@ def read_all():
         inv_wks.append(wk)
         c = float(row[5]) if pd.notna(row[5]) and isinstance(row[5],(int,float)) else None
         u = float(row[6]) if pd.notna(row[6]) and isinstance(row[6],(int,float)) else None
+        if c is not None or u is not None: inv_real_wks.append(wk)
         pairs_c.append((wk,c)); pairs_u.append((wk,u))
 
     cog_v, cog_e = carry_forward(pairs_c)
@@ -1716,8 +1726,10 @@ def read_all():
     d['cog_2026']   = {wk: round(cog_v[wk]) for wk in inv_wks if wk in cog_v}
     d['units_2026'] = {wk: round(u_v[wk])   for wk in inv_wks if wk in u_v}
     d['inv_wks']      = inv_wks
-    d['inv_latest_wk']= inv_wks[-1] if inv_wks else None
-    d['inv_prev_wk']  = inv_wks[-2] if len(inv_wks) > 1 else None
+    # The snapshot reports the last week somebody actually counted. The charts
+    # still run to inv_wks and mark the carried weeks as estimated.
+    d['inv_latest_wk']= inv_real_wks[-1] if inv_real_wks else None
+    d['inv_prev_wk']  = inv_real_wks[-2] if len(inv_real_wks) > 1 else None
 
     for yr,ck,uk in [(2024,'cog_2024','units_2024'),(2025,'cog_2025','units_2025')]:
         pairs_c=[]; pairs_u=[]
