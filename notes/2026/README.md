@@ -11,6 +11,13 @@ more than the feature it would have added:
     ## Heading
     A paragraph. Blank lines separate paragraphs.
     - A bullet
+    | Column | Column |
+    |---|---|
+    | cell   | cell   |
     **bold** and *italic* inline.
+
+Sections are named after the dashboard's own tabs -- Summary, Revenue, COGS &
+Shipping, Inventory, Labor, OpEx, Cash Flow -- so a note can be read beside the
+tab it is about. A tab with nothing worth saying is left out rather than padded.
 
 Anything else is shown as written. HTML in a note is escaped, not rendered.

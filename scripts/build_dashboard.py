@@ -455,8 +455,18 @@ def render_note_md(text):
     blank-line paragraphs, **bold**, *italic*. Everything else is shown as
     written, and any HTML in the file is escaped rather than rendered -- a note
     is prose, not markup, and should not be able to break the page."""
-    html, para, bullets = [], [], []
+    html, para, bullets, rows = [], [], [], []
     def flush():
+        if rows:
+            # First row is the header; the |---|---| separator never reaches here.
+            head, body = rows[0], rows[1:]
+            html.append('<table class="wk-table"><thead><tr>'
+                        + ''.join('<th>' + _inline_md(c) + '</th>' for c in head)
+                        + '</tr></thead><tbody>'
+                        + ''.join('<tr>' + ''.join('<td>' + _inline_md(c) + '</td>' for c in r)
+                                  + '</tr>' for r in body)
+                        + '</tbody></table>')
+            rows.clear()
         if bullets:
             html.append('<ul class="wk-ul">'
                         + ''.join('<li>' + _inline_md(b) + '</li>' for b in bullets)
@@ -472,11 +482,18 @@ def render_note_md(text):
             flush(); continue
         if stripped.startswith('## '):
             flush(); html.append('<h4 class="wk-h">' + _inline_md(stripped[3:]) + '</h4>')
+        elif stripped.startswith('|') and stripped.endswith('|'):
+            if para or bullets: flush()
+            cells = [c.strip() for c in stripped[1:-1].split('|')]
+            # The |---|:--:| rule under the header carries no content.
+            if not all(set(c) <= set('-: ') and c for c in cells):
+                rows.append(cells)
         elif stripped.startswith('- '):
             if para: flush()
+            if rows: flush()
             bullets.append(stripped[2:])
         else:
-            if bullets: flush()
+            if bullets or rows: flush()
             para.append(stripped)
     flush()
     return ''.join(html)
@@ -2100,6 +2117,15 @@ EXTRA_CSS = '''
 .wk-ul{margin:0 0 10px;padding-left:18px}
 .wk-ul li{font-size:13.5px;line-height:1.55;margin-bottom:4px}
 .wk-none{opacity:.5;font-style:italic}
+.wk-table{border-collapse:collapse;margin:0 0 12px;font-size:12.5px;width:100%}
+.wk-table th,.wk-table td{
+  text-align:left;padding:5px 12px 5px 0;border-bottom:1px solid var(--surface-alt);
+}
+.wk-table th{
+  font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.07em;
+  text-transform:uppercase;opacity:.55;font-weight:400;
+}
+.wk-table td+td,.wk-table th+th{text-align:right;font-variant-numeric:tabular-nums}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 .chart-wrap{position:relative;width:100%}
@@ -2718,21 +2744,6 @@ def build_summary_panel(d):
                 return i + 1
         return None
     _cl = get(ty_year, 'cl_balance')
-    print('FIG3 ' + json.dumps({
-        'rev_trend_total': d.get('rev_trend_total'),
-        'net_income_trend': d.get('net_income_trend'),
-        'rev_lines': d.get('rev_lines'),
-        'inv_latest_wk': d.get('inv_latest_wk'),
-        'cog_2026': {k: v for k, v in sorted((d.get('cog_2026') or {}).items())[-3:]},
-        'units_2026': {k: v for k, v in sorted((d.get('units_2026') or {}).items())[-3:]},
-        'yoy_cog_2025': d.get('yoy_cog_2025'), 'yoy_units_2025': d.get('yoy_units_2025'),
-        'st_s26': {k: v for k, v in sorted((d.get('st_s26') or {}).items())[-2:]},
-        'st_s25': {k: v for k, v in sorted((d.get('st_s25') or {}).items())[-2:]},
-        'bp_ytd': d.get('bp_ytd'),
-        'events_n': len(d.get('events') or []),
-        'opex_lines': (d.get('opex_lines') or [])[:14],
-    }, default=str), file=sys.stderr)
-
     print('Summary panel: years=' + repr(sorted(hist.keys()))
           + ' ty_year=' + repr(ty_year)
           + ' WK=' + repr(WK)
@@ -2864,20 +2875,6 @@ def build_summary_panel(d):
         rows += row('Cash Surplus / Deficit', vk(surplus_deficit),
                      base_cash_label + ' \u2212 Payments Remaining. Positive is cash actually in the bank '
                      'at the start of 2027; negative is the gap A/P - CNS has to cover.', bold=True)
-
-        print('FIG2 ' + json.dumps({
-            'bank': starting_bank_balance, 'cash_in_proj': cash_in_projected,
-            'cash_in_eoy': cash_in_eoy, 'rem_labor': rem_labor_plan,
-            'other_cogs': other_cogs_out, 'ap_key': ap_key_total, 'ap_cns': ap_cns_total,
-            'rem_opex': rem_opex_plan, 'cash_out_eoy': cash_out_eoy,
-            'available': available_cash, 'kv_not_due': (kv_under_30 if kv else None),
-            'base_cash': base_cash, 'cl': cl_balance, 'cl_remaining': cl_payments_remaining,
-            'surplus_deficit': surplus_deficit,
-            'cash_in_ytd': sum(v for v in get(ty_year,'cash_in')[:WK] if v is not None),
-            'cash_out_ytd': sum(v for v in get(ty_year,'cash_out')[:WK] if v is not None),
-            'cash_in_ly': sum(v for v in get(ly_year,'cash_in')[:WK] if v is not None),
-            'cash_out_ly': sum(v for v in get(ly_year,'cash_out')[:WK] if v is not None),
-        }, default=str), file=sys.stderr)
 
         deficit = max(0.0, -surplus_deficit)
         # CNS can only absorb what's actually owed on it. A deficit larger
