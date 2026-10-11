@@ -2850,6 +2850,20 @@ def build_summary_panel(d):
                      base_cash_label + ' \u2212 Payments Remaining. Positive is cash actually in the bank '
                      'at the start of 2027; negative is the gap A/P - CNS has to cover.', bold=True)
 
+        print('FIG2 ' + json.dumps({
+            'bank': starting_bank_balance, 'cash_in_proj': cash_in_projected,
+            'cash_in_eoy': cash_in_eoy, 'rem_labor': rem_labor_plan,
+            'other_cogs': other_cogs_out, 'ap_key': ap_key_total, 'ap_cns': ap_cns_total,
+            'rem_opex': rem_opex_plan, 'cash_out_eoy': cash_out_eoy,
+            'available': available_cash, 'kv_not_due': (kv_under_30 if kv else None),
+            'base_cash': base_cash, 'cl': cl_balance, 'cl_remaining': cl_payments_remaining,
+            'surplus_deficit': surplus_deficit,
+            'cash_in_ytd': sum(v for v in get(ty_year,'cash_in')[:WK] if v is not None),
+            'cash_out_ytd': sum(v for v in get(ty_year,'cash_out')[:WK] if v is not None),
+            'cash_in_ly': sum(v for v in get(ly_year,'cash_in')[:WK] if v is not None),
+            'cash_out_ly': sum(v for v in get(ly_year,'cash_out')[:WK] if v is not None),
+        }, default=str), file=sys.stderr)
+
         deficit = max(0.0, -surplus_deficit)
         # CNS can only absorb what's actually owed on it. A deficit larger
         # than the whole CNS balance can't be met by deferring CNS, and
