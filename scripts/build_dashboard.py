@@ -1201,9 +1201,12 @@ def read_all():
     d['week']       = WK
     d['net_inc_var']= sc(21, 'D')
     d['ytd_status'] = 'ahead' if d['net_inc_var'] >= 0 else 'behind'
-    for key, row in [('rev',11),('cogs',13),('opex',15),('net_income',21),
-                      ('cash_in',68),('cash_out',75),('cf_var_pre',77),('cf_var_post',81),
-                      ('credit_line',79)]:
+    # Rows 68/75/77/79/81 used to be read here as Cash IN / Cash OUT / credit
+    # line. They are fed by the Cash Flow - Tracker, WIP and Plan tabs, which
+    # are no longer maintained, so the "plan" in them is stale -- and nothing
+    # on the page ever rendered them. Cash now comes from Cash Flow - Weekly
+    # (see build_cash_summary), which is the tab that is actually kept up.
+    for key, row in [('rev',11),('cogs',13),('opex',15),('net_income',21)]:
         d[key] = {k: sc(row, c) for k,c in [('plan','B'),('act','C'),('var','D'),
                                               ('ann_plan','G'),('ann_proj','H'),('ann_var','I')]}
 
@@ -2259,6 +2262,80 @@ def rc_card_kpi(title, cum, full, favorable_if_below=False, desc=None, body_extr
         + body_extra +
         '</div>\n'
     )
+
+def rc_box2(group_label, a_lbl, a_val, b_lbl, b_val, var_val, cls):
+    """rc_box names its first figure "Plan". Cash has no usable plan any more,
+    so this one lets both figures say what they actually are."""
+    return ('<div class="rc-box"><div class="rc-group-label">' + group_label + '</div>'
+            '<div class="rc-row">'
+            + rc_stat(a_lbl, a_val) + rc_stat(b_lbl, b_val) + rc_stat('Variance', var_val, cls)
+            + '</div></div>')
+
+def build_cash_summary(d):
+    """Total cash in and out, off the Cash Flow - Weekly tab.
+
+    The Summary sheet's own cash rows are driven by the Tracker / WIP / Plan
+    tabs, which stopped being maintained, so plan-versus-actual there compares
+    this year against a plan nobody is keeping. Weekly has no projection in it
+    either -- what it does have is 2025 actuals, week by week, which is a
+    straight answer to "are we taking in more or less than we did last year".
+
+    Full year carries the same convention the Cash Flow Summary panel already
+    uses: this year to date, plus last year's actuals for the weeks still to
+    come. It is a pace, not a forecast, and it is labelled as one.
+    """
+    hist = d.get('cfw_history') or {}
+    ty = max(hist.keys()) if hist else None
+    if not ty or (ty - 1) not in hist:
+        return ''
+    ly, wk = ty - 1, d['week']
+
+    def series(year, key):
+        return (hist.get(year) or {}).get(key) or [None] * 52
+    def total(arr, lo, hi):
+        return sum(v for v in arr[lo:hi] if v is not None)
+
+    cards = []
+    for key, title, below in [('cash_in',  'Total Cash IN',  False),
+                              ('cash_out', 'Total Cash OUT', True)]:
+        ty_arr, ly_arr = series(ty, key), series(ly, key)
+        ty_ytd  = total(ty_arr, 0, wk)
+        ly_same = total(ly_arr, 0, wk)
+        ly_full = total(ly_arr, 0, 52)
+        pace    = ty_ytd + total(ly_arr, wk, 52)
+        cards.append(
+            '<div class="rc-card" style="grid-column:1 / -1">'
+            '<div class="rc-headrow"><div class="rc-name">' + title + '</div>'
+            '<div class="rc-desc">Cash Flow - Weekly. ' + str(ty) + ' against ' + str(ly)
+            + ', because the cash plan on the Summary sheet is no longer maintained.</div></div>'
+            '<div class="rc-boxrow">'
+            + rc_box2('Weeks 1-' + str(wk),
+                      str(ly) + ' Actual', fk(ly_same), str(ty) + ' Actual', fk(ty_ytd),
+                      vk(ty_ytd - ly_same), var_cls(ty_ytd - ly_same, below))
+            + rc_box2('Full Year',
+                      str(ly) + ' Actual', fk(ly_full), str(ty) + ' at ' + str(ly) + ' pace', fk(pace),
+                      vk(pace - ly_full), var_cls(pace - ly_full, below))
+            + '</div></div>\n')
+
+    # Net is the point of the two above, so it is stated rather than left to be
+    # worked out from them.
+    in_ty  = total(series(ty, 'cash_in'), 0, wk)
+    out_ty = total(series(ty, 'cash_out'), 0, wk)
+    in_ly  = total(series(ly, 'cash_in'), 0, wk)
+    out_ly = total(series(ly, 'cash_out'), 0, wk)
+    net_ty, net_ly = in_ty - out_ty, in_ly - out_ly
+    cards.append(
+        '<div class="rc-card" style="grid-column:1 / -1">'
+        '<div class="rc-headrow"><div class="rc-name">Net Cash</div>'
+        '<div class="rc-desc">Cash IN less Cash OUT, weeks 1-' + str(wk)
+        + '. What the year has actually added to or taken out of the bank.</div></div>'
+        '<div class="rc-boxrow">'
+        + rc_box2('Weeks 1-' + str(wk),
+                  str(ly) + ' Actual', vk(net_ly), str(ty) + ' Actual', vk(net_ty),
+                  vk(net_ty - net_ly), var_cls(net_ty - net_ly))
+        + '</div></div>\n')
+
+    return rc_divider('Cash In / Out \u2014 ' + str(ty) + ' vs ' + str(ly)) + ''.join(cards)
 
 def rc_trend_chart(chart_id, title, desc=None):
     """A 52-week canvas placed under a summary card -- see
@@ -4125,6 +4202,7 @@ def build_html(d):
             trend=d['net_income_trend'],
             desc="Trend uses Revenue's seasonality curve; COGS/OpEx use their plan-paced Full Year Projection.")
         + rc_trend_chart('chart-trend-net_income', '52-Week Trend — Net Income', trend_chart_desc)
+        + build_cash_summary(d)
     )
 
     cogs_panel = (
