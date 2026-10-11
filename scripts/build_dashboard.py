@@ -1,4 +1,4 @@
-import os, sys, json, datetime
+import os, re, sys, json, datetime
 import pandas as pd
 import pyxlsb
 import openpyxl
@@ -436,6 +436,132 @@ def vk(v):
     if a >= 1_000_000: return sign + "$" + format(a/1_000_000, ".2f") + "M"
     if a >= 1_000:     return sign + "$" + format(a/1_000,     ".1f") + "K"
     return sign + "$" + f"{a:,.0f}"
+# ── weekly notes ─────────────────────────────────────────────────────────────
+#
+# A note per week, written by hand in notes/<year>/wk<NN>.md and read at build
+# time. Kept in the repo rather than in the workbook so the commentary has a
+# history of its own -- what was said in week 40 stays what was said in week
+# 40, even after the numbers it described have moved.
+
+NOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'notes')
+
+def _inline_md(text):
+    """Bold and italic only, on already-escaped text."""
+    out = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+    return re.sub(r'(?<![\*\w])\*(?!\s)(.+?)(?<!\s)\*(?!\*)', r'<em>\1</em>', out)
+
+def render_note_md(text):
+    """A small, predictable slice of Markdown: ## headings, - bullets,
+    blank-line paragraphs, **bold**, *italic*. Everything else is shown as
+    written, and any HTML in the file is escaped rather than rendered -- a note
+    is prose, not markup, and should not be able to break the page."""
+    html, para, bullets = [], [], []
+    def flush():
+        if bullets:
+            html.append('<ul class="wk-ul">'
+                        + ''.join('<li>' + _inline_md(b) + '</li>' for b in bullets)
+                        + '</ul>')
+            bullets.clear()
+        if para:
+            html.append('<p>' + _inline_md(' '.join(para)) + '</p>')
+            para.clear()
+    for raw in (text or '').splitlines():
+        line = html_escape(raw.rstrip())
+        stripped = line.strip()
+        if not stripped:
+            flush(); continue
+        if stripped.startswith('## '):
+            flush(); html.append('<h4 class="wk-h">' + _inline_md(stripped[3:]) + '</h4>')
+        elif stripped.startswith('- '):
+            if para: flush()
+            bullets.append(stripped[2:])
+        else:
+            if bullets: flush()
+            para.append(stripped)
+    flush()
+    return ''.join(html)
+
+def read_week_notes(year):
+    """{week: html} for every note on disk. A missing directory is not an
+    error -- it is simply a year nobody has written about yet."""
+    out = {}
+    folder = os.path.join(NOTES_DIR, str(year))
+    if not os.path.isdir(folder):
+        return out
+    for name in os.listdir(folder):
+        m = re.match(r'^wk(\d{1,2})\.md$', name)
+        if not m:
+            continue
+        wk = int(m.group(1))
+        if not (1 <= wk <= 52):
+            continue
+        with open(os.path.join(folder, name), encoding='utf-8') as fh:
+            body = render_note_md(fh.read())
+        if body:
+            out[wk] = body
+    return out
+
+def build_week_notes(d):
+    """The 1-52 strip and the note behind each week. Weeks that have a note are
+    marked; the rest are reachable but say plainly that nothing was written."""
+    notes = d.get('week_notes') or {}
+    wk = d['week']
+    year = d.get('year') or 2026
+
+    chips = []
+    for i in range(1, 53):
+        cls = 'wk-chip'
+        if i in notes: cls += ' has'
+        if i > wk:     cls += ' ahead'
+        if i == wk:    cls += ' now'
+        chips.append('<button type="button" class="' + cls + '" data-wk="' + str(i)
+                     + '" aria-pressed="' + ('true' if i == wk else 'false') + '">'
+                     + str(i) + '</button>')
+
+    # The week shown first is the latest one actually written about, which is
+    # usually the current week and is never an empty panel when a note exists.
+    opens = max([w for w in notes if w <= wk], default=wk)
+
+    panels = []
+    for i in range(1, 53):
+        body = notes.get(i)
+        if not body:
+            body = ('<p class="wk-none">No note for week ' + str(i) + '.</p>')
+        panels.append('<div class="wk-note" data-wk="' + str(i) + '"'
+                      + ('' if i == opens else ' hidden') + '>'
+                      + '<div class="wk-note-h">Week ' + str(i) + ' \u00b7 ' + str(year)
+                      + ('' if i in notes else ' \u2014 nothing written') + '</div>'
+                      + body + '</div>')
+
+    return (rc_divider('Week by Week')
+            + '<div class="rc-card" id="week-notes" style="grid-column:1 / -1">'
+            + '<div class="wk-strip">' + ''.join(chips) + '</div>'
+            + '<div class="wk-body">' + ''.join(panels) + '</div>'
+            + '</div>\n')
+
+WEEK_NOTES_JS = '''
+(function(){
+  var card = document.getElementById("week-notes");
+  if (!card) return;
+  card.addEventListener("click", function(e){
+    var b = e.target.closest(".wk-chip");
+    if (!b) return;
+    card.querySelectorAll(".wk-chip").forEach(function(x){
+      x.classList.remove("open"); x.setAttribute("aria-pressed", "false");
+    });
+    b.classList.add("open"); b.setAttribute("aria-pressed", "true");
+    card.querySelectorAll(".wk-note").forEach(function(n){
+      n.hidden = n.dataset.wk !== b.dataset.wk;
+    });
+  });
+  var now = card.querySelector(".wk-note:not([hidden])");
+  if (now) {
+    var chip = card.querySelector('.wk-chip[data-wk="' + now.dataset.wk + '"]');
+    if (chip) chip.classList.add("open");
+  }
+})();
+'''
+
 TAB_JS = '''
 document.querySelectorAll(".tab").forEach(function(t){
   t.addEventListener("click", function(){
@@ -1057,6 +1183,11 @@ def read_all():
     for yr, weeks in read_bank_balance_history(FP).items():
         d['cfw_history'].setdefault(yr, {})['bank_balance'] = weeks
     d['ar_history'] = read_ar_history(FP)
+    # The year the calendar is actually about, taken from the data rather than
+    # from today's date -- a build run in January must not go looking for notes
+    # on a year the workbook has not reached.
+    d['year'] = max(d['cfw_history'].keys()) if d.get('cfw_history') else 2026
+    d['week_notes'] = read_week_notes(d['year'])
     d['ap_key_xl'] = read_ap_vendor_total(FP, 'AP - Key')
     d['ap_cns_xl'] = read_ap_vendor_total(FP, 'AP - CNS')
 
@@ -1935,6 +2066,38 @@ def build_labor_fun_stats(pr):
 
 EXTRA_CSS = '''
 *{box-sizing:border-box}
+
+/* ── the week strip ──────────────────────────────────────────────────────── */
+/* 52 weeks in one block above Total Revenue. A week that has been written
+   about is marked; one that has not is still reachable, because "nothing was
+   said about week 12" is itself an answer. */
+.wk-strip{
+  display:grid;grid-template-columns:repeat(26,minmax(0,1fr));gap:3px;margin-bottom:14px;
+}
+@media (max-width:900px){ .wk-strip{grid-template-columns:repeat(13,minmax(0,1fr))} }
+.wk-chip{
+  font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1;
+  padding:6px 0;text-align:center;cursor:pointer;color:var(--ink);
+  background:transparent;border:1px solid var(--surface-alt);border-radius:4px;
+  opacity:.45;transition:opacity .12s,border-color .12s,background .12s;
+}
+.wk-chip:hover{opacity:1;border-color:var(--ink)}
+/* A note behind it is the thing worth seeing from across the row. */
+.wk-chip.has{opacity:1;border-color:var(--ink);font-weight:600}
+.wk-chip.ahead{opacity:.2;cursor:default}
+.wk-chip.now{box-shadow:inset 0 0 0 1px var(--ink)}
+.wk-chip.open{background:var(--ink);color:var(--bg);border-color:var(--ink);opacity:1}
+
+.wk-note-h{
+  font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.08em;
+  text-transform:uppercase;opacity:.5;margin-bottom:8px;
+}
+.wk-body{max-width:70ch}
+.wk-h{font-size:13px;margin:16px 0 6px;letter-spacing:.01em}
+.wk-body p{margin:0 0 9px;font-size:13.5px;line-height:1.55}
+.wk-ul{margin:0 0 10px;padding-left:18px}
+.wk-ul li{font-size:13.5px;line-height:1.55;margin-bottom:4px}
+.wk-none{opacity:.5;font-style:italic}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 .chart-wrap{position:relative;width:100%}
@@ -3948,7 +4111,8 @@ def build_html(d):
         "continues the solid 2026 Actual line from this week forward."
     )
     summary_panel = (
-        rc_card_kpi("Total Revenue", (rev['plan'],rev['act'],rev['var']), (rev['ann_plan'],rev['ann_proj'],rev['ann_var']),
+        build_week_notes(d)
+        + rc_card_kpi("Total Revenue", (rev['plan'],rev['act'],rev['var']), (rev['ann_plan'],rev['ann_proj'],rev['ann_var']),
             trend=d['rev_trend_total'])
         + rc_trend_chart('chart-trend-revenue', '52-Week Trend — Total Revenue', trend_chart_desc)
         + rc_card_kpi("COGS + Labor + Shipping", (cogs['plan'],cogs['act'],cogs['var']), (cogs['ann_plan'],cogs['ann_proj'],cogs['ann_var']),
@@ -4041,7 +4205,7 @@ def build_html(d):
         + build_chart_js(d)
         + '</script>\n'
         '<script>\n'
-        + TAB_JS +
+        + TAB_JS + WEEK_NOTES_JS +
         '</script>\n'
         '<script>\n'
         + CHART_MODAL_JS +
