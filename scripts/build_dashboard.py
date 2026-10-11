@@ -2314,14 +2314,22 @@ def rc_box2(group_label, a_lbl, a_val, b_lbl, b_val, var_val, cls):
 RETAIL_MULTIPLE = 4.0
 WHOLESALE_MULTIPLE = 2.0
 
-# What the carry actually clears at in Q1. Jeremy: retail value, then roughly
-# half off. The one judgement in here -- everything else is a reading.
+# What the carry clears at once it is discounted through Q1. That is a 2027
+# event with a 2027 plan behind it -- it is shown here for size, and is
+# deliberately not plumbed into the 2026 cash equation.
 CARRY_DISCOUNT = 0.50
+
+# Direct sales do not go out at full retail. The promos running through the
+# back half take roughly a fifth off, so a dollar of cost comes back as
+# 4 x 0.8 = $3.20 of revenue rather than $4.00 -- which means a given revenue
+# figure eats MORE inventory than full-price maths would say.
+DIRECT_DISCOUNT = 0.20
 
 # Which channels eat into this inventory between now and year end. Wholesale is
 # handled separately through its open order book, and INK is printing rather
 # than stock, so neither belongs here.
-DIRECT_CHANNELS = ['Jettylife.com (DTC)']
+DIRECT_CHANNELS = ['Jettylife.com (DTC)', 'Flagship Store', 'Long Branch',
+                   'Mobile Store & Tent']
 
 def build_inventory_projection(d):
     """What is left on hand at week 52, and what it clears for in Q1.
@@ -2353,7 +2361,8 @@ def build_inventory_projection(d):
     for lbl, act, _plan, _ann_plan, _ann_proj, trend in (d.get('rev_lines') or []):
         if lbl in DIRECT_CHANNELS:
             direct_rev += max(0.0, trend - act)
-    direct_cost = direct_rev / RETAIL_MULTIPLE
+    direct_realised = RETAIL_MULTIPLE * (1 - DIRECT_DISCOUNT)
+    direct_cost = direct_rev / direct_realised
 
     carry_cost = on_hand - whsl_cost - direct_cost
     carry_retail = carry_cost * RETAIL_MULTIPLE
@@ -2369,9 +2378,10 @@ def build_inventory_projection(d):
         + '<div class="rc-card" style="grid-column:1 / -1">'
         '<div class="rc-headrow"><div class="rc-name">What Carries Into 2027</div>'
         '<div class="rc-desc">Week ' + str(lw) + ' on hand, less the wholesale book still to ship and '
-        'direct sales still to come. Both come back to cost \u2014 wholesale at '
-        + str(int(WHOLESALE_MULTIPLE)) + '\u00d7, direct at ' + str(int(RETAIL_MULTIPLE))
-        + '\u00d7 \u2014 because inventory is carried at cost.</div></div>'
+        'direct sales still to come. Both come back to cost, because inventory is carried at '
+        'cost: wholesale at ' + str(int(WHOLESALE_MULTIPLE)) + '\u00d7, direct at '
+        + str(int(RETAIL_MULTIPLE)) + '\u00d7 less a '
+        + str(int(DIRECT_DISCOUNT * 100)) + '% promo discount.</div></div>'
         + '<div class="rc-hl"><table class="rc-hltable">'
           '<colgroup><col style="width:46%"><col style="width:18%"><col style="width:36%"></colgroup>'
           '<thead><tr><th>Line</th><th>Value</th>'
@@ -2381,15 +2391,20 @@ def build_inventory_projection(d):
         + _inv_row('Less wholesale on order', '\u2212' + fk(whsl_cost),
                    fk(whsl_rev) + ' of open H2 orders, at cost.')
         + _inv_row('Less direct sales to come', '\u2212' + fk(direct_cost),
-                   fk(direct_rev) + ' of DTC on the seasonality trend, at cost.')
+                   fk(direct_rev) + ' across ' + str(len(DIRECT_CHANNELS))
+                   + ' direct channels on the seasonality trend. At cost: retail is '
+                   + str(int(RETAIL_MULTIPLE)) + '\u00d7 and the promos take '
+                   + str(int(DIRECT_DISCOUNT * 100)) + '% off, so a dollar of cost sells for $'
+                   + ('%.2f' % direct_realised) + '.')
         + _inv_row('Inventory carry (at cost)', fk(carry_cost),
                    'Carries into 2027 \u2014 S26, F26 and prior lines.', bold=True, top=True)
         + _inv_row('At retail', fk(carry_retail),
                    'Cost \u00d7 ' + str(int(RETAIL_MULTIPLE)) + '.')
         + _inv_row('Clears at ' + off + '% off', fk(carry_cash),
-                   'What Q1 is expected to realise. The discount is the one '
-                   'judgement here; everything above it is read from the sheets.',
-                   bold=True, top=True)
+                   'What this is expected to realise in 2027, against a 2027 plan. It is '
+                   'shown for size and is deliberately kept out of the 2026 cash equation \u2014 '
+                   'the only part of this stock that is a 2026 cash event is the wholesale book '
+                   'above.', bold=True, top=True)
         + '</tbody></table></div></div>\n')
 
 def _inv_row(label, value, note='', bold=False, top=False):
