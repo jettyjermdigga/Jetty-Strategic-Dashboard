@@ -2129,6 +2129,10 @@ EXTRA_CSS = '''
 .wk-ul{margin:0 0 10px;padding-left:18px}
 .wk-ul li{font-size:13.5px;line-height:1.55;margin-bottom:4px}
 .wk-none{opacity:.5;font-style:italic}
+/* The 2027 realisation sits below the carry, visibly outside the calculation
+   that produced it. */
+.inv-2027{margin-top:18px;padding-top:14px;border-top:1px dashed var(--surface-alt)}
+.inv-2027 .rc-group-label{margin-bottom:8px}
 .wk-table{border-collapse:collapse;margin:0 0 12px;font-size:12.5px;width:100%}
 .wk-table th,.wk-table td{
   text-align:left;padding:5px 12px 5px 0;border-bottom:1px solid var(--surface-alt);
@@ -2368,48 +2372,64 @@ def build_inventory_projection(d):
     carry_retail = carry_cost * RETAIL_MULTIPLE
     carry_cash = carry_retail * (1 - CARRY_DISCOUNT)
 
+    # What those direct sales are worth at ticket price. Revenue is what gets
+    # booked after the promo, so the goods behind it ring up for more.
+    direct_retail = direct_rev / (1 - DIRECT_DISCOUNT)
+
     print('INVENTORY CARRY wk%s: on_hand=%.0f whsl_rev=%.0f whsl_cost=%.0f '
-          'direct_rev=%.0f direct_cost=%.0f carry_cost=%.0f retail=%.0f cash=%.0f'
-          % (lw, on_hand, whsl_rev, whsl_cost, direct_rev, direct_cost,
-             carry_cost, carry_retail, carry_cash), file=sys.stderr)
+          'direct_rev=%.0f direct_retail=%.0f direct_cost=%.0f carry_cost=%.0f '
+          'retail=%.0f cash=%.0f'
+          % (lw, on_hand, whsl_rev, whsl_cost, direct_rev, direct_retail,
+             direct_cost, carry_cost, carry_retail, carry_cash), file=sys.stderr)
 
     off = str(int(round(CARRY_DISCOUNT * 100)))
+    promo = str(int(round(DIRECT_DISCOUNT * 100)))
+    mult = str(int(RETAIL_MULTIPLE))
     return (rc_divider('EOY Inventory Carry')
         + '<div class="rc-card" style="grid-column:1 / -1">'
         '<div class="rc-headrow"><div class="rc-name">What Carries Into 2027</div>'
-        '<div class="rc-desc">Week ' + str(lw) + ' on hand, less the wholesale book still to ship and '
-        'direct sales still to come. Both come back to cost, because inventory is carried at '
-        'cost: wholesale at ' + str(int(WHOLESALE_MULTIPLE)) + '\u00d7, direct at '
-        + str(int(RETAIL_MULTIPLE)) + '\u00d7 less a '
-        + str(int(DIRECT_DISCOUNT * 100)) + '% promo discount.</div></div>'
+        '<div class="rc-desc">Week ' + str(lw) + ' on hand, less the wholesale book still to ship '
+        'and direct sales still to come. Everything in this block is at cost, because that is how '
+        'inventory is carried.</div></div>'
         + '<div class="rc-hl"><table class="rc-hltable">'
-          '<colgroup><col style="width:46%"><col style="width:18%"><col style="width:36%"></colgroup>'
-          '<thead><tr><th>Line</th><th>Value</th>'
+          '<colgroup><col style="width:44%"><col style="width:18%"><col style="width:38%"></colgroup>'
+          '<thead><tr><th>Line</th><th>At Cost</th>'
           '<th style="text-align:left;padding-left:16px">Notes</th></tr></thead><tbody>'
         + _inv_row('Inventory on hand', fk(on_hand),
-                   'Week ' + str(lw) + ' count, at cost.')
+                   'Week ' + str(lw) + ' count.')
         + _inv_row('Less wholesale on order', '\u2212' + fk(whsl_cost),
-                   fk(whsl_rev) + ' of open H2 orders, at cost.')
+                   fk(whsl_rev) + ' of open H2 orders. Wholesale sells at '
+                   + str(int(WHOLESALE_MULTIPLE)) + '\u00d7 cost.')
         + _inv_row('Less direct sales to come', '\u2212' + fk(direct_cost),
-                   fk(direct_rev) + ' across ' + str(len(DIRECT_CHANNELS))
-                   + ' direct channels on the seasonality trend. At cost: retail is '
-                   + str(int(RETAIL_MULTIPLE)) + '\u00d7 and the promos take '
-                   + str(int(DIRECT_DISCOUNT * 100)) + '% off, so a dollar of cost sells for $'
-                   + ('%.2f' % direct_realised) + '.')
-        + _inv_row('Inventory carry (at cost)', fk(carry_cost),
-                   'Carries into 2027 \u2014 S26, F26 and prior lines.', bold=True, top=True)
-        + _inv_row('At retail', fk(carry_retail),
-                   'Cost \u00d7 ' + str(int(RETAIL_MULTIPLE)) + '.')
-        + _inv_row('Clears at ' + off + '% off', fk(carry_cash),
-                   'What this is expected to realise in 2027, against a 2027 plan. It is '
-                   'shown for size and is deliberately kept out of the 2026 cash equation \u2014 '
-                   'the only part of this stock that is a 2026 cash event is the wholesale book '
-                   'above.', bold=True, top=True)
-        + '</tbody></table></div></div>\n')
+                   fk(direct_rev) + ' of trend revenue across ' + str(len(DIRECT_CHANNELS))
+                   + ' direct channels. That is after a ' + promo + '% promo discount, so the goods '
+                   'ring up at ' + fk(direct_retail) + ' of ticket price \u2014 and ticket price is '
+                   + mult + '\u00d7 cost.')
+        + _inv_row('Inventory carry', fk(carry_cost),
+                   'S26, F26 and prior lines. What is still here on 31 December.',
+                   bold=True, top=True, strong_top=True)
+        + '</tbody></table></div>'
 
-def _inv_row(label, value, note='', bold=False, top=False):
+        # The realisation is a 2027 question against a 2027 plan, so it sits
+        # below the line rather than inside the calculation.
+        + '<div class="inv-2027">'
+          '<div class="rc-group-label">Realising it in 2027</div>'
+          '<div class="rc-hl"><table class="rc-hltable">'
+          '<colgroup><col style="width:44%"><col style="width:18%"><col style="width:38%"></colgroup>'
+          '<tbody>'
+        + _inv_row('Carry at retail', fk(carry_retail),
+                   fk(carry_cost) + ' at cost \u00d7 ' + mult + '.')
+        + _inv_row('Clears at ' + off + '% off', fk(carry_cash),
+                   'What Q1 is expected to realise. Not a 2026 cash event and not in the 2026 '
+                   'cash equation \u2014 the wholesale book above is the only part of this stock '
+                   'that is.', bold=True)
+        + '</tbody></table></div></div>'
+        + '</div>\n')
+
+def _inv_row(label, value, note='', bold=False, top=False, strong_top=False):
     w = 'font-weight:700' if bold else ''
-    t = 'border-top:1.5px solid var(--ink)' if top else ''
+    t = ('border-top:2.5px solid var(--ink)' if strong_top
+         else 'border-top:1.5px solid var(--ink)' if top else '')
     return ('<tr style="' + t + '"><td style="' + w + '">' + label + '</td>'
             '<td style="' + w + '">' + value + '</td>'
             '<td style="text-align:left;font-family:var(--body);font-weight:400;'
