@@ -1025,7 +1025,7 @@ async function handleApi(request, env, url, who, ctx) {
 
     if (method === 'POST') {
       // Deliberately not requireEditor: a comment changes no event data, and a
-      // calendar nobody but the seven editors can ask a question on is a
+      // calendar nobody but the editors can ask a question on is a
       // noticeboard rather than a conversation.
       if (!who.email) return json({ error: 'Not signed in.' }, 403);
 
