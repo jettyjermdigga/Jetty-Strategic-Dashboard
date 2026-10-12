@@ -303,8 +303,20 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
 .day-item.cancelled .bar{opacity:.3}
 .day-item.cancelled .day-title{text-decoration:line-through;opacity:.55}
 .day-item.cancelled .day-meta{opacity:.6}
-.mo-more{font-family:var(--mono);font-size:10.5px;opacity:.55;padding-left:3px;cursor:pointer}
-.mo-more:hover{opacity:1;text-decoration:underline}
+/* "+N more" is the only route to the rest of a busy day, so it reads as a
+   control rather than a footnote, and spans the cell so it is easy to hit. */
+.mo-more{
+  display:block;width:100%;margin-top:3px;padding:3px 6px;border-radius:4px;
+  font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.02em;
+  border:1px solid color-mix(in srgb,var(--ink) 20%,transparent);
+  background:color-mix(in srgb,var(--ink) 5%,transparent);
+  color:var(--ink);opacity:.8;cursor:pointer;
+  transition:opacity .12s,border-color .12s,background .12s;
+}
+.mo-more:hover{
+  opacity:1;border-color:var(--primary);
+  background:color-mix(in srgb,var(--primary) 14%,transparent);
+}
 
 /* ── Day view ───────────────────────────────────────────────────────────── */
 

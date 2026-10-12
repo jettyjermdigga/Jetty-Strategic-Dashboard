@@ -320,6 +320,27 @@ await t('moves a month at a time', async () => {
   return a === NEXT_MONTH_LABEL;
 });
 
+console.log('a crowded day');
+// The cell draws three and hides the rest behind "+N more". That control used
+// to carry the cell's own data-day, so clicking it opened the new-event form
+// and the hidden events stayed hidden.
+await t('opens the day from "+N more" rather than the new-event form', async () => {
+  await page.locator('.mo-cell[data-day="' + dayThis(8) + '"] .mo-more').click();
+  const title = await page.locator('#modalTitle').textContent();
+  return await page.locator('#modal').isVisible()
+    && (await page.locator('#modalBody .day-list').count()) === 1
+    && !title.includes('Add event')
+    && title.includes(String(NOW.getFullYear()));
+});
+await t('shows the whole day, not only the part that was hidden', async () =>
+  (await page.locator('#modalBody .day-list .day-item').count()) === 4);
+await t('opens an event from a row in it', async () => {
+  await page.locator('#modalBody .day-list .day-item').first().click();
+  return (await page.locator('.det-title').count()) === 1;
+});
+await page.locator('button[data-act="close"]').click();
+await page.waitForFunction(() => document.querySelector('#modal').hidden);
+
 console.log('the download');
 await t('caps a crowded day on screen', async () => {
   const cell = page.locator('.mo-cell[data-day="' + dayThis(8) + '"]');

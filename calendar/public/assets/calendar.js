@@ -794,6 +794,34 @@
     }).join('');
   }
 
+  // A month cell holds three chips and hands the rest to "+N more". That
+  // link used to carry the same data-day as the cell around it, so clicking
+  // it fell through to the new-event form -- the one thing it must not do.
+  // It opens the whole day instead, in time order and with the detail the
+  // chips had no room for. Not gated on canEdit: reading a busy day is not
+  // an editor's privilege, and a viewer clicking it got nothing at all.
+  function showDay(ds) {
+    var d = fromYmd(ds);
+    var on = itemsOn(ds);
+    var title = DOW_LONG[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' '
+      + d.getDate() + ', ' + d.getFullYear();
+    // No .day-wrap here: the modal body brings its own padding.
+    var body = '<div class="day-sub">' + on.length
+        + (on.length === 1 ? ' event' : ' events') + '</div>'
+      + (on.length
+          ? '<div class="day-list">'
+            + on.map(function (it) { return rowHtml(it); }).join('')
+            + '</div>'
+          : '<p class="cl-empty">Nothing on this day.</p>');
+    var foot = (state.me.canEdit
+        ? '<button class="cal-btn primary" data-act="day-add" data-day="'
+          + esc(ds) + '">Add event</button>'
+        : '')
+      + '<div class="grow"></div>'
+      + '<button class="cal-btn" data-act="close">Close</button>';
+    openModal(title, body, foot);
+  }
+
   // The attachment list is not carried on every event in the month -- only a
   // count is -- so the one being opened is fetched when it is opened.
   function showDetail(id) {
@@ -2259,6 +2287,11 @@
     // separately rather than on the document, so a stray [data-id] elsewhere --
     // the modal's own buttons, say -- cannot open an event behind the modal.
     function openFromClick(e) {
+      // Before the [data-day] branch at the bottom: "+N more" sits inside a
+      // day cell and carries the same attribute, so it would otherwise be
+      // read as a click on open space and open the new-event form.
+      var more = e.target.closest('.mo-more');
+      if (more) { showDay(more.dataset.day); return; }
       var adder = e.target.closest('[data-add]');
       if (adder && state.me.canEdit) { showForm(null, adder.dataset.add); return; }
       var chip = e.target.closest('[data-id]');
@@ -2268,6 +2301,14 @@
     }
     $('#view').addEventListener('click', openFromClick);
     $('#listPanel').addEventListener('click', openFromClick);
+
+    // The day list lives in the modal body, which openFromClick deliberately
+    // does not watch. Scoped to the list rather than the body, for the same
+    // reason: the modal's own controls must not open an event behind it.
+    $('#modalBody').addEventListener('click', function (e) {
+      var row = e.target.closest('.day-list [data-id]');
+      if (row) showDetail(row.dataset.id);
+    });
 
     // The sync panel lives in the modal body, which showForm also uses -- so
     // this listens on the modal itself and checks what was clicked.
@@ -2310,6 +2351,8 @@
         });
         return;
       }
+
+      if (act === 'day-add') return showForm(null, b.dataset.day);
 
       if (act === 'edit') {
         var it = state.items.filter(function (x) { return x.id === b.dataset.id; })[0];
