@@ -10,11 +10,11 @@
 .site-top .brand{display:flex;align-items:center;gap:20px;min-width:0}
 .site-top .divider{width:1px;align-self:stretch;background:rgba(255,255,255,.22);margin:2px 0}
 .site-top .title-main{font-family:var(--display);font-weight:800;font-size:20px;color:#fff;white-space:nowrap}
-.site-top .title-sub{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.62);margin-top:2px}
+.site-top .title-sub{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.78);margin-top:2px}
 
 .site-who{
   font-family:var(--mono);font-size:11px;letter-spacing:.04em;
-  color:rgba(255,255,255,.55);white-space:nowrap;
+  color:rgba(255,255,255,.76);white-space:nowrap;
 }
 
 .site-main{max-width:1400px;margin:0 auto;padding:32px}

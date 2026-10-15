@@ -847,6 +847,97 @@ await page.waitForSelector('.mo-grid');
 await t('opens the event the DM pointed at', async () =>
   (await page.locator('.det-title').textContent()).includes('Surf Expo'));
 
+console.log('dark mode');
+// Three separate rules put near-white text on a near-white surface here: a
+// .cal-btn class that was never defined (so the buttons kept the browser's
+// default light face while site.css handed them color:inherit), a bare
+// .mo-cell.out sitting below the dark media query at equal specificity, and
+// a .fld input[type=text] base rule that outranked the .fld input override.
+// None of it was visible to a test that only ever rendered in light mode, so
+// the guard is a contrast sweep rather than three assertions about colour.
+const contrastSweep = async () => await page.evaluate(() => {
+  const srgb = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const parse = (c) => {
+    const m = (c || '').match(/[\d.]+/g);
+    if (!m) return null;
+    return { r: +m[0], g: +m[1], b: +m[2], a: m.length > 3 ? Number(m[3]) : 1 };
+  };
+  const over = (f, b) => ({
+    r: f.r * f.a + b.r * (1 - f.a), g: f.g * f.a + b.g * (1 - f.a),
+    b: f.b * f.a + b.b * (1 - f.a), a: 1,
+  });
+  const lum = (c) => 0.2126 * srgb(c.r) + 0.7152 * srgb(c.g) + 0.0722 * srgb(c.b);
+  const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+  const behind = (el) => {
+    const stack = [];
+    for (let n = el.parentElement; n; n = n.parentElement) stack.push(n);
+    let acc = { r: 255, g: 255, b: 255, a: 1 };
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const c = parse(getComputedStyle(stack[i]).backgroundColor);
+      if (c && c.a > 0) acc = over(c, acc);
+    }
+    return acc;
+  };
+  const bad = [];
+  document.querySelectorAll('body *').forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none') return;
+    if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) return;
+    const fg = parse(cs.color);
+    if (!fg) return;
+    const selfBg = parse(cs.backgroundColor);
+    let bg = behind(el);
+    if (selfBg && selfBg.a > 0) bg = over(selfBg, bg);
+    const op = Number(cs.opacity);
+    const eff = over({ ...fg, a: fg.a * (op < 1 ? op : 1) }, bg);
+    const cr = ratio(eff, bg);
+    if (cr < 4.5) {
+      // The text goes in the report too: a bare "span 3.04" is not enough to
+      // find the rule that did it.
+      bad.push((el.id ? '#' + el.id : el.tagName.toLowerCase()
+        + (typeof el.className === 'string' && el.className.trim()
+            ? '.' + el.className.trim().split(/\s+/)[0] : ''))
+        + ' "' + el.textContent.trim().slice(0, 18) + '" ' + cr.toFixed(2));
+    }
+  });
+  return [...new Set(bad)];
+});
+
+await page.goto('http://local.test/');
+await page.waitForSelector('.mo-grid');
+await page.emulateMedia({ colorScheme: 'dark' });
+await page.waitForTimeout(200);
+
+await t('keeps every label above the 4.5:1 floor', async () => {
+  const bad = await contrastSweep();
+  if (bad.length) console.log('         ' + bad.slice(0, 8).join(', '));
+  return bad.length === 0;
+});
+await t('paints the buttons instead of leaving them the default face', async () =>
+  await page.evaluate(() => ['#today', '#subscribe', '#downloadBtn', '#exportBtn']
+    .every((sel) => {
+      const cs = getComputedStyle(document.querySelector(sel));
+      // A transparent button is fine -- it takes the dark page behind it.
+      // The default UA face is what was not.
+      const m = cs.backgroundColor.match(/[\d.]+/g);
+      return m && (Number(m[3] ?? 1) === 0 || Number(m[0]) < 120);
+    })));
+await t('does not leave out-of-month cells painted white', async () =>
+  await page.evaluate(() => {
+    const cell = document.querySelector('.mo-cell.out');
+    return Number(getComputedStyle(cell).backgroundColor.match(/\d+/g)[0]) < 120;
+  }));
+
+await page.emulateMedia({ colorScheme: 'light' });
+await t('and the same holds in light mode', async () => {
+  await page.waitForTimeout(200);
+  const bad = await contrastSweep();
+  if (bad.length) console.log('         ' + bad.slice(0, 8).join(', '));
+  return bad.length === 0;
+});
+
 console.log('');
 if (errors.length) {
   console.log('PAGE ERRORS:\n' + errors.join('\n'));
