@@ -18,6 +18,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # wrangler.toml carries a placeholder id; the deploy fills it in the same
+      # way. Without this the query goes to __D1_DATABASE_ID__.
+      - name: Point at the calendar database
+        working-directory: calendar
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python provision_d1.py
       - name: Count affected rows
         working-directory: calendar
         env:
