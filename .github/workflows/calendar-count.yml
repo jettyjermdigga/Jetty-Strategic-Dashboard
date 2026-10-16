@@ -1,11 +1,21 @@
-# Temporary. Counts the Email/SMS rows that still carry a venue or product
-# highlights, so the one-off cleanup can be reported before and after rather
-# than taken on trust. Read-only, fixed query, no inputs. Delete once the
-# cleanup has been confirmed.
+# Temporary. The one-off cleanup of Email/SMS rows saved before the rule
+# existed: they still carry a venue or product highlights the form no longer
+# shows. Dumps what it is about to clear into the job log first, so the old
+# values survive the clearing, then clears and re-counts.
+#
+# Only two rows are affected, which is why this is a one-off query rather than
+# a guarded migration shipped into the Worker.
+#
+# Delete once the cleanup is confirmed.
 name: Count Email/SMS rows to clean
 
 on:
   workflow_dispatch:
+    inputs:
+      clear:
+        description: 'Actually clear the rows (otherwise only report)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -13,6 +23,13 @@ permissions:
 jobs:
   count:
     runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # The one predicate, written once: sub_types is a comma list, so a bare
+      # LIKE '%email-sms%' would also match a longer key that starts with it.
+      MATCH: "',' || REPLACE(sub_types, ', ', ',') || ',' LIKE '%,email-sms,%'"
+      HAS: "(COALESCE(venue,'') != '' OR COALESCE(address,'') != '' OR COALESCE(city,'') != '' OR COALESCE(state,'') != '' OR COALESCE(zip,'') != '' OR COALESCE(products,'') NOT IN ('', '[]'))"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,32 +42,28 @@ jobs:
       # way. Without this the query goes to __D1_DATABASE_ID__.
       - name: Point at the calendar database
         working-directory: calendar
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: python provision_d1.py
-      - name: Count affected rows
+
+      - name: What is about to be cleared
         working-directory: calendar
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 execute jetty_calendar --remote --json --command "
+            SELECT id, title, start_date, venue, address, city, state, zip, products
+            FROM items WHERE $MATCH AND $HAS"
+
+      - name: Clear it
+        if: inputs.clear
+        working-directory: calendar
+        run: |
+          npx --yes wrangler@4 d1 execute jetty_calendar --remote --json --command "
+            UPDATE items SET venue = NULL, address = NULL, city = NULL,
+                             state = NULL, zip = NULL, products = NULL
+            WHERE $MATCH AND $HAS"
+
+      - name: What is left
+        working-directory: calendar
         run: |
           npx --yes wrangler@4 d1 execute jetty_calendar --remote --json --command "
             SELECT COUNT(*) AS email_sms_rows,
-                   SUM(CASE WHEN COALESCE(venue,'')   != '' THEN 1 ELSE 0 END) AS with_venue,
-                   SUM(CASE WHEN COALESCE(address,'') != '' THEN 1 ELSE 0 END) AS with_address,
-                   SUM(CASE WHEN COALESCE(city,'')    != '' THEN 1 ELSE 0 END) AS with_city,
-                   SUM(CASE WHEN COALESCE(zip,'')     != '' THEN 1 ELSE 0 END) AS with_zip,
-                   SUM(CASE WHEN COALESCE(products,'') NOT IN ('', '[]') THEN 1 ELSE 0 END) AS with_products
-            FROM items
-            WHERE ',' || REPLACE(sub_types, ', ', ',') || ',' LIKE '%,email-sms,%'"
-      - name: Show the cleanup record, if it has run
-        working-directory: calendar
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          npx --yes wrangler@4 d1 execute jetty_calendar --remote --json --command "
-            SELECT key, applied_at, LENGTH(value) AS value_len,
-                   SUBSTR(value, 1, 400) AS head
-            FROM meta WHERE key = 'email-sms-blanks-2026-10'"
+                   SUM(CASE WHEN $HAS THEN 1 ELSE 0 END) AS still_carrying
+            FROM items WHERE $MATCH"
