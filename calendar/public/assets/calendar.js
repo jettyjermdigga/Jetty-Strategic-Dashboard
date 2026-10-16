@@ -1409,7 +1409,7 @@
 
       var prodWrap = $('#prodWrap');
       var k = kind();
-      if (prodWrap) prodWrap.hidden = k === 'meeting' || k === 'deadline';
+      if (prodWrap) prodWrap.hidden = !takesProducts();
 
       // A deadline falls on a day; it does not run until one. The end date is
       // hidden and kept in step with the start rather than left to disagree.
@@ -1734,6 +1734,7 @@
       if (e.target.classList.contains('f-kind')) return paint();
       if (e.target.classList.contains('f-dept')) { paintExtras(); paintScoped(); return paint(); }
       if (e.target.classList.contains('f-extra')) { paintScoped(); return paint(); }
+      if (e.target.classList.contains('f-sub')) return paint();
       if (e.target.classList.contains('f-need')) return paintStaff();
       if (e.target.id === 'f-allday') { $('#timeRow').hidden = e.target.checked; return; }
       if (e.target.id === 'f-start') {
@@ -1787,6 +1788,22 @@
     paint();
   }
 
+  // A meeting and a deadline store no product highlights at all. Email/SMS
+  // stores none either, by choice: those go out against the week's promo
+  // rather than carrying a product list of their own, so the section was
+  // being skipped every time it appeared.
+  //
+  // Read off the form rather than passed in, because both callers want the
+  // live answer: paint() to hide the section, readForm() to drop the rows. One
+  // function so "not shown" and "not stored" cannot drift apart.
+  function takesProducts() {
+    var k = document.querySelector('.f-kind:checked');
+    k = k ? k.value : 'event';
+    if (k === 'meeting' || k === 'deadline') return false;
+    return !Array.prototype.some.call(document.querySelectorAll('.f-sub:checked'),
+      function (el) { return el.value === 'email-sms'; });
+  }
+
   function readForm() {
     var allDay = $('#f-allday').checked;
     var vals = function (sel) {
@@ -1799,7 +1816,10 @@
     };
     // Read straight off the rows: each carries its own id, which an example
     // image already names, so there is no second copy to drift out of step.
-    var products = Array.prototype.map.call(document.querySelectorAll('.prod-row'),
+    // Nothing is read at all for a kind or sub-type that carries no highlights,
+    // so changing an event to one of those clears what it used to hold.
+    var products = !takesProducts() ? [] :
+      Array.prototype.map.call(document.querySelectorAll('.prod-row'),
       function (el) {
         return {
           id: el.dataset.row,

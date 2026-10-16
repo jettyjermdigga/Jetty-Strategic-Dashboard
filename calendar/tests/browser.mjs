@@ -847,6 +847,52 @@ await page.waitForSelector('.mo-grid');
 await t('opens the event the DM pointed at', async () =>
   (await page.locator('.det-title').textContent()).includes('Surf Expo'));
 
+console.log('product highlights on a marketing item');
+// Email/SMS carries no product list of its own, so step 9 drops the section
+// rather than showing one nobody fills in.
+const toFinal = async (sub) => {
+  await page.goto('http://local.test/');
+  await page.waitForSelector('.mo-grid');
+  await page.locator('#addBtn').click();
+  await page.locator('.f-kind[value="marketing"]').check();
+  await page.locator('button[data-act="next"]').click();
+  await page.locator('#f-title').fill('October promo');
+  await page.locator('button[data-act="next"]').click();
+  await page.locator('.f-dept[value="marketing"]').check();
+  await page.locator('button[data-act="next"]').click();   // extras
+  await page.locator('button[data-act="next"]').click();   // to subs
+  if (sub) await page.locator('.f-sub[value="' + sub + '"]').check();
+  await page.locator('button[data-act="next"]').click();   // to when
+  await page.locator('button[data-act="next"]').click();   // to where
+  await page.locator('button[data-act="next"]').click();   // to final
+  await page.waitForSelector('.step[data-step="final"]:not([hidden])');
+};
+
+await toFinal('email-sms');
+await t('drops the highlights section on Email/SMS', async () =>
+  await page.locator('#prodWrap').isHidden());
+await t('and saves no highlights for one', async () => {
+  seen.posted = null;
+  await page.locator('button[data-act="save"]').click();
+  await page.waitForFunction(() => document.querySelector('#modal').hidden);
+  return Array.isArray(seen.posted.products) && seen.posted.products.length === 0;
+});
+
+await toFinal('campaign-promotion');
+await t('keeps it on a sub-type that does carry products', async () =>
+  await page.locator('#prodWrap').isVisible());
+await t('and drops it the moment Email/SMS is ticked as well', async () => {
+  await page.locator('button[data-act="back"]').click();
+  await page.locator('button[data-act="back"]').click();
+  await page.locator('button[data-act="back"]').click();
+  await page.locator('.f-sub[value="email-sms"]').check();
+  await page.locator('button[data-act="next"]').click();
+  await page.locator('button[data-act="next"]').click();
+  await page.locator('button[data-act="next"]').click();
+  return await page.locator('#prodWrap').isHidden();
+});
+await page.locator('button[data-act="close"]').click().catch(() => {});
+
 console.log('dark mode');
 // Three separate rules put near-white text on a near-white surface here: a
 // .cal-btn class that was never defined (so the buttons kept the browser's
