@@ -1333,6 +1333,8 @@
       // from a desk, so it is not asked where either.
       if (k === 'marketing') {
         out.push('when');
+        // Inside the marketing branch, so the sub-type alone is the question
+        // here -- an Event with an Email/SMS campaign on it never reaches this.
         if (!isEmailSms()) out.push('where');
         out.push('final');
         return out;
@@ -1807,11 +1809,19 @@
       function (el) { return el.value === 'email-sms'; });
   }
 
+  // Marketing only. An Event can carry an Email/SMS sub-type because there is
+  // a campaign about it, and that event still happens somewhere and can still
+  // highlight product.
+  function isMarketingEmailSms() {
+    var k = document.querySelector('.f-kind:checked');
+    return !!k && k.value === 'marketing' && isEmailSms();
+  }
+
   function takesProducts() {
     var k = document.querySelector('.f-kind:checked');
     k = k ? k.value : 'event';
     if (k === 'meeting' || k === 'deadline') return false;
-    return !isEmailSms();
+    return !isMarketingEmailSms();
   }
 
   function readForm() {

@@ -594,9 +594,16 @@ describe('applyBlanks', () => {
     const out = applyBlanks(row({ event_type: 'marketing' }), ['campaign-promotion']);
     eq([out.venue, out.products.length], ['The Shop', 1]);
   });
-  it('clears them on Email/SMS whatever the kind is', () => {
-    eq(applyBlanks(row({ event_type: 'event' }), ['email-sms']).venue, null);
-    eq(applyBlanks(row({ event_type: 'social' }), ['email-sms']).products, null);
+  // The rule that keyed on the sub-type alone wiped the venues off HopSauce
+  // and Coquina Jam: both are Events that carry an Email/SMS sub-type because
+  // there is a campaign about them, and both happen at a real beach.
+  it('leaves an Event alone even when a campaign about it is Email/SMS', () => {
+    const out = applyBlanks(row({ event_type: 'event' }), ['email-sms']);
+    eq([out.venue, out.city, out.zip], ['The Shop', 'Manasquan', '08736']);
+    eq(out.products.length, 1);
+  });
+  it('leaves a post alone for the same reason', () => {
+    eq(applyBlanks(row({ event_type: 'social' }), ['email-sms']).products.length, 1);
   });
   it('still takes the staff and the van off anything Marketing', () => {
     const out = applyBlanks(row({ event_type: 'marketing' }), ['campaign-promotion']);

@@ -54,8 +54,10 @@ const ITEMS = [
   ev({ id: '22222222-2222-4222-8222-222222222222', title: 'LB Spring Sale',
        department: 'long-branch-store', departments: 'marketing', sub_types: 'campaign-promotion',
        status: 'Pending', start_date: dayThis(10), end_date: dayThis(10) }),
+  // A Marketing item, which is what an email blast actually is -- and the
+  // kind the Email/SMS rule is scoped to.
   ev({ id: '33333333-3333-4333-8333-333333333333', title: 'Fall Email',
-       department: 'marketing', sub_types: 'email-sms',
+       event_type: 'marketing', department: 'marketing', sub_types: 'email-sms',
        start_date: dayThis(14), end_date: dayThis(14) }),
   ev({ id: '44444444-4444-4444-8444-444444444444', title: 'Buy Plan Meeting',
        event_type: 'meeting', department: '',
@@ -908,6 +910,29 @@ await t('and drops it the moment Email/SMS is ticked as well', async () => {
   }
   return await page.locator('#prodWrap').isHidden()
     && (await page.locator('.trail-n').textContent()).includes('of 7');
+});
+await page.locator('button[data-act="close"]').click().catch(() => {});
+
+// An Event with an Email/SMS campaign on it is still an event in a place.
+await t('leaves an Event with an Email/SMS campaign its where step', async () => {
+  await page.goto('http://local.test/');
+  await page.waitForSelector('.mo-grid');
+  if (await page.locator('#fltReset').count()) await clearAll();
+  await page.locator('#addBtn').click();
+  await page.locator('.f-kind[value="event"]').check();
+  await page.locator('button[data-act="next"]').click();
+  await page.locator('#f-title').fill('Coquina Jam');
+  await page.locator('button[data-act="next"]').click();
+  await page.locator('.f-dept[value="marketing"]').check();
+  await page.locator('button[data-act="next"]').click();
+  await page.locator('button[data-act="next"]').click();   // to subs
+  await page.locator('.f-sub[value="email-sms"]').check();
+  for (let i = 0; i < 8; i++) {
+    if (await page.locator('.step[data-step="final"]:not([hidden])').count()) break;
+    await page.locator('button[data-act="next"]').click();
+  }
+  return (await page.locator('#prodWrap').isVisible())
+    && (await page.locator('.step[data-step="where"]').count()) === 1;
 });
 await page.locator('button[data-act="close"]').click().catch(() => {});
 
