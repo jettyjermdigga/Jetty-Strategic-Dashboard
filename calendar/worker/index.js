@@ -18,6 +18,7 @@ import { retailWeek, retailWeekStart } from './retail.js';
 import { sqlStatements } from './sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
          splitKind } from './migrate.js';
+import { applyBlanks } from './blanks.js';
 import { normaliseProducts } from './products.js';
 import { commentMessage, dmMentions, displayName, eventUrl,
          fetchSlackPeople, slackHint } from './slack.js';
@@ -416,7 +417,6 @@ function normalise(input, existing) {
   if (!out.title) errors.push('Event name is required.');
 
   out.event_type = one('event_type', EVENT_TYPE_KEYS, 'Event Type') || 'event';
-  const isMeeting = out.event_type === 'meeting' || out.event_type === 'deadline';
 
   // The primary department owns the event and gives it its colour. Everything
   // else on the event is along for the ride.
@@ -529,15 +529,9 @@ function normalise(input, existing) {
   for (const e of prod.errors) errors.push(e);
 
   // Each kind clears what its own form never showed, so what is stored matches
-  // what the person who saved it was actually looking at.
-  if (isMeeting) for (const k of MEETING_BLANKS) out[k] = null;
-  if (out.event_type === 'social') for (const k of SOCIAL_BLANKS) out[k] = null;
-  else for (const k of SOCIAL_ONLY) out[k] = null;
-  if (out.event_type === 'marketing') for (const k of MARKETING_BLANKS) out[k] = null;
-  // Only an Event takes money at the door.
-  if (out.event_type !== 'event') for (const k of RESULTS_ONLY) out[k] = null;
-  // A deadline is a point, not a span: it ends the day it falls on.
-  if (out.event_type === 'deadline') out.end_date = out.start_date;
+  // what the person who saved it was actually looking at. The rules live in
+  // worker/blanks.js, where they can be tested.
+  applyBlanks(out, subs);
 
   return { row: out, errors };
 }
@@ -549,26 +543,6 @@ const COLS = [
   'social_type', 'channels', 'pillar', 'production', 'caption', 'tags',
   'event_fee', 'orders', 'net_revenue',
 ];
-
-// Meetings and deadlines take the short form: who, when, and nothing else. The
-// rest is cleared on write rather than merely hidden, so what is stored matches
-// what the form showed the person who saved it.
-const MEETING_BLANKS = ['sub_types', 'needs', 'staff_count', 'vehicles',
-                        'venue', 'address', 'city', 'state', 'zip', 'products'];
-
-// A post happens online. It keeps its sub-types -- a Collab or an Ambassador
-// post really is one -- and its product highlights, which is half the point of
-// a product post.
-const SOCIAL_BLANKS = ['needs', 'staff_count', 'vehicles',
-                       'venue', 'address', 'city', 'state', 'zip'];
-const SOCIAL_ONLY = ['social_type', 'channels', 'pillar', 'production', 'caption', 'tags'];
-
-// Marketing can have a place -- a shoot happens somewhere -- but staff, permits
-// and vans are an Event's concern.
-const MARKETING_BLANKS = ['needs', 'staff_count', 'vehicles'];
-
-// Reported after the fact, and only on something that actually sold.
-const RESULTS_ONLY = ['event_fee', 'orders', 'net_revenue'];
 
 // Year / Week / Start (Week) / End (Week) / Month / Day are not stored; they are
 // attached here so every reader sees the same values.

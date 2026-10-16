@@ -18,6 +18,7 @@ import { sqlStatements } from '../worker/sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial, splitKind,
          SUB_TYPE_MERGES } from '../worker/migrate.js';
 import { normaliseProducts, readProducts, MAX_PRODUCTS } from '../worker/products.js';
+import { applyBlanks } from '../worker/blanks.js';
 import { commentMessage, displayName, dmMentions, escapeSlack, eventUrl, eventWhen,
          slackHint } from '../worker/slack.js';
 import SOCIAL_BACKFILL from '../backfill/social.json' with { type: 'json' };
@@ -572,6 +573,51 @@ describe('taxonomy', () => {
 });
 
 // ── the retail calendar ──────────────────────────────────────────────────
+
+describe('applyBlanks', () => {
+  const row = (o) => Object.assign({
+    event_type: 'event', venue: 'The Shop', address: '1 Main', city: 'Manasquan',
+    state: 'NJ', zip: '08736', products: [{ division: 'mens' }],
+    needs: 'sound', staff_count: '3', vehicles: 'box-truck',
+    social_type: 'reel', channels: 'ig', pillar: null, production: null,
+    caption: null, tags: null, sub_types: 'email-sms',
+    event_fee: '100', orders: '4', net_revenue: '50',
+    start_date: '2026-10-01', end_date: '2026-10-03',
+  }, o);
+
+  it('clears the place and the highlights on Email/SMS', () => {
+    const out = applyBlanks(row({ event_type: 'marketing' }), ['email-sms']);
+    eq([out.venue, out.address, out.city, out.state, out.zip, out.products],
+       [null, null, null, null, null, null]);
+  });
+  it('leaves them alone on a sub-type that keeps them', () => {
+    const out = applyBlanks(row({ event_type: 'marketing' }), ['campaign-promotion']);
+    eq([out.venue, out.products.length], ['The Shop', 1]);
+  });
+  it('clears them on Email/SMS whatever the kind is', () => {
+    eq(applyBlanks(row({ event_type: 'event' }), ['email-sms']).venue, null);
+    eq(applyBlanks(row({ event_type: 'social' }), ['email-sms']).products, null);
+  });
+  it('still takes the staff and the van off anything Marketing', () => {
+    const out = applyBlanks(row({ event_type: 'marketing' }), ['campaign-promotion']);
+    eq([out.needs, out.staff_count, out.vehicles], [null, null, null]);
+  });
+  it('still empties a meeting, and does not fight the Email/SMS rule', () => {
+    const out = applyBlanks(row({ event_type: 'meeting' }), ['email-sms']);
+    eq([out.sub_types, out.venue, out.products], [null, null, null]);
+  });
+  it('still ends a deadline on the day it falls', () => {
+    eq(applyBlanks(row({ event_type: 'deadline' }), []).end_date, '2026-10-01');
+  });
+  it('still keeps the door money on an Event alone', () => {
+    eq(applyBlanks(row({ event_type: 'event' }), []).orders, '4');
+    eq(applyBlanks(row({ event_type: 'marketing' }), []).orders, null);
+  });
+  it('still keeps the social-only fields on a post alone', () => {
+    eq(applyBlanks(row({ event_type: 'social' }), []).social_type, 'reel');
+    eq(applyBlanks(row({ event_type: 'event' }), []).social_type, null);
+  });
+});
 
 describe('retailWeek', () => {
   it('starts 2026 on the epoch', () => {

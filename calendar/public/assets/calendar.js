@@ -1329,8 +1329,14 @@
       if (k === 'social') { out.push('social', 'when', 'final'); return out; }
 
       // A shoot happens somewhere, so Marketing is asked where -- but staff,
-      // permits and vans are an Event's concern.
-      if (k === 'marketing') { out.push('when', 'where', 'final'); return out; }
+      // permits and vans are an Event's concern. An email or a text happens
+      // from a desk, so it is not asked where either.
+      if (k === 'marketing') {
+        out.push('when');
+        if (!isEmailSms()) out.push('where');
+        out.push('final');
+        return out;
+      }
 
       out.push('when', 'where', 'needs', 'results', 'final');
       return out;
@@ -1796,12 +1802,16 @@
   // Read off the form rather than passed in, because both callers want the
   // live answer: paint() to hide the section, readForm() to drop the rows. One
   // function so "not shown" and "not stored" cannot drift apart.
+  function isEmailSms() {
+    return Array.prototype.some.call(document.querySelectorAll('.f-sub:checked'),
+      function (el) { return el.value === 'email-sms'; });
+  }
+
   function takesProducts() {
     var k = document.querySelector('.f-kind:checked');
     k = k ? k.value : 'event';
     if (k === 'meeting' || k === 'deadline') return false;
-    return !Array.prototype.some.call(document.querySelectorAll('.f-sub:checked'),
-      function (el) { return el.value === 'email-sms'; });
+    return !isEmailSms();
   }
 
   function readForm() {

@@ -862,15 +862,27 @@ const toFinal = async (sub) => {
   await page.locator('button[data-act="next"]').click();   // extras
   await page.locator('button[data-act="next"]').click();   // to subs
   if (sub) await page.locator('.f-sub[value="' + sub + '"]').check();
-  await page.locator('button[data-act="next"]').click();   // to when
-  await page.locator('button[data-act="next"]').click();   // to where
-  await page.locator('button[data-act="next"]').click();   // to final
+  // Next until the last step, rather than a fixed count: Email/SMS drops the
+  // where step, so the number of clicks is part of what is under test.
+  for (let i = 0; i < 6; i++) {
+    if (await page.locator('.step[data-step="final"]:not([hidden])').count()) break;
+    await page.locator('button[data-act="next"]').click();
+  }
   await page.waitForSelector('.step[data-step="final"]:not([hidden])');
 };
 
 await toFinal('email-sms');
 await t('drops the highlights section on Email/SMS', async () =>
   await page.locator('#prodWrap').isHidden());
+await t('and never asks where an email happens', async () => {
+  // Gone from the step count as well as from view -- "Step 6 of 6", not a
+  // step that is skipped over on the way past.
+  // Gone from the step count as well as from view -- "of 7", not an eighth
+  // step that is skipped over on the way past.
+  const trail = await page.locator('.trail-n').textContent();
+  return (await page.locator('.step[data-step="where"]:not([hidden])').count()) === 0
+    && trail.includes('of 7');
+});
 await t('and saves no highlights for one', async () => {
   seen.posted = null;
   await page.locator('button[data-act="save"]').click();
@@ -881,15 +893,21 @@ await t('and saves no highlights for one', async () => {
 await toFinal('campaign-promotion');
 await t('keeps it on a sub-type that does carry products', async () =>
   await page.locator('#prodWrap').isVisible());
+await t('and still asks a shoot where it is', async () =>
+  (await page.locator('.trail-n').textContent()).includes('of 8'));
 await t('and drops it the moment Email/SMS is ticked as well', async () => {
-  await page.locator('button[data-act="back"]').click();
-  await page.locator('button[data-act="back"]').click();
-  await page.locator('button[data-act="back"]').click();
+  // Back to the sub-types by the step it is on, not by a count of clicks.
+  for (let i = 0; i < 6; i++) {
+    if (await page.locator('.step[data-step="subs"]:not([hidden])').count()) break;
+    await page.locator('button[data-act="back"]').click();
+  }
   await page.locator('.f-sub[value="email-sms"]').check();
-  await page.locator('button[data-act="next"]').click();
-  await page.locator('button[data-act="next"]').click();
-  await page.locator('button[data-act="next"]').click();
-  return await page.locator('#prodWrap').isHidden();
+  for (let i = 0; i < 6; i++) {
+    if (await page.locator('.step[data-step="final"]:not([hidden])').count()) break;
+    await page.locator('button[data-act="next"]').click();
+  }
+  return await page.locator('#prodWrap').isHidden()
+    && (await page.locator('.trail-n').textContent()).includes('of 7');
 });
 await page.locator('button[data-act="close"]').click().catch(() => {});
 
