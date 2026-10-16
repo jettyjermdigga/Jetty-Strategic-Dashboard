@@ -893,6 +893,19 @@ await t('and drops it the moment Email/SMS is ticked as well', async () => {
 });
 await page.locator('button[data-act="close"]').click().catch(() => {});
 
+await t('and is gone when an existing Email/SMS item is opened to edit', async () => {
+  await page.goto('http://local.test/');
+  await page.waitForSelector('.mo-grid');
+  // Filters are remembered across reloads, and earlier tests left some on.
+  if (await page.locator('#fltReset').count()) await clearAll();
+  await page.locator('.chip', { hasText: 'Fall Email' }).first().click();
+  await page.waitForSelector('.det-title');
+  await page.locator('#modalFoot button[data-act="edit"]').click();
+  await page.waitForSelector('#prodWrap', { state: 'attached' });
+  return await page.locator('#prodWrap').isHidden();
+});
+await page.locator('button[data-act="close"]').click().catch(() => {});
+
 console.log('dark mode');
 // Three separate rules put near-white text on a near-white surface here: a
 // .cal-btn class that was never defined (so the buttons kept the browser's
