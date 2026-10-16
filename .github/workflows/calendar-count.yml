@@ -1,0 +1,45 @@
+# Temporary. Counts the Email/SMS rows that still carry a venue or product
+# highlights, so the one-off cleanup can be reported before and after rather
+# than taken on trust. Read-only, fixed query, no inputs. Delete once the
+# cleanup has been confirmed.
+name: Count Email/SMS rows to clean
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Count affected rows
+        working-directory: calendar
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 execute jetty_calendar --remote --json --command "
+            SELECT COUNT(*) AS email_sms_rows,
+                   SUM(CASE WHEN COALESCE(venue,'')   != '' THEN 1 ELSE 0 END) AS with_venue,
+                   SUM(CASE WHEN COALESCE(address,'') != '' THEN 1 ELSE 0 END) AS with_address,
+                   SUM(CASE WHEN COALESCE(city,'')    != '' THEN 1 ELSE 0 END) AS with_city,
+                   SUM(CASE WHEN COALESCE(zip,'')     != '' THEN 1 ELSE 0 END) AS with_zip,
+                   SUM(CASE WHEN COALESCE(products,'') NOT IN ('', '[]') THEN 1 ELSE 0 END) AS with_products
+            FROM items
+            WHERE ',' || REPLACE(sub_types, ', ', ',') || ',' LIKE '%,email-sms,%'"
+      - name: Show the cleanup record, if it has run
+        working-directory: calendar
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 execute jetty_calendar --remote --json --command "
+            SELECT key, applied_at, LENGTH(value) AS value_len,
+                   SUBSTR(value, 1, 400) AS head
+            FROM meta WHERE key = 'email-sms-blanks-2026-10'"
