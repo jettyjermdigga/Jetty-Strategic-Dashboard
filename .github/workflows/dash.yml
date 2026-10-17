@@ -66,6 +66,21 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # wrangler needs a literal database_id in the config, and committing one
+      # couples the repo to a database somebody has to create by hand first.
+      # This looks it up by name, creates it the first time, and substitutes
+      # the id into the placeholder -- the same way the calendar does it.
+      - name: Provision the dash database
+        working-directory: dash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python provision_d1.py
+
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
