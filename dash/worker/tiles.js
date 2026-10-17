@@ -11,29 +11,40 @@
 // name the same groups the tool's own Access policy names. Keeping those two
 // in step is the whole job; everything else here is presentation.
 
-// The groups the dash knows about. These are Cloudflare Access groups, created
-// once in Zero Trust and pointed at by each tool's policy. The names here must
-// match the group names there exactly -- they are compared as written.
+// The groups the dash knows about.
+//
+// Named for the door they open, not for the job somebody holds. That is the
+// whole trick, and it was learned the moment the list was first written: Amy
+// is not a director but needs the Strategic Dashboard. Against a group called
+// "Directors" she is an exception, and exceptions are what lists rot around --
+// either somebody is quietly recorded as a director to get her the tiles, or a
+// one-off is bolted on beside the groups. Against a group called "Financials"
+// she is simply a member, and nothing has to bend.
+//
+// So: when a new tool arrives, the question is not "whose department is this?"
+// It is "what is the permission, and who needs it?"
 //
 // EVERYONE is not a real group. It means "anybody Access let through the front
 // door", which on a staff portal is every member of staff.
 export const EVERYONE = 'everyone';
 
 export const GROUPS = [
-  { key: 'directors',  label: 'Directors' },
-  { key: 'marketing',  label: 'Marketing' },
-  { key: 'wholesale',  label: 'Wholesale' },
-  { key: 'retail',     label: 'Retail' },
+  { key: 'financials',  label: 'Financials',
+    note: 'Revenue, cash and inventory. Not the same thing as being a director.' },
+  { key: 'marketing',   label: 'Marketing' },
+  { key: 'wholesale',   label: 'Wholesale' },
+  { key: 'retail',      label: 'Retail' },
   { key: 'ambassadors', label: 'Ambassadors' },
-  { key: 'jrf',        label: 'Jetty Rock Foundation' },
+  { key: 'jrf',         label: 'Jetty Rock Foundation' },
+  { key: 'leadership',  label: 'Leadership',
+    note: 'Sees tools that are agreed but not started, so the portal reads as a '
+        + 'roadmap to the people deciding it and as a working tool to everybody else.' },
 ];
 
 // status:
 //   'live'    -- built, reachable, has a url
 //   'soon'    -- somebody is building it; shown greyed with no link
-//   'planned' -- agreed but not started; shown only to Directors, so the
-//                portal reads as a roadmap to the people deciding it and as a
-//                working tool to everybody else
+//   'planned' -- agreed but not started; shown only to Leadership
 //
 // url: for a 'live' tile this is where the tool actually is. The two below are
 // the Worker addresses the deploys print. Swap them for custom domains when
@@ -54,7 +65,7 @@ export const TILES = [
     blurb: 'Revenue, COGS, OpEx, inventory and cash flow against plan, week by week.',
     url: 'https://jetty-strategic.jeremy-85e.workers.dev',
     icon: 'chart',
-    groups: ['directors'],
+    groups: ['financials'],
     status: 'live',
   },
   // Below here are the hubs other people are building. A tile with no url is
@@ -67,7 +78,7 @@ export const TILES = [
     blurb: 'Order book, line sheets and account activity.',
     url: '',
     icon: 'box',
-    groups: ['wholesale', 'directors'],
+    groups: ['wholesale'],
     status: 'soon',
   },
   {
@@ -76,7 +87,7 @@ export const TILES = [
     blurb: 'Roster, agreements and activity for the ambassador programme.',
     url: '',
     icon: 'people',
-    groups: ['ambassadors', 'marketing', 'directors'],
+    groups: ['ambassadors', 'marketing'],
     status: 'soon',
   },
 ];
@@ -99,7 +110,7 @@ function norm(s) {
 export function visibleTiles(groups, opts) {
   const known = Array.isArray(groups);
   const mine = known ? groups.map(norm) : [];
-  const showPlanned = known && mine.includes('directors');
+  const showPlanned = known && mine.includes('leadership');
 
   return TILES.filter((t) => {
     if (t.status === 'planned' && !showPlanned) return false;

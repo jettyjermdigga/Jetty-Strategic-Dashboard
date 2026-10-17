@@ -35,6 +35,7 @@ const me = (email) => {
 const CASES = [
   { file: 'dash-director-dark', scheme: 'dark',  who: me('jeremy@jettylife.com') },
   { file: 'dash-director-light', scheme: 'light', who: me('jeremy@jettylife.com') },
+  { file: 'dash-amy-dark', scheme: 'dark', who: me('amy@jettylife.com') },
   { file: 'dash-wholesale-dark', scheme: 'dark', who: me('wholesale@jettylife.com') },
   { file: 'dash-nogroups-dark', scheme: 'dark', who: me('bill@jettylife.com') },
 ];

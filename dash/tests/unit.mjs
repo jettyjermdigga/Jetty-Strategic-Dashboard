@@ -31,18 +31,28 @@ describe('visibleTiles', () => {
     eq(keys([]), ['calendar']);
   });
   it('adds a tile when the group matches', () => {
-    ok(keys(['directors']).includes('strategic'), 'Directors should see the Strategic Dashboard');
+    ok(keys(['financials']).includes('strategic'), 'Financials should see the Strategic Dashboard');
   });
   it('does not show it to somebody who is not in that group', () => {
     ok(!keys(['wholesale']).includes('strategic'), 'Wholesale should not see it');
   });
+
+  // The case the group names were chosen around: Amy needs the numbers
+  // without being a director. If this ever needs her in a group called
+  // anything like Leadership to pass, the naming has slipped back.
+  it('lets somebody see the financials without being leadership', () => {
+    const amy = groupsFor('amy@jettylife.com');
+    ok(amy.includes('financials'), 'Amy is in Financials');
+    ok(!amy.includes('leadership'), 'Amy is not leadership');
+    ok(keys(amy).includes('strategic'), 'and she sees the Strategic Dashboard');
+  });
   it('matches group names whatever the case', () => {
-    eq(keys(['DIRECTORS']), keys(['directors']));
-    eq(keys(['  Directors  ']), keys(['directors']));
+    eq(keys(['FINANCIALS']), keys(['financials']));
+    eq(keys(['  Financials  ']), keys(['financials']));
   });
   it('shows a tile to any one of the groups that own it', () => {
-    ok(keys(['wholesale']).includes('wholesale'));
-    ok(keys(['directors']).includes('wholesale'), 'Directors are on that tile too');
+    ok(keys(['ambassadors']).includes('ambassadors'));
+    ok(keys(['marketing']).includes('ambassadors'), 'Marketing is on that tile too');
   });
 
   // The failure mode that matters.
@@ -56,12 +66,12 @@ describe('visibleTiles', () => {
   });
 
   it('hands no url to a tile that is not built', () => {
-    for (const t of visibleTiles(['directors', 'wholesale', 'ambassadors', 'marketing'])) {
+    for (const t of visibleTiles(['financials', 'wholesale', 'ambassadors', 'marketing'])) {
       if (t.status !== 'live') eq(t.url, '', t.key + ' is ' + t.status + ' and must not link');
     }
   });
   it('hands a url to every live tile', () => {
-    for (const t of visibleTiles(['directors'])) {
+    for (const t of visibleTiles(['financials'])) {
       if (t.status === 'live') ok(t.url, t.key + ' is live and needs somewhere to go');
     }
   });
@@ -104,7 +114,8 @@ describe('the catalogue itself', () => {
 
 describe('groupsFor', () => {
   it('gives somebody their groups', () => {
-    eq(groupsFor('jeremy@jettylife.com'), ['directors', 'marketing']);
+    eq(groupsFor('jeremy@jettylife.com'),
+       ['financials', 'leadership', 'marketing', 'wholesale', 'retail', 'jrf']);
   });
   it('does not care about case or stray spaces', () => {
     eq(groupsFor('  JEREMY@JettyLife.com '), groupsFor('jeremy@jettylife.com'));
