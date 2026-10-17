@@ -4,9 +4,9 @@
 // never more. A portal that falls open when an endpoint times out is a worse
 // failure than one that goes quiet.
 
-import { visibleTiles, tileSections, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
+import { visibleTiles, tileSections, linkSections, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
-import { cleanTile, cleanPerson, cleanKey, cleanUrl } from '../worker/clean.js';
+import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker/clean.js';
 
 let ran = 0;
 let failed = 0;
@@ -233,6 +233,83 @@ describe('cleanPerson', () => {
   it('does not store the same tile twice', () => {
     eq(cleanPerson({ email: 'a@b.test', tiles: ['calendar', 'calendar'] }, keys).row.tiles,
        'calendar');
+  });
+});
+
+// A link is a bookmark, not a tool: there is nothing to it but the address,
+// and everybody sees it. So it is cleaned more strictly than a tile -- a tile
+// with no address is an unfinished tile worth keeping, whereas a link with no
+// address is nothing at all.
+describe('cleanLink', () => {
+  const cats = [{ key: 'marketing' }, { key: 'general' }];
+  const good = { name: 'Model Inquiry Form', url: 'https://forms.test/models',
+                 category: 'marketing' };
+
+  it('accepts a name, an address and a category', () => {
+    const out = cleanLink(good, cats, []);
+    ok(!out.errors, JSON.stringify(out.errors));
+    eq([out.row.name, out.row.category], ['Model Inquiry Form', 'marketing']);
+  });
+  it('refuses a link with no address, unlike a tile', () => {
+    ok(cleanLink({ ...good, url: '' }, cats, []).errors);
+    ok(!cleanTile({ name: 'Hub', url: '', category: 'general' },
+                  [{ key: 'general' }], []).errors);
+  });
+  it('refuses an address that is not one', () => {
+    ok(cleanLink({ ...good, url: 'forms.test/models' }, cats, []).errors);
+  });
+  it('refuses a category that does not exist', () => {
+    ok(cleanLink({ ...good, category: 'made-up' }, cats, []).errors);
+  });
+  it('makes a key out of the name and does not collide', () => {
+    eq(cleanLink(good, cats, []).row.key, 'model-inquiry-form');
+    eq(cleanLink(good, cats, ['model-inquiry-form']).row.key, 'model-inquiry-form-2');
+  });
+  it('keeps the key an existing link already has, so renaming is safe', () => {
+    eq(cleanLink({ ...good, key: 'original', name: 'Renamed' }, cats, []).row.key, 'original');
+  });
+  it('refuses a link with no name', () => {
+    ok(cleanLink({ ...good, name: '  ' }, cats, []).errors);
+  });
+});
+
+// The right-hand column. Links are not assigned to anybody -- the thing on the
+// far end sets its own access the same way a tile's tool does -- so the only
+// job here is filing them under the categories, in the order the categories
+// are listed, and losing none of them on the way.
+describe('linkSections', () => {
+  const cats = [{ key: 'general', label: 'General', icon: 'star' },
+                { key: 'marketing', label: 'Marketing', icon: 'megaphone' },
+                { key: 'finance', label: 'Finance', icon: 'chart' }];
+  const link = (key, category, url) => ({ key, name: key, category, url: url === undefined ? 'https://a.test/' + key : url });
+
+  it('files each link under its category', () => {
+    const out = linkSections([link('m1', 'marketing'), link('g1', 'general')], cats);
+    eq(out.map((s) => s.key), ['general', 'marketing']);
+    eq(out[1].links.map((l) => l.key), ['m1']);
+  });
+  it('keeps the categories in the order they are listed, not the links order', () => {
+    const out = linkSections([link('f1', 'finance'), link('g1', 'general')], cats);
+    eq(out.map((s) => s.key), ['general', 'finance']);
+  });
+  it('leaves out a category nobody has a link in', () => {
+    eq(linkSections([link('m1', 'marketing')], cats).map((s) => s.key), ['marketing']);
+  });
+  it('carries the label and icon through for the heading', () => {
+    const out = linkSections([link('m1', 'marketing')], cats);
+    eq([out[0].label, out[0].icon], ['Marketing', 'megaphone']);
+  });
+  it('drops a link with no address, which would be a dead bookmark', () => {
+    eq(linkSections([link('m1', 'marketing', '')], cats), []);
+  });
+  // Deleting a category must not silently delete the links filed under it.
+  it('gathers links under a category that no longer exists', () => {
+    const out = linkSections([link('x1', 'deleted-cat'), link('g1', 'general')], cats);
+    eq(out.map((s) => s.key), ['general', 'other']);
+    eq(out[1].links.map((l) => l.key), ['x1']);
+  });
+  it('has nothing to show when there are no links', () => {
+    eq(linkSections([], cats), []);
   });
 });
 

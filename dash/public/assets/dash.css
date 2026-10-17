@@ -69,115 +69,43 @@ button,select,input{font-family:inherit;color:inherit}
 
 /* ── Tiles ───────────────────────────────────────────────────────────── */
 
-.tiles{
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px;
-}
+
 
 /* Every tile is a link: the server sends only what the person can open, so
    there is no greyed-out state and nothing that looks clickable and is not. */
-.tile{
-  display:flex;flex-direction:column;gap:9px;
-  background:var(--card);border:1px solid var(--edge);border-radius:10px;
-  padding:19px 20px 18px;text-decoration:none;color:inherit;
-  transition:border-color .12s,background .12s,transform .12s;
-  /* Every tile the same size, whatever the description. A row of tiles that
-     step up and down with the length of somebody's prose reads as untidy
-     rather than as information. The height fits three lines of blurb, which
-     is what the clamp below allows. */
-  min-height:148px;
-}
-a.tile:hover{
-  border-color:var(--primary-alt);background:var(--card-hover);transform:translateY(-1px);
-}
-a.tile:focus-visible{outline:2px solid var(--primary-alt);outline-offset:2px}
 
-.tile-top{display:flex;align-items:center;gap:11px}
+
+
+
+
 .tile-ico{
   width:30px;height:30px;flex:0 0 30px;border-radius:7px;
   display:flex;align-items:center;justify-content:center;
   background:color-mix(in srgb,var(--primary) 16%,transparent);
 }
 .tile-ico svg{width:17px;height:17px;display:block}
-.tile-name{font-family:var(--display);font-weight:700;font-size:16px}
+
 /* Three lines, then an ellipsis. A tile is a signpost, not the documentation:
    whatever is longer than this belongs on the far side of the click, and
    clamping is what keeps the tiles the same size no matter who writes them. */
-.tile-blurb{
-  font-family:var(--body);font-size:13.5px;line-height:1.55;opacity:.78;margin:0;
-  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;
-  overflow:hidden;
-}
+
 
 /* Category headings. Drawn only when there is more than one, so a single
    kind of work does not get a label it does not need. */
-/* Categories read as columns across the page rather than a single stack down
-   the left, which on a wide screen left most of the width empty. Each column
-   is one kind of work, its tiles under it. */
-/* The columns, and the list that opens beside them. The list takes a fixed
-   width and the columns give up what they need to -- the categories are
-   still the thing being read, the list is what one of them turned out to
-   hold. */
-.shell{display:grid;grid-template-columns:minmax(0,1fr);gap:22px;align-items:start}
-.shell.split{grid-template-columns:minmax(0,1fr) 330px}
-@media (max-width:980px){ .shell.split{grid-template-columns:minmax(0,1fr)} }
-
-.side{
-  background:var(--card);border:1px solid var(--edge);border-radius:10px;
-  overflow:hidden;position:sticky;top:16px;
-}
-.side-head{
-  display:flex;align-items:baseline;justify-content:space-between;gap:10px;
-  padding:13px 16px;border-bottom:1px solid var(--edge);
-}
-.side-h{font-family:var(--display);font-weight:700;font-size:15px;margin:0}
-.side-x{
-  background:transparent;border:0;color:inherit;font-size:19px;line-height:1;
-  cursor:pointer;padding:0 2px;opacity:.75;
-}
-.side-x:hover{opacity:1}
-.side-body{padding:12px 14px;display:flex;flex-direction:column;gap:10px}
-.side-row{
-  display:block;text-decoration:none;color:inherit;
-  border:1px solid var(--edge);border-radius:8px;padding:12px 13px;
-  transition:border-color .12s,background .12s;
-}
-.side-row:hover{border-color:var(--primary-alt);background:var(--card-hover)}
-.side-name{font-family:var(--display);font-weight:700;font-size:14px;display:block}
-.side-blurb{font-family:var(--body);font-size:13px;line-height:1.5;opacity:.78;margin:5px 0 0}
-
 /* The heading is a button once its category holds more than fits. */
-.sect-h.more{cursor:pointer}
-.sect-h.more:hover{opacity:1;text-decoration:underline}
-.sect-more{
-  font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.02em;
-  background:transparent;color:inherit;
-  border:1px solid var(--edge);border-radius:6px;
-  padding:6px 9px;margin-top:2px;cursor:pointer;width:100%;text-align:left;
-  transition:border-color .12s,background .12s,opacity .12s;opacity:.85;
-}
-.sect-more:hover{opacity:1;border-color:var(--primary-alt);background:var(--wash)}
 
-/* Multi-column rather than a grid. A grid aligns its rows, so a short
-   category sitting beside a tall one leaves a hole underneath it until the
-   next row starts -- with eleven categories of wildly different sizes, most
-   of the page was hole. Columns flow instead: each category is kept whole
-   and packed under the one above it. */
-#tiles{
-  columns:300px;column-gap:22px;
-}
-.sect{
-  margin:0 0 20px;
-  /* Keeps a category from being split across two columns mid-list. */
+
+
+
+
+/* Keeps a category from being split across two columns mid-list. */
   break-inside:avoid;-webkit-column-break-inside:avoid;
   display:inline-block;width:100%;
 }
 /* Inside a column the tiles stack: the column is already about one tile wide,
    and a grid inside a grid would fight it for the space. */
-.sect .tiles{grid-template-columns:minmax(0,1fr)}
-.sect-h{
-  font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;
-  opacity:.72;margin:0 0 11px;font-weight:600;
-}
+
+
 
 .tiles-empty{
   font-family:var(--body);font-size:14.5px;line-height:1.7;opacity:.8;
@@ -211,5 +139,79 @@ a.tile:focus-visible{outline:2px solid var(--primary-alt);outline-offset:2px}
   .site-who{width:100%}
   .dash-shell{padding:24px 16px 48px}
   .dash-head h1{font-size:25px}
-  .tiles{grid-template-columns:minmax(0,1fr)}
+  
 }
+
+/* ── The two panes ───────────────────────────────────────────────────────
+   Categories down the left, each opening to the tiles inside it; links on
+   the far right. The links pane is a fixed width and the categories take
+   what is left -- the tools are the thing being read, the links are a
+   shelf beside them. */
+.shell{display:grid;grid-template-columns:minmax(0,1fr);gap:26px;align-items:start}
+.shell.split{grid-template-columns:minmax(0,1fr) 270px}
+@media (max-width:900px){ .shell.split{grid-template-columns:minmax(0,1fr)} }
+
+.cat{
+  background:var(--card);border:1px solid var(--edge);border-radius:10px;
+  margin:0 0 10px;overflow:hidden;
+}
+.cat-h{
+  display:flex;align-items:center;gap:10px;width:100%;
+  background:transparent;color:inherit;border:0;cursor:pointer;
+  padding:13px 15px;text-align:left;
+}
+.cat-h:hover{background:var(--wash)}
+.cat-caret{
+  font-size:17px;line-height:1;opacity:.75;display:inline-block;
+  transform:rotate(90deg);transition:transform .14s;
+}
+.cat.shut .cat-caret{transform:rotate(0deg)}
+.cat-name{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;
+  font-weight:600;flex:1 1 auto;
+}
+.cat-n{
+  font-family:var(--mono);font-size:10.5px;opacity:.72;
+  border:1px solid var(--edge);border-radius:999px;padding:2px 7px;
+}
+.cat-body{display:flex;flex-direction:column;border-top:1px solid var(--edge)}
+.cat.shut .cat-body{display:none}
+
+/* A tile inside a category: one line, icon, name, and what it is. */
+.tl{
+  display:flex;align-items:flex-start;gap:11px;
+  padding:12px 15px;text-decoration:none;color:inherit;
+  border-top:1px solid var(--edge);transition:background .12s;
+}
+.cat-body .tl:first-child{border-top:0}
+.tl:hover{background:var(--card-hover)}
+.tl .tile-ico{flex:0 0 26px;width:26px;height:26px;border-radius:6px;margin-top:1px}
+.tl .tile-ico svg{width:15px;height:15px}
+.tl-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.tl-name{font-family:var(--display);font-weight:700;font-size:14.5px}
+.tl-blurb{font-family:var(--body);font-size:13px;line-height:1.5;opacity:.78}
+
+/* ── Links ───────────────────────────────────────────────────────────────
+   Bookmarks, not tools: an address with nothing of ours behind it. Compact,
+   and shown to everybody. */
+.links{
+  background:var(--card);border:1px solid var(--edge);border-radius:10px;
+  overflow:hidden;position:sticky;top:16px;
+}
+.links[hidden]{display:none}
+.links-head{
+  font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  font-weight:600;opacity:.75;padding:12px 15px;border-bottom:1px solid var(--edge);
+}
+.lk-group{padding:11px 15px;border-bottom:1px solid var(--edge)}
+.lk-group:last-child{border-bottom:0}
+.lk-cat{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  opacity:.72;margin-bottom:6px;
+}
+.lk{
+  display:block;font-family:var(--body);font-size:13.5px;line-height:1.45;
+  color:inherit;text-decoration:none;padding:4px 0;
+  border-bottom:1px solid transparent;
+}
+.lk:hover{border-bottom-color:currentColor}

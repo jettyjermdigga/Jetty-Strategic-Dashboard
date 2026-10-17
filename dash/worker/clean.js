@@ -116,3 +116,31 @@ export function cleanPerson(input, tileKeys) {
   if (errors.length) return { errors };
   return { row: { email, name: text(input && input.name, 80), tiles: tiles.join(',') } };
 }
+
+export function cleanLink(input, cats, existingKeys) {
+  const errors = [];
+  const name = String(input && input.name || '').trim().slice(0, 80);
+  if (!name) errors.push('A link needs a name.');
+
+  let key = cleanKey(input && input.key);
+  if (!key) {
+    const base = cleanKey(name);
+    const taken = new Set(existingKeys || []);
+    key = base;
+    for (let n = 2; key && taken.has(key); n++) key = base + '-' + n;
+  }
+  if (!key) errors.push('That name has no letters or numbers in it to make a key from.');
+
+  const category = cleanKey(input && input.category);
+  if (!cats.some((c) => c.key === category)) errors.push('Pick a category that exists.');
+
+  // A link with no address is not a link. Unlike a tile, there is nothing
+  // else to it, so an empty one is refused rather than kept for later.
+  const url = cleanUrl(input && input.url);
+  if (!url) errors.push('A link needs a web address starting https://.');
+
+  if (errors.length) return { errors };
+  return { row: { key, name, url, category,
+                  sort: Number.isFinite(Number(input && input.sort)) ? Number(input.sort) : 0 } };
+}
+

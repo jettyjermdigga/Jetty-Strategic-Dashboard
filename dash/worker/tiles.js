@@ -240,3 +240,19 @@ export function greeting(email) {
   if (!name) return 'Welcome';
   return 'Welcome, ' + name.charAt(0).toUpperCase() + name.slice(1);
 }
+
+// Links, grouped the way the page draws them.
+export function linkSections(links, cats) {
+  const out = [];
+  for (const c of cats) {
+    const inIt = links.filter((l) => l.category === c.key && l.url);
+    if (inIt.length) out.push({ key: c.key, label: c.label, icon: c.icon, links: inIt });
+  }
+  // A link filed under a category that has since been deleted would otherwise
+  // vanish from a page that still counts it.
+  const placed = new Set(out.flatMap((s) => s.links.map((l) => l.key)));
+  const rest = links.filter((l) => l.url && !placed.has(l.key));
+  if (rest.length) out.push({ key: 'other', label: 'Other', icon: 'link', links: rest });
+  return out;
+}
+

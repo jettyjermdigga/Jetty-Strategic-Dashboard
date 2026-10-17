@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { visibleTiles, tileSections, greeting, GROUPS, TILES, CATEGORIES } from '../worker/tiles.js';
+import { visibleTiles, tileSections, linkSections, greeting, TILES, CATEGORIES } from '../worker/tiles.js';
 import { PEOPLE } from '../worker/people.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
@@ -30,6 +30,7 @@ const me = (email) => {
     email, verified: true, accessConfigured: true, reason: '',
     tilesHeld: held, greeting: greeting(email), isAdmin: email.startsWith('jeremy@'),
     tiles: visibleTiles(held), sections: tileSections(held),
+    links: linkSects(CATEGORIES),
   };
 };
 
@@ -54,17 +55,30 @@ const FULL = [
 // Everything not open to everyone is given to this fixture person.
 const HELD = FULL.filter((t) => !t.everyone).map((t) => t.key);
 
+const LINKS = [
+  ['marketing', 'Model Inquiry Form', 'https://example.test/models'],
+  ['marketing', 'Brand Guidelines', 'https://example.test/brand'],
+  ['general', 'Benefits Portal', 'https://example.test/benefits'],
+  ['general', 'IT Help', 'https://example.test/it'],
+  ['wholesale', 'Faire Storefront', 'https://example.test/faire'],
+].map(([category, name, url], i) => ({ key: 'l' + i, name, url, category, sort: i }));
+
+// The real filing, not a second copy of it that could quietly disagree --
+// same reason `me` above builds its tiles through visibleTiles.
+const linkSects = (cats) => linkSections(LINKS, cats);
+
 const full = (email) => ({
   email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
   tilesHeld: HELD, greeting: greeting(email),
   tiles: visibleTiles(HELD, FULL),
   sections: tileSections(HELD, FULL, CATEGORIES),
+  links: linkSects(CATEGORIES),
 });
 
 const CASES = [
   { file: 'dash-full-dark', scheme: 'dark', who: full('jeremy@jettylife.com') },
-  { file: 'dash-full-side', scheme: 'dark', who: full('jeremy@jettylife.com'),
-    click: '.sect-h.more' },
+  { file: 'dash-full-shut', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    click: '.cat-h', after: '.cat.shut' },
   { file: 'dash-director-dark', scheme: 'dark',  who: me('jeremy@jettylife.com') },
   { file: 'dash-director-light', scheme: 'light', who: me('jeremy@jettylife.com') },
   { file: 'dash-amy-dark', scheme: 'dark', who: me('amy@jettylife.com') },
@@ -75,6 +89,9 @@ const CASES = [
   { file: 'dash-admin-people', scheme: 'dark', who: me('jeremy@jettylife.com'),
     path: 'admin.html', wait: '.tile-row', click: '.setup-tab[data-pane="people"]',
     after: '.secbox .chip' },
+  { file: 'dash-admin-links', scheme: 'dark', who: me('jeremy@jettylife.com'),
+    path: 'admin.html', wait: '.tile-row', click: '.setup-tab[data-pane="links"]',
+    after: '.link-row' },
   { file: 'dash-admin-cats', scheme: 'dark', who: me('jeremy@jettylife.com'),
     path: 'admin.html', wait: '.tile-row', click: '.setup-tab[data-pane="cats"]',
     after: '.cat-row' },
@@ -84,6 +101,7 @@ const CASES = [
 const ADMIN = {
   tiles: FULL,
   categories: CATEGORIES,
+  links: LINKS,
   people: Object.keys(PEOPLE).sort().map((e, i) => ({
     email: e, name: '', tiles: i % 3 === 0 ? HELD.slice(0, 2) : HELD.slice(0, 1),
   })),
@@ -107,7 +125,7 @@ for (const c of CASES) {
     });
   });
   await page.goto('http://local.test/' + (c.path || ''));
-  await page.waitForSelector(c.wait || '.tile, .tiles-empty');
+  await page.waitForSelector(c.wait || '.tl, .tiles-empty');
   if (c.click) {
     await page.locator(c.click).first().click();
     await page.waitForSelector(c.after || '.side-row');
@@ -162,7 +180,7 @@ for (const c of CASES) {
     });
     return [...new Set(bad)];
   });
-  console.log(c.file + '  ' + (await page.locator('.tile, .card').count()) + ' items'
+  console.log(c.file + '  ' + (await page.locator('.tl, .row, .card').count()) + ' items'
     + (dim.length ? '  LOW CONTRAST: ' + dim.join(', ') : '  contrast ok'));
   await page.close();
 }

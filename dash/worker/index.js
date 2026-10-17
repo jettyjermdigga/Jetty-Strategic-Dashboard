@@ -13,6 +13,7 @@ import { identify } from './access.js';
 import { visibleTiles, tileSections, greeting } from './tiles.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
+  readLinks, linkSections, cleanLink, saveLink, deleteLink,
   cleanTile, cleanPerson, saveTile, deleteTile, savePerson, deletePerson,
   saveCategory, saveGroup, deleteGroup,
 } from './store.js';
@@ -89,6 +90,10 @@ async function me(request, env, who) {
     greeting: greeting(who.email),
     tiles: visibleTiles(mine, cat.tiles),
     sections: tileSections(mine, cat.tiles, cat.categories),
+    // Links go to every member of staff -- see the note on the table. They
+    // are sent whole rather than filtered, because there is nothing to
+    // filter them by.
+    links: linkSections(await readLinks(env.DB), cat.categories),
   });
 }
 
@@ -106,6 +111,7 @@ async function admin(request, env, url, who) {
     return json({
       tiles: cat.tiles,
       categories: cat.categories,
+      links: await readLinks(env.DB),
       people: await readPeople(env.DB),
       admins: adminList(env),
       you: who.email,
@@ -136,6 +142,17 @@ async function admin(request, env, url, who) {
     // Taking somebody off the roster does not take away their sign-in -- that
     // is the Access policy's job -- so they keep whatever is open to everyone.
     await deletePerson(env.DB, body.email);
+    return json({ ok: true });
+  }
+  if (what === 'link') {
+    const links = await readLinks(env.DB);
+    const out = cleanLink(body, cat.categories, links.map((l) => l.key));
+    if (out.errors) return json({ errors: out.errors }, 400);
+    await saveLink(env.DB, out.row, who.email);
+    return json({ ok: true, link: out.row });
+  }
+  if (what === 'link/delete') {
+    await deleteLink(env.DB, body.key);
     return json({ ok: true });
   }
   if (what === 'category') {

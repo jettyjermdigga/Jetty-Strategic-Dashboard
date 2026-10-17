@@ -10,7 +10,7 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  var D = { tiles: [], categories: [], groups: [], people: [], admins: [], you: '' };
+  var D = { tiles: [], categories: [], links: [], people: [], admins: [], you: '' };
 
   function api(path, body) {
     return fetch('/api/admin/' + path, body ? {
@@ -149,6 +149,39 @@
       + personRow(null) + '</div>';
   }
 
+  // ── links ───────────────────────────────────────────────────────────────
+
+  // A bookmark: a name, an address, and which section it belongs under. No
+  // icon and nobody to assign it to -- everybody sees links, because the
+  // thing on the far end sets its own access just as a tile's tool does.
+  function linkRow(l) {
+    var isNew = !l;
+    var it = l || { key: '', name: '', url: '', category: (D.categories[0] || {}).key };
+    return '<form class="row link-row' + (isNew ? ' new' : '') + '" data-key="' + esc(it.key) + '">'
+      + '<input class="f-lname" value="' + esc(it.name) + '" maxlength="80" placeholder="Name">'
+      + '<input class="f-lurl" value="' + esc(it.url) + '" placeholder="https://">'
+      + '<select class="f-lcat">' + D.categories.map(function (c) {
+          return '<option value="' + esc(c.key) + '"'
+            + (c.key === it.category ? ' selected' : '') + '>' + esc(c.label) + '</option>';
+        }).join('') + '</select>'
+      + '<div class="row-acts">'
+        + '<button type="submit" class="btn small primary">' + (isNew ? 'Add' : 'Save') + '</button>'
+        + (isNew ? '' : '<button type="button" class="btn small danger del">&times;</button>')
+      + '</div>'
+      + '<div class="errs"></div></form>';
+  }
+
+  function paintLinks() {
+    $('#pane-links').innerHTML =
+      '<p class="pane-note">' + D.links.length + ' links. A link is an address with '
+      + 'nothing of ours behind it \u2014 a form, a doc, a vendor portal. They sit down '
+      + 'the right of the dash under their section, and everybody sees them.</p>'
+      + '<div class="rows links"><div class="row head">'
+        + '<span>Name</span><span>Address</span><span>Category</span><span></span></div>'
+      + D.links.map(linkRow).join('')
+      + linkRow(null) + '</div>';
+  }
+
   // Categories are the one list now -- the sections of the dash, and the
   // thing a person is in. Name and icon, nothing else.
   function catRow(c) {
@@ -184,7 +217,7 @@
       + catRow(null) + '</div>';
   }
 
-  function paintAll() { paintTiles(); paintPeople(); paintCats(); }
+  function paintAll() { paintTiles(); paintPeople(); paintLinks(); paintCats(); }
 
   // ── wiring ──────────────────────────────────────────────────────────────
 
@@ -217,6 +250,12 @@
       body = {
         email: $('.f-email', f).value, name: $('.f-pname', f).value,
         tiles: $$('.secbox .chip', f).map(function (c) { return c.dataset.key; }),
+      };
+    } else if (f.classList.contains('link-row')) {
+      send = 'link';
+      body = {
+        key: f.dataset.key, name: $('.f-lname', f).value,
+        url: $('.f-lurl', f).value, category: $('.f-lcat', f).value,
       };
     } else if (f.classList.contains('cat-row')) {
       send = 'category';
@@ -268,6 +307,7 @@
     if (del) {
       var f = del.closest('form');
       var what = f.classList.contains('person') ? 'person'
+        : f.classList.contains('link-row') ? 'link'
         : f.classList.contains('cat-row') ? 'group' : 'tile';
       var label = what === 'person' ? f.dataset.email : f.dataset.key;
       if (!confirm('Remove ' + label + '?')) return;

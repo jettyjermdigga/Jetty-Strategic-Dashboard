@@ -194,3 +194,6 @@ legend{
 }
 .cb.tiny input{width:auto}
 @media (max-width:900px){ .cb.tiny{justify-content:flex-start} }
+
+.rows.links .row{grid-template-columns:minmax(130px,1.2fr) minmax(200px,2fr) minmax(130px,1fr) 96px}
+@media (max-width:900px){ .rows.links .row{grid-template-columns:minmax(0,1fr)} }

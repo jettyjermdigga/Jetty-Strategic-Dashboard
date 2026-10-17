@@ -66,3 +66,22 @@ CREATE TABLE IF NOT EXISTS meta (
   value      TEXT,
   applied_at TEXT
 );
+
+-- A link is a bookmark, not a tool: an address somebody should be able to
+-- find, with no dashboard behind it. The Model Inquiry Form is the shape of
+-- it -- Marketing has a tile for the model database and, separately, a link
+-- to the form a prospective model fills in.
+--
+-- Links are shown to every member of staff. They are addresses, and the thing
+-- on the far end sets its own access the same way a tile's tool does, so
+-- there is nothing here worth assigning person by person. If that turns out
+-- to be wrong, links can take the same treatment tiles got.
+CREATE TABLE IF NOT EXISTS links (
+  link_key   TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  url        TEXT NOT NULL DEFAULT '',
+  category   TEXT NOT NULL DEFAULT 'general',
+  sort       INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT,
+  updated_by TEXT
+);

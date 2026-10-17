@@ -13,12 +13,13 @@
 import schema from './schema.sql';
 import { sqlStatements } from './sql.js';
 import { TILES, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES } from './tiles.js';
-import { cleanKey, cleanUrl, cleanTile, cleanPerson } from './clean.js';
+import { cleanKey, cleanUrl, cleanTile, cleanPerson, cleanLink } from './clean.js';
 import { PEOPLE } from './people.js';
 
 // Re-exported so callers have one import for "the store", while the rules
 // themselves stay in a file Node can load.
-export { cleanKey, cleanUrl, cleanTile, cleanPerson };
+export { cleanKey, cleanUrl, cleanTile, cleanPerson, cleanLink };
+export { linkSections } from './tiles.js';
 
 const SEED_KEY = 'seeded-from-repo-2026-10';
 const CATS_KEY = 'categories-by-department-2026-10';
@@ -257,6 +258,31 @@ export async function tilesFor(db, email) {
   const row = await db.prepare('SELECT tiles FROM people WHERE email = ?').bind(key).first();
   if (!row) return [];
   return splitList(row.tiles);
+}
+
+// Links, grouped the way the page draws them: by category, in the order the
+// categories are in, skipping any that holds none.
+export async function readLinks(db) {
+  const res = await db.prepare('SELECT * FROM links ORDER BY sort, name').all();
+  return (res.results || []).map((r) => ({
+    key: r.link_key, name: r.name, url: r.url, category: r.category, sort: r.sort,
+  }));
+}
+
+export async function saveLink(db, row, who) {
+  const now = new Date().toISOString();
+  await db.prepare(
+    'INSERT INTO links (link_key, name, url, category, sort, updated_at, updated_by) '
+    + 'VALUES (?, ?, ?, ?, ?, ?, ?) '
+    + 'ON CONFLICT(link_key) DO UPDATE SET name = excluded.name, url = excluded.url, '
+    + 'category = excluded.category, sort = excluded.sort, '
+    + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
+    .bind(row.key, row.name, row.url, row.category, row.sort, now, who).run();
+}
+
+export async function deleteLink(db, key) {
+  const k = cleanKey(key);
+  if (k) await db.prepare('DELETE FROM links WHERE link_key = ?').bind(k).run();
 }
 
 export async function readPeople(db) {

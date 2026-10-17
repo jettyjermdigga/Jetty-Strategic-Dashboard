@@ -36,51 +36,51 @@
       + '</a>';
   }
 
-  // A column shows this many tiles. The rest are a click away rather than a
-  // scroll away: eleven categories deep enough to need scrolling would bury
-  // the ones further down the page.
-  var CAP = 2;
+  // Categories down the left, each opening to the tiles inside it. Every
+  // category somebody has something in is listed; one they have nothing in
+  // is absent rather than empty, which is what makes the list worth reading.
+  //
+  // Open by default. A page that starts as eleven closed bars makes somebody
+  // click to find out whether there is anything behind them.
+  var SHUT = {};
 
-  function sectionsHtml(sections) {
+  function tileLine(t) {
+    return '<a class="tl" href="' + esc(t.url) + '">'
+      + iconHtml(t.icon)
+      + '<span class="tl-txt"><span class="tl-name">' + esc(t.name) + '</span>'
+      + (t.blurb ? '<span class="tl-blurb">' + esc(t.blurb) + '</span>' : '')
+      + '</span></a>';
+  }
+
+  function catsHtml(sections) {
+    if (!sections.length) return '';
     return sections.map(function (s) {
-      var shown = s.tiles.slice(0, CAP);
-      var rest = s.tiles.length - shown.length;
-      // The heading only becomes a control when there is something behind it.
-      var head = rest > 0
-        ? '<h2 class="sect-h more" data-cat="' + esc(s.key) + '">' + esc(s.label) + '</h2>'
-        : '<h2 class="sect-h">' + esc(s.label) + '</h2>';
-      return '<section class="sect">' + head
-        + '<div class="tiles">' + shown.map(tileHtml).join('') + '</div>'
-        + (rest > 0
-            ? '<button type="button" class="sect-more" data-cat="' + esc(s.key) + '">'
-              + '+' + rest + ' more</button>'
-            : '')
+      var shut = !!SHUT[s.key];
+      return '<section class="cat' + (shut ? ' shut' : '') + '" data-cat="' + esc(s.key) + '">'
+        + '<button type="button" class="cat-h" data-toggle="' + esc(s.key) + '" '
+          + 'aria-expanded="' + (shut ? 'false' : 'true') + '">'
+          + '<span class="cat-caret" aria-hidden="true">\u203a</span>'
+          + '<span class="cat-name">' + esc(s.label) + '</span>'
+          + '<span class="cat-n">' + s.tiles.length + '</span>'
+        + '</button>'
+        + '<div class="cat-body">' + s.tiles.map(tileLine).join('') + '</div>'
         + '</section>';
     }).join('');
   }
 
-  // The list beside the columns: one category, in full, with the blurbs
-  // untruncated. The tiles are capped to keep the columns even; this is where
-  // the rest of them live.
-  function openSide(key) {
-    var s = (STATE.sections || []).filter(function (x) { return x.key === key; })[0];
-    if (!s) return;
-    $('#side').innerHTML =
-      '<div class="side-head"><h2 class="side-h">' + esc(s.label) + '</h2>'
-      + '<button type="button" class="side-x" id="sideX" aria-label="Close">\u00d7</button></div>'
-      + '<div class="side-body">' + s.tiles.map(function (t) {
-          return '<a class="side-row" href="' + esc(t.url) + '">'
-            + '<span class="side-name">' + esc(t.name) + '</span>'
-            + '<p class="side-blurb">' + esc(t.blurb) + '</p></a>';
-        }).join('') + '</div>';
-    $('#side').hidden = false;
-    $('#shell').classList.add('split');
-  }
-
-  function closeSide() {
-    $('#side').hidden = true;
-    $('#side').innerHTML = '';
-    $('#shell').classList.remove('split');
+  // The far right. Links are bookmarks rather than tools -- an address with
+  // nothing of ours behind it -- so they are listed compactly and go to
+  // everybody.
+  function linksHtml(sections) {
+    if (!sections || !sections.length) return '';
+    return '<div class="links-head">Links</div>'
+      + sections.map(function (s) {
+          return '<div class="lk-group"><div class="lk-cat">' + esc(s.label) + '</div>'
+            + s.links.map(function (l) {
+                return '<a class="lk" href="' + esc(l.url) + '">' + esc(l.name) + '</a>';
+              }).join('')
+            + '</div>';
+        }).join('');
   }
 
   function noticeHtml(me) {
@@ -142,25 +142,23 @@
     $('#greeting').textContent = me.greeting;
     $('#sub').textContent = subLine(me);
     $('#notice').innerHTML = noticeHtml(me);
-    $('#tiles').innerHTML = me.tiles.length
-      ? sectionsHtml(me.sections || [{ key: 'all', label: '', tiles: me.tiles }])
-      : emptyHtml(me);
+    $('#cats').innerHTML = me.tiles.length ? catsHtml(me.sections || []) : emptyHtml(me);
+    var links = linksHtml(me.links);
+    $('#links').innerHTML = links;
+    $('#links').hidden = !links;
+    $('#shell').classList.toggle('split', Boolean(links));
     $('#foot').innerHTML = footHtml(me);
-    closeSide();
   }
 
   document.addEventListener('click', function (e) {
-    if (e.target.closest('#sideX')) return closeSide();
-    var opener = e.target.closest('[data-cat]');
-    if (opener) return openSide(opener.dataset.cat);
+    var t = e.target.closest('[data-toggle]');
+    if (!t) return;
+    var key = t.dataset.toggle;
+    SHUT[key] = !SHUT[key];
+    var sect = t.closest('.cat');
+    sect.classList.toggle('shut', SHUT[key]);
+    t.setAttribute('aria-expanded', SHUT[key] ? 'false' : 'true');
   });
-
-  function failed(msg) {
-    $('#greeting').textContent = 'The dash could not load';
-    $('#sub').textContent = '';
-    $('#notice').innerHTML = '<div class="notice"><strong>Something went wrong '
-      + 'fetching your tools.</strong> ' + esc(msg) + '</div>';
-  }
 
   fetch('/api/me', { headers: { accept: 'application/json' } })
     .then(function (r) {
