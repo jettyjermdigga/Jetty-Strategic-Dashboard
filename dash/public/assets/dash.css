@@ -147,6 +147,13 @@ button,select,input{font-family:inherit;color:inherit}
    the far right. The links pane is a fixed width and the categories take
    what is left -- the tools are the thing being read, the links are a
    shelf beside them. */
+/* The way back out of a sub-page. Lives here rather than in admin.css
+   because it belongs to the header, and the second page to use it had no
+   reason to load the Setup stylesheet -- which left it unstyled on a dark
+   bar at 1.24:1. */
+.back{color:rgba(255,255,255,.86);text-decoration:none;border-bottom:1px solid rgba(255,255,255,.4)}
+.back:hover{color:#fff;border-bottom-color:#fff}
+
 .shell{display:grid;grid-template-columns:minmax(0,1fr);gap:26px;align-items:start}
 .shell.split{grid-template-columns:minmax(0,1fr) 300px}
 @media (max-width:980px){ .shell.split{grid-template-columns:minmax(0,1fr)} }

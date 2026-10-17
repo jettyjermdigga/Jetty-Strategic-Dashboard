@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Music Monday — The Jetty Dash</title>
+<link rel="icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/assets/fonts.css">
+<link rel="stylesheet" href="/assets/rc_system.css">
+<link rel="stylesheet" href="/assets/dash.css">
+<link rel="stylesheet" href="/assets/music.css">
+</head>
+<body>
+
+<header class="site-top">
+  <div class="brand">
+    <img src="/assets/logo.png" alt="Jetty">
+    <div class="divider"></div>
+    <div>
+      <div class="title-main">Music Monday</div>
+      <div class="title-sub">Every Monday since 2013</div>
+    </div>
+  </div>
+  <div class="site-who"><a class="back" href="/">&larr; Back to the dash</a></div>
+</header>
+
+<main class="dash-shell">
+  <div id="notice"></div>
+  <section id="now" class="now"></section>
+
+  <div class="mu-bar">
+    <input id="q" class="mu-q" type="search" placeholder="Search artist or song…"
+           autocomplete="off" aria-label="Search the archive">
+    <div id="count" class="mu-count"></div>
+  </div>
+
+  <div id="list" class="mu-list"></div>
+  <footer class="dash-foot" id="foot"></footer>
+</main>
+
+<script src="/assets/music.js"></script>
+</body>
+</html>

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { visibleTiles, dashCategories, linkCats, greeting, TILES, HUBS, CATEGORIES } from '../worker/tiles.js';
 import { PEOPLE } from '../worker/people.js';
+import { PICKS } from '../worker/music-seed.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
 // globally here, not as a dependency of this directory.
@@ -137,6 +138,12 @@ const CASES = [
   { file: 'dash-links-only', scheme: 'dark', who: LINKS_ONLY('amy@jettylife.com'),
     wait: '.catbar' },
   { file: 'dash-shut-out', scheme: 'dark', who: SHUT_OUT, wait: '.notice' },
+  { file: 'music-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    path: 'music.html', wait: '.mu-row' },
+  { file: 'music-light', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'music.html', wait: '.mu-row' },
+  { file: 'music-search', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    path: 'music.html', wait: '.mu-row', type: ['#q', 'bridges'], after: '.mu-row' },
   { file: 'dash-director-dark', scheme: 'dark',  who: me('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-amy-dark', scheme: 'dark', who: me('amy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-admin-dark', scheme: 'dark', who: me('jeremy@jettylife.com'),
@@ -164,6 +171,11 @@ const ADMIN = {
   you: 'jeremy@jettylife.com',
 };
 
+// The real thirteen years, newest first, exactly as the Worker sends them.
+const MUSIC = [...PICKS].reverse().map((p) => ({
+  date: p.d, artist: p.a, song: p.s, by: p.by, yt: p.y, url: p.v, photo: '',
+}));
+
 const browser = await chromium.launch();
 for (const c of CASES) {
   const page = await browser.newPage({
@@ -173,6 +185,7 @@ for (const c of CASES) {
     const p = new URL(route.request().url()).pathname;
     if (p === '/api/me') return route.fulfill({ json: c.who });
     if (p === '/api/admin/all') return route.fulfill({ json: ADMIN });
+    if (p === '/api/music') return route.fulfill({ json: { picks: MUSIC } });
     const file = path.join(ROOT, p === '/' ? '/index.html' : p);
     if (!fs.existsSync(file)) return route.fulfill({ status: 404, body: '' });
     return route.fulfill({
@@ -181,6 +194,10 @@ for (const c of CASES) {
   });
   await page.goto('http://local.test/' + (c.path || ''));
   await page.waitForSelector(c.wait || '.catbar, .pane-empty');
+  if (c.type) {
+    await page.fill(c.type[0], c.type[1]);
+    await page.waitForTimeout(150);
+  }
   if (c.click) {
     await page.locator(c.click).first().click();
     await page.waitForSelector(c.after || '.side-row');

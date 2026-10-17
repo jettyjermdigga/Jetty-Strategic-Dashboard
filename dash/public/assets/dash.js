@@ -37,6 +37,7 @@
     // The flagship, literally. Long Branch already has the storefront, and
     // two shops drawn the same way defeats the point of drawing them.
     flag: '<path d="M5.5 21V3.2"/><path d="M5.5 4.3h12.2l-2.4 3.9 2.4 3.9H5.5z"/>',
+    music: '<circle cx="6.2" cy="17.6" r="2.9"/><circle cx="17.8" cy="15.4" r="2.9"/><path d="M9.1 17.6V6.2l11.6-2.2v11.4"/><path d="M9.1 9.4 20.7 7.2"/>',
   };
 
   function iconHtml(key) {

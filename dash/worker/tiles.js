@@ -143,6 +143,19 @@ export const TILES = [
     status: 'live',
   },
 
+  {
+    key: 'music-monday',
+    name: 'Music Monday',
+    blurb: 'Every pick since February 2013 \u2014 this week up top, thirteen years below.',
+    url: '/music.html',
+    icon: 'music',
+    category: 'general',
+    // The one tile so far that is genuinely open to all staff: it lives on
+    // the dash itself, behind the same Access, with no second lock to pass.
+    everyone: true,
+    status: 'live',
+  },
+
   // Not yet built, and therefore not yet shown to anybody. Fill in the url and
   // flip the status to 'live' and the tile appears for the groups named. An
   // address is never invented to fill a gap: a link that looks like it should

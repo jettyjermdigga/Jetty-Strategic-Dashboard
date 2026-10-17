@@ -115,7 +115,10 @@ describe('groupsFor', () => {
   // that are open to everyone.
   it('places an unlisted address in no groups rather than nowhere', () => {
     eq(groupsFor('brandnew@jettylife.com'), []);
-    eq(visibleTiles(groupsFor('brandnew@jettylife.com')).map((t) => t.key), ['calendar']);
+    // Derived, not listed: this is "exactly the open-to-everyone tiles",
+    // and spelling them out meant adding one broke an unrelated test.
+    eq(visibleTiles(groupsFor('brandnew@jettylife.com')).map((t) => t.key),
+       TILES.filter((t) => t.everyone && t.url).map((t) => t.key));
   });
   it('tells an empty address apart from an unlisted one', () => {
     eq(groupsFor(''), null, 'no address at all is "we do not know"');

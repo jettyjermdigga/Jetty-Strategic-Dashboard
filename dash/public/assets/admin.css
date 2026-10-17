@@ -9,8 +9,6 @@
 :root[data-theme="dark"]{ --danger-ink:#E0A566 }
 :root[data-theme="light"]{ --danger-ink:var(--watch) }
 
-.back{color:rgba(255,255,255,.86);text-decoration:none;border-bottom:1px solid rgba(255,255,255,.4)}
-.back:hover{color:#fff;border-bottom-color:#fff}
 
 /* .setup-tabs, not .tabs: rc_system.css already owns .tabs and paints it
    var(--ink), which is near-white in dark mode -- so the nav came out as a

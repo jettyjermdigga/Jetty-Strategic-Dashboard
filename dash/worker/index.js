@@ -14,7 +14,7 @@ import { canonicalTarget } from './canon.js';
 import { visibleTiles, dashCategories, linkCats, greeting } from './tiles.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
-  readLinks, cleanLink, saveLink, deleteLink,
+  readLinks, cleanLink, saveLink, deleteLink, readMusic,
   cleanTile, cleanPerson, cleanKey, saveTile, deleteTile, savePerson, deletePerson,
   saveCategory, deleteCategory, saveGroup, deleteGroup,
 } from './store.js';
@@ -69,6 +69,7 @@ export default {
       await ensureSchema(env.DB);
       const who = await identify(request, env);
       if (url.pathname === '/api/me') return await me(request, env, who);
+      if (url.pathname === '/api/music') return await music(request, env, who);
       if (url.pathname.startsWith('/api/admin/')) return await admin(request, env, url, who);
       return json({ error: 'No such endpoint.' }, 404);
     } catch (err) {
@@ -134,6 +135,17 @@ async function me(request, env, who) {
       key: l.key, name: l.name, url: l.url, cats: linkCats(l),
     })),
   });
+}
+
+// The Music Monday archive. Behind the same Access as everything else, so
+// nothing here is sent to a request that did not come through it -- the
+// same rule /api/me follows.
+async function music(request, env, who) {
+  if (request.method !== 'GET') return json({ error: 'Read only.' }, 405);
+  if (who.accessConfigured && !who.verified) {
+    return json({ picks: [], reason: who.reason || '' });
+  }
+  return json({ picks: await readMusic(env.DB) });
 }
 
 async function admin(request, env, url, who) {

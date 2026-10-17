@@ -12,6 +12,7 @@
 
 import schema from './schema.sql';
 import { sqlStatements } from './sql.js';
+import { PICKS } from './music-seed.js';
 import { TILES, HUBS, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES, linkCats } from './tiles.js';
 import { cleanKey, cleanUrl, cleanTile, cleanPerson, cleanLink } from './clean.js';
 import { PEOPLE } from './people.js';
@@ -30,6 +31,7 @@ const HUBS_KEY = 'airtable-hubs-2026-10';
 // Bumped when a category gains an icon, so backfillIcons runs again. It
 // only ever touches rows still holding the default, so re-running is safe.
 const ICONS_KEY = 'category-icons-2026-10b';
+const MUSIC_KEY = 'music-monday-import-2026-10';
 
 let ready = false;
 
@@ -60,7 +62,30 @@ export async function ensureSchema(db) {
   await renameCategories(db);
   await seedHubs(db);
   await backfillIcons(db);
+  await seedMusic(db);
   ready = true;
+}
+
+// Thirteen years of Music Monday, imported once.
+//
+// INSERT OR IGNORE keyed on the date, so this is safe to re-run and a week
+// corrected by hand is never overwritten by the import.
+async function seedMusic(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(MUSIC_KEY).first();
+  if (done) return;
+
+  const now = new Date().toISOString();
+  const put = db.prepare(
+    'INSERT OR IGNORE INTO music (pick_date, artist, song, chosen_by, youtube, video_url, '
+    + 'photo_key, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const batch = PICKS.map((p) => put.bind(
+    p.d, p.a, p.s || '', p.by || '', p.y || '', p.v || '', '', now, 'import'));
+
+  const BATCH = 100;
+  for (let i = 0; i < batch.length; i += BATCH) await db.batch(batch.slice(i, i + BATCH));
+
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(MUSIC_KEY, String(batch.length), now).run();
 }
 
 // Give every category the icon its seed always said it had.
@@ -561,4 +586,17 @@ export async function deleteGroup(db, key) {
   for (const r of people.results || []) batch.push(pStmt.bind(strip(r.groups), r.email));
 
   await db.batch(batch);
+}
+
+// The whole archive in one go. Seven hundred rows is about 70KB of JSON,
+// which is cheaper to send once than to page through -- and it lets the
+// page search thirteen years without going back to the server.
+export async function readMusic(db) {
+  const res = await db.prepare(
+    'SELECT pick_date, artist, song, chosen_by, youtube, video_url, photo_key '
+    + 'FROM music ORDER BY pick_date DESC').all();
+  return (res.results || []).map((r) => ({
+    date: r.pick_date, artist: r.artist, song: r.song, by: r.chosen_by,
+    yt: r.youtube, url: r.video_url, photo: r.photo_key,
+  }));
 }

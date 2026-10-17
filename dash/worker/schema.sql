@@ -85,3 +85,28 @@ CREATE TABLE IF NOT EXISTS links (
   updated_at TEXT,
   updated_by TEXT
 );
+
+-- Music Monday. One pick a week since February 2013, lifted out of a
+-- hundred-column Airtable table that also held social, PR, blog and events.
+--
+-- The date is the key: there is one pick per Monday, so a re-import cannot
+-- duplicate a week and a correction overwrites cleanly.
+--
+-- Most of the archive is text and always will be. Photos exist from 2022 and
+-- videos from 2024 (plus a scattering in 2015-17), so anything drawn here has
+-- to read well with neither.
+CREATE TABLE IF NOT EXISTS music (
+  pick_date   TEXT PRIMARY KEY,
+  artist      TEXT NOT NULL,
+  song        TEXT NOT NULL DEFAULT '',
+  chosen_by   TEXT NOT NULL DEFAULT '',
+  -- Split so the page can embed a player for YouTube and simply link out
+  -- for the eighteen SoundCloud ones.
+  youtube     TEXT NOT NULL DEFAULT '',
+  video_url   TEXT NOT NULL DEFAULT '',
+  -- Filled in when the photos move to R2; Airtable's own urls are signed
+  -- and short-lived, so they cannot be stored.
+  photo_key   TEXT NOT NULL DEFAULT '',
+  updated_at  TEXT,
+  updated_by  TEXT
+);
