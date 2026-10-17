@@ -33,7 +33,38 @@ const me = (email) => {
   };
 };
 
+// A catalogue with enough in it to exercise the cap and the side list. The
+// real one has two live tiles, which shows neither.
+const FULL = [
+  ['general', 'Company Calendar', 'Events, Marketing, Meetings, & Deadlines across every department within the company.'],
+  ['general', 'Staff Handbook', 'Policies, benefits, time off and who to ask about what.'],
+  ['general', 'Culture Board', 'What we are doing together this quarter.'],
+  ['general', 'Org Chart', 'Who does what, and who they do it with.'],
+  ['finance', 'Strategic Dashboard', 'Revenue, COGS, OpEx, inventory and cash flow against plan, week by week.'],
+  ['wholesale', 'Wholesale Hub', 'Order book, line sheets and account activity.'],
+  ['wholesale', 'Line Sheets', 'Every season, current and archived.'],
+  ['marketing', 'Ambassador Hub', 'Roster, agreements and activity for the ambassador programme.'],
+  ['box-truck', 'Box Truck Schedule', 'Where it is going and who is driving it.'],
+  ['jrf', 'Grants', 'Applications, awards and reporting.'],
+].map(([category, name, blurb], i) => ({
+  key: 'f' + i, name, blurb, url: 'https://example.test/' + i,
+  icon: 'link', category, groups: ['everyone'], status: 'live',
+}));
+
+const full = (email) => {
+  const groups = groupsFor(email);
+  return {
+    email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
+    groups, knownGroups: GROUPS, greeting: greeting(email),
+    tiles: visibleTiles(groups, FULL),
+    sections: tileSections(groups, FULL, CATEGORIES),
+  };
+};
+
 const CASES = [
+  { file: 'dash-full-dark', scheme: 'dark', who: full('jeremy@jettylife.com') },
+  { file: 'dash-full-side', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    click: '.sect-h.more' },
   { file: 'dash-director-dark', scheme: 'dark',  who: me('jeremy@jettylife.com') },
   { file: 'dash-director-light', scheme: 'light', who: me('jeremy@jettylife.com') },
   { file: 'dash-amy-dark', scheme: 'dark', who: me('amy@jettylife.com') },
@@ -72,6 +103,7 @@ for (const c of CASES) {
   });
   await page.goto('http://local.test/' + (c.path || ''));
   await page.waitForSelector(c.wait || '.tile, .tiles-empty');
+  if (c.click) { await page.locator(c.click).first().click(); await page.waitForSelector('.side-row'); }
   await page.waitForTimeout(350);
   await page.screenshot({ path: path.join(OUT, c.file + '.png') });
 

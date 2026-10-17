@@ -4,7 +4,7 @@
 // never more. A portal that falls open when an endpoint times out is a worse
 // failure than one that goes quiet.
 
-import { visibleTiles, tileSections, greeting, TILES, GROUPS, CATEGORIES, EVERYONE } from '../worker/tiles.js';
+import { visibleTiles, tileSections, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanKey, cleanUrl } from '../worker/clean.js';
 
@@ -308,6 +308,26 @@ describe('cleanPerson', () => {
   });
   it('refuses a group that does not exist', () => {
     ok(cleanPerson({ email: 'a@b.test', groups: ['made-up'] }, grps).errors);
+  });
+});
+
+describe('the category migration', () => {
+  it('moves every old category to one that exists', () => {
+    const known = new Set(CATEGORIES.map((c) => c.key));
+    for (const [from, to] of Object.entries(CAT_MOVES)) {
+      ok(known.has(to), from + ' moves to ' + to + ', which is not a category');
+    }
+  });
+  it('does not move a category that is still in the list', () => {
+    const known = new Set(CATEGORIES.map((c) => c.key));
+    for (const from of Object.keys(CAT_MOVES)) {
+      ok(!known.has(from), from + ' is both a live category and something being moved away');
+    }
+  });
+  it('leaves no tile in the catalogue pointing at a category being moved', () => {
+    for (const t of TILES) {
+      ok(!CAT_MOVES[t.category], t.key + ' still uses the old category ' + t.category);
+    }
   });
 });
 

@@ -36,18 +36,51 @@
       + '</a>';
   }
 
-  // Headings only earn their place once there is more than one of them. One
-  // section means one kind of work, and a lone "Company" above a lone tile is
-  // furniture.
+  // A column shows this many tiles. The rest are a click away rather than a
+  // scroll away: eleven categories deep enough to need scrolling would bury
+  // the ones further down the page.
+  var CAP = 2;
+
   function sectionsHtml(sections) {
-    if (sections.length === 1) return '<div class="tiles">'
-      + sections[0].tiles.map(tileHtml).join('') + '</div>';
     return sections.map(function (s) {
-      return '<section class="sect">'
-        + '<h2 class="sect-h">' + esc(s.label) + '</h2>'
-        + '<div class="tiles">' + s.tiles.map(tileHtml).join('') + '</div>'
+      var shown = s.tiles.slice(0, CAP);
+      var rest = s.tiles.length - shown.length;
+      // The heading only becomes a control when there is something behind it.
+      var head = rest > 0
+        ? '<h2 class="sect-h more" data-cat="' + esc(s.key) + '">' + esc(s.label) + '</h2>'
+        : '<h2 class="sect-h">' + esc(s.label) + '</h2>';
+      return '<section class="sect">' + head
+        + '<div class="tiles">' + shown.map(tileHtml).join('') + '</div>'
+        + (rest > 0
+            ? '<button type="button" class="sect-more" data-cat="' + esc(s.key) + '">'
+              + '+' + rest + ' more</button>'
+            : '')
         + '</section>';
     }).join('');
+  }
+
+  // The list beside the columns: one category, in full, with the blurbs
+  // untruncated. The tiles are capped to keep the columns even; this is where
+  // the rest of them live.
+  function openSide(key) {
+    var s = (STATE.sections || []).filter(function (x) { return x.key === key; })[0];
+    if (!s) return;
+    $('#side').innerHTML =
+      '<div class="side-head"><h2 class="side-h">' + esc(s.label) + '</h2>'
+      + '<button type="button" class="side-x" id="sideX" aria-label="Close">\u00d7</button></div>'
+      + '<div class="side-body">' + s.tiles.map(function (t) {
+          return '<a class="side-row" href="' + esc(t.url) + '">'
+            + '<span class="side-name">' + esc(t.name) + '</span>'
+            + '<p class="side-blurb">' + esc(t.blurb) + '</p></a>';
+        }).join('') + '</div>';
+    $('#side').hidden = false;
+    $('#shell').classList.add('split');
+  }
+
+  function closeSide() {
+    $('#side').hidden = true;
+    $('#side').innerHTML = '';
+    $('#shell').classList.remove('split');
   }
 
   function noticeHtml(me) {
@@ -95,7 +128,10 @@
       + '</span>';
   }
 
+  var STATE = {};
+
   function render(me) {
+    STATE = me;
     // The Setup link only appears for somebody who can actually use it; the
     // endpoints behind it answer 404 to everybody else, so this is tidiness
     // rather than the control.
@@ -108,7 +144,14 @@
       ? sectionsHtml(me.sections || [{ key: 'all', label: '', tiles: me.tiles }])
       : emptyHtml(me);
     $('#foot').innerHTML = footHtml(me);
+    closeSide();
   }
+
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('#sideX')) return closeSide();
+    var opener = e.target.closest('[data-cat]');
+    if (opener) return openSide(opener.dataset.cat);
+  });
 
   function failed(msg) {
     $('#greeting').textContent = 'The dash could not load';

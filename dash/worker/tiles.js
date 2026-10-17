@@ -46,19 +46,42 @@ export const GROUPS = [
   { key: 'jrf',         label: 'Jetty Rock Foundation' },
 ];
 
-// What kind of work a tool belongs to. The page groups tiles under these, in
-// this order, and skips any heading nothing lands under -- so somebody with
-// two tools sees two tiles rather than six empty headings.
+// What part of the business a tool belongs to. The page groups tiles under
+// these, in this order, and skips any heading nothing lands under -- so
+// somebody with two tools sees two tiles rather than eleven empty headings.
 //
-// A category is not a permission. Two tools in the same category can be open
-// to completely different people; `groups` decides that and nothing else does.
+// These mirror the calendar's departments on purpose: one vocabulary for
+// where a thing belongs, across both tools.
+//
+// A category is still not a permission, even where the names now overlap with
+// the groups. Two tools under Marketing can be open to completely different
+// people; `groups` decides who sees a tile and nothing else does. The
+// categories only decide where it sits on the page.
 export const CATEGORIES = [
-  { key: 'company',   label: 'Company' },
-  { key: 'finance',   label: 'Finance' },
+  { key: 'general',   label: 'General / Staff / Culture' },
+  { key: 'box-truck', label: 'Box Truck' },
+  { key: 'long-branch', label: 'Long Branch' },
+  { key: 'jrf',       label: 'Jetty Rock Foundation' },
+  { key: 'jetty-ink', label: 'Jetty INK' },
+  { key: 'wholesale', label: 'Wholesale' },
   { key: 'marketing', label: 'Marketing' },
-  { key: 'sales',     label: 'Sales' },
-  { key: 'community', label: 'Community' },
+  { key: 'logistics', label: 'Logistics' },
+  { key: 'prodev',    label: 'ProDev' },
+  { key: 'womens',    label: "Women's" },
+  { key: 'finance',   label: 'Finance' },
 ];
+
+// Where tiles went when the categories changed from shapes of work to parts
+// of the business. Lives here beside CATEGORIES, and not in store.js where it
+// is used, because store.js reads schema.sql through a wrangler rule and so
+// cannot be loaded in Node -- and a move pointing at a category that does not
+// exist would drop every tile it touched off the page. There is a test.
+export const CAT_MOVES = {
+  company: 'general',
+  sales: 'wholesale',
+  community: 'jrf',
+  // finance and marketing keep their keys and are simply relabelled.
+};
 
 // status:
 //   'live' -- built, reachable, has a url. The only status that is ever drawn.
@@ -76,7 +99,7 @@ export const TILES = [
     blurb: 'Events, Marketing, Meetings, & Deadlines across every department within the company.',
     url: 'https://jetty-calendar.jeremy-85e.workers.dev',
     icon: 'calendar',
-    category: 'company',
+    category: 'general',
     groups: [EVERYONE],
     status: 'live',
   },
@@ -101,7 +124,7 @@ export const TILES = [
     blurb: 'Order book, line sheets and account activity.',
     url: '',
     icon: 'box',
-    category: 'sales',
+    category: 'wholesale',
     groups: ['wholesale'],
     status: 'soon',
   },

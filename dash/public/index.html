@@ -31,10 +31,13 @@
     <p class="dash-sub" id="sub">&nbsp;</p>
   </div>
 
-  <!-- The grid lives on the inner .tiles the script emits, not here: with it
-       on the container the category sections became grid items and sat side
-       by side instead of stacking. -->
-  <div id="tiles"></div>
+  <!-- Two panes: the columns of categories, and a list that opens beside
+       them when one is picked. The grid lives on the inner .tiles the script
+       emits, not on #tiles, or the sections become grid items themselves. -->
+  <div class="shell" id="shell">
+    <div id="tiles"></div>
+    <aside class="side" id="side" hidden></aside>
+  </div>
 
   <footer class="dash-foot" id="foot"></footer>
 </main>

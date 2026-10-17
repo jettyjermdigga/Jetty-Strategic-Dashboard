@@ -12,7 +12,7 @@
 
 import schema from './schema.sql';
 import { sqlStatements } from './sql.js';
-import { TILES, CATEGORIES, GROUPS, EVERYONE } from './tiles.js';
+import { TILES, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES } from './tiles.js';
 import { cleanKey, cleanUrl, cleanTile, cleanPerson } from './clean.js';
 import { PEOPLE } from './people.js';
 
@@ -21,6 +21,7 @@ import { PEOPLE } from './people.js';
 export { cleanKey, cleanUrl, cleanTile, cleanPerson };
 
 const SEED_KEY = 'seeded-from-repo-2026-10';
+const CATS_KEY = 'categories-by-department-2026-10';
 
 let ready = false;
 
@@ -28,7 +29,46 @@ export async function ensureSchema(db) {
   if (ready) return;
   for (const stmt of sqlStatements(schema)) await db.prepare(stmt).run();
   await seed(db);
+  await syncCategories(db);
   ready = true;
+}
+
+// One-time: the first categories were shapes of work -- Company, Finance,
+// Sales, Community. They are now the parts of the business, matching the
+// calendar's departments, so there is one vocabulary across both tools.
+// Where each old one went is CAT_MOVES, in tiles.js.
+//
+// The seed only ever runs once, so changing the list in tiles.js would have
+// left the live rows alone. This is what moves them. Guarded by meta, like
+// the calendar's migrations, so it runs once and never again -- a category
+// somebody later renames or deletes stays renamed or deleted.
+
+async function syncCategories(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(CATS_KEY).first();
+  if (done) return;
+
+  const batch = [];
+  const put = db.prepare(
+    'INSERT INTO categories (cat_key, label, sort) VALUES (?, ?, ?) '
+    + 'ON CONFLICT(cat_key) DO UPDATE SET label = excluded.label, sort = excluded.sort');
+  CATEGORIES.forEach((c, i) => batch.push(put.bind(c.key, c.label, i)));
+
+  // Tiles move before the old categories go, so none is left pointing at a
+  // heading that no longer exists -- which would drop it off the page while
+  // still counting it.
+  const move = db.prepare('UPDATE tiles SET category = ? WHERE category = ?');
+  for (const [from, to] of Object.entries(CAT_MOVES)) batch.push(move.bind(to, from));
+
+  const keep = CATEGORIES.map((c) => c.key);
+  const old = await db.prepare('SELECT cat_key FROM categories').all();
+  const drop = db.prepare('DELETE FROM categories WHERE cat_key = ?');
+  for (const r of old.results || []) {
+    if (!keep.includes(r.cat_key)) batch.push(drop.bind(r.cat_key));
+  }
+
+  await db.batch(batch);
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(CATS_KEY, String(CATEGORIES.length), new Date().toISOString()).run();
 }
 
 // The files become the first rows, once. Guarded by meta rather than by "is
