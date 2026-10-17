@@ -256,3 +256,20 @@ export function linkSections(links, cats) {
   return out;
 }
 
+
+// The admin's view of the page while it is being filled in.
+//
+// A category with nothing in it is hidden, which is the rule: nobody should
+// read a list of rooms they cannot enter. But the person BUILDING the thing
+// needs the opposite -- with two tiles in the catalogue the dash showed two
+// bars and looked broken, when it was simply empty.
+//
+// So the empty ones are appended, flagged, and drawn only for an admin. The
+// rule is untouched for everybody else.
+export function withEmptyCategories(sections, cats) {
+  const have = new Set((sections || []).map((s) => s.key));
+  const empties = (cats || [])
+    .filter((c) => !have.has(c.key))
+    .map((c) => ({ key: c.key, label: c.label, icon: c.icon, tiles: [], empty: true }));
+  return [...(sections || []), ...empties];
+}

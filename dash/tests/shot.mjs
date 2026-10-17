@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { visibleTiles, tileSections, linkSections, greeting, TILES, CATEGORIES } from '../worker/tiles.js';
+import { visibleTiles, tileSections, linkSections, withEmptyCategories, greeting, TILES, CATEGORIES } from '../worker/tiles.js';
 import { PEOPLE } from '../worker/people.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
@@ -86,7 +86,23 @@ const SHUT_OUT = {
   tilesHeld: null, greeting: greeting(''), tiles: [], sections: [], links: [],
 };
 
+// Exactly what is live today: an admin, the two seeded tiles, no links. This
+// is the case that looked broken -- two bars and nothing else -- and the one
+// worth checking before anything is said about it being fixed.
+const BARE = (email) => {
+  const held = TILES.map((t) => t.key);
+  return {
+    email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
+    tilesHeld: held, greeting: greeting(email),
+    tiles: visibleTiles(held),
+    sections: withEmptyCategories(tileSections(held), CATEGORIES),
+    links: [],
+  };
+};
+
 const CASES = [
+  { file: 'dash-bare-light', scheme: 'light', who: BARE('jeremy@jettylife.com') },
+  { file: 'dash-bare-dark', scheme: 'dark', who: BARE('jeremy@jettylife.com') },
   { file: 'dash-shut-out', scheme: 'dark', who: SHUT_OUT, wait: '.notice' },
   { file: 'dash-full-dark', scheme: 'dark', who: full('jeremy@jettylife.com') },
   { file: 'dash-full-shut', scheme: 'dark', who: full('jeremy@jettylife.com'),

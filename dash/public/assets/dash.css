@@ -177,6 +177,13 @@ button,select,input{font-family:inherit;color:inherit}
 .cat-body{display:flex;flex-direction:column;border-top:1px solid var(--edge)}
 .cat.shut .cat-body{display:none}
 
+/* A category with nothing in it, shown to an admin only. Dashed and quiet,
+   because it is a space waiting to be filled rather than something to click:
+   there is no caret and no body, so it cannot be opened onto nothing. */
+.cat.empty{background:transparent;border-style:dashed;opacity:.72}
+.cat.empty .cat-h{cursor:default;padding-left:15px}
+.cat.empty .cat-h:hover{background:transparent}
+
 /* A tile inside a category: one line, icon, name, and what it is. */
 .tl{
   display:flex;align-items:flex-start;gap:11px;
@@ -202,6 +209,10 @@ button,select,input{font-family:inherit;color:inherit}
 .links-head{
   font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
   font-weight:600;opacity:.75;padding:12px 15px;border-bottom:1px solid var(--edge);
+}
+.lk-empty{
+  font-family:var(--body);font-size:12.5px;line-height:1.55;
+  padding:12px 15px;opacity:.8;
 }
 .lk-group{padding:11px 15px;border-bottom:1px solid var(--edge)}
 .lk-group:last-child{border-bottom:0}

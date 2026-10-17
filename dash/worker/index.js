@@ -11,7 +11,7 @@
 
 import { identify } from './access.js';
 import { canonicalTarget } from './canon.js';
-import { visibleTiles, tileSections, greeting } from './tiles.js';
+import { visibleTiles, tileSections, withEmptyCategories, greeting } from './tiles.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
   readLinks, linkSections, cleanLink, saveLink, deleteLink,
@@ -86,6 +86,7 @@ async function me(request, env, who) {
   // null means "we could not establish who this is", which shows strictly
   // less than "known, and given nothing". Only a verified address is looked up.
   const mine = who.verified ? await tilesFor(env.DB, who.email) : null;
+  const admin = isAdmin(env, who);
 
   // Access is in front, and this request did not come through it verified.
   //
@@ -110,10 +111,16 @@ async function me(request, env, who) {
     // exactly like a portal somebody has been taken off, and the two need
     // different responses.
     reason: who.reason || '',
-    isAdmin: isAdmin(env, who),
+    isAdmin: admin,
     greeting: greeting(who.email),
     tiles: shutOut ? [] : visibleTiles(mine, cat.tiles),
-    sections: shutOut ? [] : tileSections(mine, cat.tiles, cat.categories),
+    // An admin also gets the categories with nothing in them, flagged, so the
+    // page shows the shape of what is being filled in rather than looking
+    // broken while the catalogue is nearly empty. See withEmptyCategories.
+    sections: shutOut ? []
+      : (admin
+          ? withEmptyCategories(tileSections(mine, cat.tiles, cat.categories), cat.categories)
+          : tileSections(mine, cat.tiles, cat.categories)),
     // Links go to every member of staff -- see the note on the table. They
     // are sent whole rather than filtered, because there is nothing to
     // filter them by. "Every member of staff" still means staff, so an

@@ -4,7 +4,7 @@
 // never more. A portal that falls open when an endpoint times out is a worse
 // failure than one that goes quiet.
 
-import { visibleTiles, tileSections, linkSections, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
+import { visibleTiles, tileSections, linkSections, withEmptyCategories, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker/clean.js';
 import { canonicalTarget } from '../worker/canon.js';
@@ -364,6 +364,41 @@ describe('the category migration', () => {
 // An Access application guards a HOSTNAME, not a Worker. The dash answers on
 // two hostnames and the application covers one, so the other reaches the
 // Worker having never met Access. These are the rules that close that.
+// Hiding an empty category is the rule for staff. It is the wrong rule for
+// the person filling the thing in, who otherwise sees two bars and a page
+// that looks broken rather than empty.
+describe('withEmptyCategories', () => {
+  const cats = [{ key: 'general', label: 'General', icon: 'star' },
+                { key: 'finance', label: 'Finance', icon: 'chart' },
+                { key: 'wholesale', label: 'Wholesale', icon: 'box' }];
+  const held = [{ key: 'finance', label: 'Finance', icon: 'chart', tiles: [{ key: 't1' }] }];
+
+  it('appends the categories with nothing in them', () => {
+    eq(withEmptyCategories(held, cats).map((s) => s.key),
+       ['finance', 'general', 'wholesale']);
+  });
+  it('flags the appended ones so the page can tell them apart', () => {
+    const out = withEmptyCategories(held, cats);
+    eq(out[0].empty, undefined);
+    eq([out[1].empty, out[2].empty], [true, true]);
+  });
+  it('leaves the ones that have tiles exactly as they were', () => {
+    eq(withEmptyCategories(held, cats)[0], held[0]);
+  });
+  it('gives an empty one no tiles, so nothing can be drawn in it', () => {
+    eq(withEmptyCategories(held, cats)[1].tiles, []);
+  });
+  it('adds nothing when every category already has something', () => {
+    const everything = cats.map((c) => ({ ...c, tiles: [{ key: 'x' }] }));
+    eq(withEmptyCategories(everything, cats).length, 3);
+  });
+  it('lists all of them when nothing is held at all', () => {
+    eq(withEmptyCategories([], cats).map((s) => s.key),
+       ['general', 'finance', 'wholesale']);
+    ok(withEmptyCategories([], cats).every((s) => s.empty));
+  });
+});
+
 describe('canonicalTarget', () => {
   const HOST = 'www.jettydash.com';
 

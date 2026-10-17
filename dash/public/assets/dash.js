@@ -55,6 +55,15 @@
   function catsHtml(sections) {
     if (!sections.length) return '';
     return sections.map(function (s) {
+      // Only an admin is sent these, and only while building the thing out:
+      // a category nobody has a tile in, shown so the page has a shape.
+      if (s.empty) {
+        return '<section class="cat empty" data-cat="' + esc(s.key) + '">'
+          + '<div class="cat-h">'
+            + '<span class="cat-name">' + esc(s.label) + '</span>'
+            + '<span class="cat-n">0</span>'
+          + '</div></section>';
+      }
       var shut = !!SHUT[s.key];
       return '<section class="cat' + (shut ? ' shut' : '') + '" data-cat="' + esc(s.key) + '">'
         + '<button type="button" class="cat-h" data-toggle="' + esc(s.key) + '" '
@@ -71,8 +80,17 @@
   // The far right. Links are bookmarks rather than tools -- an address with
   // nothing of ours behind it -- so they are listed compactly and go to
   // everybody.
-  function linksHtml(sections) {
-    if (!sections || !sections.length) return '';
+  function linksHtml(sections, isAdmin) {
+    // Nobody on staff should see an empty column where links will one day
+    // be. The admin should, because otherwise there is nowhere on the page
+    // that shows links exist at all.
+    if (!sections || !sections.length) {
+      if (!isAdmin) return '';
+      return '<div class="links-head">Links</div>'
+        + '<div class="lk-empty">No links yet. They are bookmarks rather than'
+        + ' tools \u2014 a form, a doc, a vendor portal \u2014 and everybody sees'
+        + ' them. Add them under Links in Setup.</div>';
+    }
     return '<div class="links-head">Links</div>'
       + sections.map(function (s) {
           return '<div class="lk-group"><div class="lk-cat">' + esc(s.label) + '</div>'
@@ -123,12 +141,22 @@
   }
 
   function footHtml(me) {
-    var n = (me.sections || []).length;
-    if (!n) return '';
+    var all = me.sections || [];
+    var live = all.filter(function (s) { return !s.empty; });
+    if (!all.length) return '';
     // Sections, not groups. Which sections somebody has is a consequence of
     // the tiles they hold, so it is a description of their page rather than
     // a claim about their job -- which is how the old wording read.
-    return n === 1 ? 'One section.' : n + ' sections.';
+    var out = live.length === 1 ? 'One section.' : live.length + ' sections.';
+    var empty = all.length - live.length;
+    // Said plainly, because an admin seeing eleven categories would
+    // otherwise assume everybody else sees eleven categories.
+    if (empty) {
+      out += ' ' + empty + ' empty ' + (empty === 1 ? 'category is' : 'categories are')
+        + ' shown dashed because you are an admin \u2014 nobody else sees them'
+        + ' until something is assigned.';
+    }
+    return out;
   }
 
   var STATE = {};
@@ -150,7 +178,7 @@
     $('#notice').innerHTML = noticeHtml(me);
     $('#cats').innerHTML = shutOut ? ''
       : (me.tiles.length ? catsHtml(me.sections || []) : emptyHtml(me));
-    var links = linksHtml(me.links);
+    var links = linksHtml(me.links, me.isAdmin);
     $('#links').innerHTML = links;
     $('#links').hidden = !links;
     $('#shell').classList.toggle('split', Boolean(links));
