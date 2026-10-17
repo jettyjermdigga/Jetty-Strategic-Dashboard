@@ -26,20 +26,28 @@
       + 'stroke-linejoin="round" aria-hidden="true">' + path + '</svg></span>';
   }
 
-  var FLAG = { soon: 'Being built', planned: 'Planned' };
-
+  // Every tile on the page is a link, because the server only sends tiles the
+  // person can actually open. There is no greyed-out state to draw.
   function tileHtml(t) {
-    var live = t.status === 'live' && t.url;
-    var inner =
-      '<div class="tile-top">' + iconHtml(t.icon)
-        + '<span class="tile-name">' + esc(t.name) + '</span></div>'
+    return '<a class="tile" href="' + esc(t.url) + '">'
+      + '<div class="tile-top">' + iconHtml(t.icon)
+      + '<span class="tile-name">' + esc(t.name) + '</span></div>'
       + '<p class="tile-blurb">' + esc(t.blurb) + '</p>'
-      + (live ? '' : '<span class="tile-flag">' + esc(FLAG[t.status] || t.status) + '</span>');
+      + '</a>';
+  }
 
-    // An unbuilt tile is a div, so there is nothing to click and nothing that
-    // looks like it should be clickable.
-    if (!live) return '<div class="tile ' + esc(t.status) + '">' + inner + '</div>';
-    return '<a class="tile" href="' + esc(t.url) + '">' + inner + '</a>';
+  // Headings only earn their place once there is more than one of them. One
+  // section means one kind of work, and a lone "Company" above a lone tile is
+  // furniture.
+  function sectionsHtml(sections) {
+    if (sections.length === 1) return '<div class="tiles">'
+      + sections[0].tiles.map(tileHtml).join('') + '</div>';
+    return sections.map(function (s) {
+      return '<section class="sect">'
+        + '<h2 class="sect-h">' + esc(s.label) + '</h2>'
+        + '<div class="tiles">' + s.tiles.map(tileHtml).join('') + '</div>'
+        + '</section>';
+    }).join('');
   }
 
   function noticeHtml(me) {
@@ -69,6 +77,9 @@
     return n === 1 ? 'One tool is open to you.' : n + ' tools are open to you.';
   }
 
+  // Everything on this page is something the person can open, so the empty
+  // case is the only one that needs explaining.
+
   function emptyHtml(me) {
     if (me.groups && me.groups.length === 0) {
       return '<div class="tiles-empty"><strong>You are not in any groups yet.</strong><br>'
@@ -90,7 +101,7 @@
     $('#sub').textContent = subLine(me);
     $('#notice').innerHTML = noticeHtml(me);
     $('#tiles').innerHTML = me.tiles.length
-      ? me.tiles.map(tileHtml).join('')
+      ? sectionsHtml(me.sections || [{ key: 'all', label: '', tiles: me.tiles }])
       : emptyHtml(me);
     $('#foot').innerHTML = footHtml(me);
   }

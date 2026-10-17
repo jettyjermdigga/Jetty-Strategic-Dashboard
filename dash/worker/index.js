@@ -10,7 +10,7 @@
 
 import { identify } from './access.js';
 import { groupsFor } from './people.js';
-import { visibleTiles, greeting, GROUPS } from './tiles.js';
+import { visibleTiles, tileSections, greeting, GROUPS } from './tiles.js';
 
 const json = (body, status) => new Response(JSON.stringify(body), {
   status: status || 200,
@@ -38,6 +38,7 @@ export default {
       // which shows strictly less than "known, and in no groups".
       const groups = who.verified ? groupsFor(who.email) : null;
       const tiles = visibleTiles(groups);
+      const sections = tileSections(groups);
       const body = {
         email: who.email,
         verified: who.verified,
@@ -50,6 +51,7 @@ export default {
         knownGroups: GROUPS,
         greeting: greeting(who.email),
         tiles,
+        sections,
       };
       if (request.method === 'HEAD') {
         return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });

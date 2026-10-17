@@ -33,15 +33,15 @@ import { EVERYONE, GROUPS } from './tiles.js';
 // do not get the ones that are not.
 export const PEOPLE = {
   // Financials -- the Strategic Dashboard. The four on its policy today.
-  // Amy is here and NOT in leadership: she needs the numbers without being a
-  // director, which is the case that decided how these groups are named.
+  // Amy is here without being a director, which is the case that decided how
+  // these groups are named.
   // Listed in each group he needs rather than given an "admin" group that
   // skips the model. A bypass is a second mechanism, and the second mechanism
   // is always the one nobody remembers to check.
-  'jeremy@jettylife.com':        ['financials', 'leadership', 'marketing',
-                                  'wholesale', 'retail', 'jrf'],
-  'cory@jettylife.com':          ['financials', 'leadership'],
-  'john@jettylife.com':          ['financials', 'leadership'],
+  'jeremy@jettylife.com':        ['financials', 'marketing', 'wholesale',
+                                  'retail', 'jrf'],
+  'cory@jettylife.com':          ['financials'],
+  'john@jettylife.com':          ['financials'],
   'amy@jettylife.com':           ['financials'],
 
   // Marketing. joncoen manages social; the rest are calendar editors whose

@@ -2,26 +2,33 @@
 //
 // This file is the catalogue. Adding a tool means adding a row here; it does
 // not mean touching the Worker. Each row says what the thing is called, what
-// it is for, where it lives, and which Access groups it belongs to.
+// it is for, what kind of work it belongs to, where it lives, and which groups
+// it is for.
 //
-// IMPORTANT: this list controls what somebody SEES, not what they can OPEN.
-// The lock on each tool is its own Cloudflare Access policy. Hiding a tile
-// from somebody who is still on that tool's policy hides the door, not the
-// room -- they can reach it by typing the address. So a tile's `groups` must
-// name the same groups the tool's own Access policy names. Keeping those two
-// in step is the whole job; everything else here is presentation.
+// Two rules, and they are the whole design:
+//
+//   A tile is only ever drawn if the person can actually open it. Nothing is
+//   shown greyed out, nothing says "coming soon", and nothing appears that
+//   somebody would have to ask about. A portal full of doors you cannot open
+//   is a portal people stop reading.
+//
+//   This list controls what somebody SEES, not what they can OPEN. The lock on
+//   each tool is its own Cloudflare Access policy. Hiding a tile from somebody
+//   still on that tool's policy hides the door, not the room. So a tile's
+//   `groups` must name the same people that tool's own policy names, and
+//   keeping those two in step is the job.
 
-// The groups the dash knows about.
+// Groups are named for the door they open, not for the job somebody holds.
 //
-// Named for the door they open, not for the job somebody holds. That is the
-// whole trick, and it was learned the moment the list was first written: Amy
-// is not a director but needs the Strategic Dashboard. Against a group called
-// "Directors" she is an exception, and exceptions are what lists rot around --
-// either somebody is quietly recorded as a director to get her the tiles, or a
-// one-off is bolted on beside the groups. Against a group called "Financials"
-// she is simply a member, and nothing has to bend.
+// That was learned the moment the list was first written: Amy is not a
+// director but needs the Strategic Dashboard. Against a group called
+// "Directors" she is an exception, and exceptions are what these lists rot
+// around -- either somebody is quietly recorded as a director to get her the
+// tiles, or a one-off is bolted on beside the groups and becomes the second
+// mechanism nobody remembers to check. Against "Financials" she is simply a
+// member, and nothing has to bend.
 //
-// So: when a new tool arrives, the question is not "whose department is this?"
+// So when a new tool arrives the question is not "whose department is this?"
 // It is "what is the permission, and who needs it?"
 //
 // EVERYONE is not a real group. It means "anybody Access let through the front
@@ -36,19 +43,31 @@ export const GROUPS = [
   { key: 'retail',      label: 'Retail' },
   { key: 'ambassadors', label: 'Ambassadors' },
   { key: 'jrf',         label: 'Jetty Rock Foundation' },
-  { key: 'leadership',  label: 'Leadership',
-    note: 'Sees tools that are agreed but not started, so the portal reads as a '
-        + 'roadmap to the people deciding it and as a working tool to everybody else.' },
+];
+
+// What kind of work a tool belongs to. The page groups tiles under these, in
+// this order, and skips any heading nothing lands under -- so somebody with
+// two tools sees two tiles rather than six empty headings.
+//
+// A category is not a permission. Two tools in the same category can be open
+// to completely different people; `groups` decides that and nothing else does.
+export const CATEGORIES = [
+  { key: 'company',   label: 'Company' },
+  { key: 'finance',   label: 'Finance' },
+  { key: 'marketing', label: 'Marketing' },
+  { key: 'sales',     label: 'Sales' },
+  { key: 'community', label: 'Community' },
 ];
 
 // status:
-//   'live'    -- built, reachable, has a url
-//   'soon'    -- somebody is building it; shown greyed with no link
-//   'planned' -- agreed but not started; shown only to Leadership
+//   'live' -- built, reachable, has a url. The only status that is ever drawn.
+//   'soon' -- somebody is building it. Kept here so the row is ready and the
+//             url has somewhere to go, but NOT shown to anybody: a tile that
+//             cannot be opened is noise on everybody's page.
 //
-// url: for a 'live' tile this is where the tool actually is. The two below are
-// the Worker addresses the deploys print. Swap them for custom domains when
-// those exist -- the tile is the only place that needs changing.
+// url: where the tool actually is. The two live ones below are the Worker
+// addresses the deploys print; swap them for custom domains when those exist,
+// and the tile is the only place that needs changing.
 export const TILES = [
   {
     key: 'calendar',
@@ -56,6 +75,7 @@ export const TILES = [
     blurb: 'Events, marketing, social, meetings and deadlines. Everything the company has on, in one month view.',
     url: 'https://jetty-calendar.jeremy-85e.workers.dev',
     icon: 'calendar',
+    category: 'company',
     groups: [EVERYONE],
     status: 'live',
   },
@@ -65,19 +85,22 @@ export const TILES = [
     blurb: 'Revenue, COGS, OpEx, inventory and cash flow against plan, week by week.',
     url: 'https://jetty-strategic.jeremy-85e.workers.dev',
     icon: 'chart',
+    category: 'finance',
     groups: ['financials'],
     status: 'live',
   },
-  // Below here are the hubs other people are building. A tile with no url is
-  // never a link -- an address invented to fill a gap is worse than a gap,
-  // because it looks like it should work. Fill in the url and flip the status
-  // to 'live' when each one is real.
+
+  // Not yet built, and therefore not yet shown to anybody. Fill in the url and
+  // flip the status to 'live' and the tile appears for the groups named. An
+  // address is never invented to fill a gap: a link that looks like it should
+  // work and does not is worse than no tile at all.
   {
     key: 'wholesale',
     name: 'Wholesale Hub',
     blurb: 'Order book, line sheets and account activity.',
     url: '',
     icon: 'box',
+    category: 'sales',
     groups: ['wholesale'],
     status: 'soon',
   },
@@ -87,6 +110,7 @@ export const TILES = [
     blurb: 'Roster, agreements and activity for the ambassador programme.',
     url: '',
     icon: 'people',
+    category: 'marketing',
     groups: ['ambassadors', 'marketing'],
     status: 'soon',
   },
@@ -96,24 +120,26 @@ function norm(s) {
   return String(s || '').trim().toLowerCase();
 }
 
-// Which tiles this person sees.
+// Which tiles this person sees, already grouped by category.
 //
-// `groups` is what Access reported. When Access could not be asked -- the
-// identity endpoint was unreachable, or the dash is running without Access in
-// front of it -- the caller passes null, which is different from "in no
+// `groups` is what the roster reported. When we could not establish who
+// somebody is at all, the caller passes null -- which is different from "in no
 // groups": the first is "we do not know", the second is "we know, and none".
 //
-// Not knowing shows the tiles that are open to everyone and nothing else. A
-// portal that falls open to every tool the moment an endpoint times out is a
-// worse failure than one that goes quiet, and the page says why rather than
-// looking like somebody's access was taken away.
-export function visibleTiles(groups, opts) {
+// Not knowing shows the tools that are open to everyone and nothing else. A
+// portal that falls open the moment something upstream fails is a worse
+// failure than one that goes quiet, and the page says which has happened.
+// `list` defaults to the real catalogue and exists so the tests can hand it a
+// fixture. Once every unbuilt tile is hidden there is no live tile owned by
+// two groups, and the rule that a tile shows to ANY of its groups would go
+// untested until the day somebody relied on it.
+export function visibleTiles(groups, list) {
   const known = Array.isArray(groups);
   const mine = known ? groups.map(norm) : [];
-  const showPlanned = known && mine.includes('leadership');
 
-  return TILES.filter((t) => {
-    if (t.status === 'planned' && !showPlanned) return false;
+  return (list || TILES).filter((t) => {
+    // Rule one: if it cannot be opened, it is not drawn. For anybody.
+    if (t.status !== 'live' || !t.url) return false;
     const want = (t.groups || []).map(norm);
     if (want.includes(EVERYONE)) return true;
     if (!known) return false;
@@ -123,10 +149,27 @@ export function visibleTiles(groups, opts) {
     name: t.name,
     blurb: t.blurb,
     icon: t.icon,
-    status: t.status,
-    // A tile that is not live has no link, whatever is in the catalogue.
-    url: t.status === 'live' ? t.url : '',
+    category: t.category,
+    url: t.url,
   }));
+}
+
+// The same tiles, arranged as the page draws them: category headings in
+// CATEGORIES order, each with at least one tile under it. Done here rather
+// than in the browser so the order is testable and the page stays simple.
+export function tileSections(groups, list) {
+  const mine = visibleTiles(groups, list);
+  const out = [];
+  for (const c of CATEGORIES) {
+    const inIt = mine.filter((t) => t.category === c.key);
+    if (inIt.length) out.push({ key: c.key, label: c.label, tiles: inIt });
+  }
+  // A tile whose category is not in CATEGORIES would otherwise vanish from a
+  // page that still counts it. Collected rather than dropped.
+  const placed = new Set(out.flatMap((s) => s.tiles.map((t) => t.key)));
+  const rest = mine.filter((t) => !placed.has(t.key));
+  if (rest.length) out.push({ key: 'other', label: 'Other', tiles: rest });
+  return out;
 }
 
 // What the page says above the tiles. Pulled out so it is one sentence to

@@ -4,7 +4,7 @@
 // never more. A portal that falls open when an endpoint times out is a worse
 // failure than one that goes quiet.
 
-import { visibleTiles, greeting, TILES, GROUPS, EVERYONE } from '../worker/tiles.js';
+import { visibleTiles, tileSections, greeting, TILES, GROUPS, CATEGORIES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 
 let ran = 0;
@@ -50,9 +50,17 @@ describe('visibleTiles', () => {
     eq(keys(['FINANCIALS']), keys(['financials']));
     eq(keys(['  Financials  ']), keys(['financials']));
   });
+  // Against a fixture, because hiding every unbuilt tile leaves no live tile
+  // owned by two groups -- and this rule should not go untested until the day
+  // somebody relies on it.
   it('shows a tile to any one of the groups that own it', () => {
-    ok(keys(['ambassadors']).includes('ambassadors'));
-    ok(keys(['marketing']).includes('ambassadors'), 'Marketing is on that tile too');
+    const shared = [{
+      key: 'shared', name: 'Shared', blurb: '-', url: 'https://example.test',
+      icon: 'link', category: 'company', groups: ['wholesale', 'retail'], status: 'live',
+    }];
+    eq(visibleTiles(['wholesale'], shared).map((t) => t.key), ['shared']);
+    eq(visibleTiles(['retail'], shared).map((t) => t.key), ['shared']);
+    eq(visibleTiles(['marketing'], shared).map((t) => t.key), []);
   });
 
   // The failure mode that matters.
@@ -65,14 +73,18 @@ describe('visibleTiles', () => {
     ok(unknown.length <= none.length, 'unknown must not be a wider view than empty');
   });
 
-  it('hands no url to a tile that is not built', () => {
-    for (const t of visibleTiles(['financials', 'wholesale', 'ambassadors', 'marketing'])) {
-      if (t.status !== 'live') eq(t.url, '', t.key + ' is ' + t.status + ' and must not link');
+  // The rule the page is built on: nothing is drawn that cannot be opened.
+  it('never returns a tile that is not built, to anybody', () => {
+    const everyGroup = GROUPS.map((g) => g.key);
+    const soon = TILES.filter((t) => t.status !== 'live').map((t) => t.key);
+    ok(soon.length, 'the fixture needs an unbuilt tile for this to mean anything');
+    for (const k of visibleTiles(everyGroup).map((t) => t.key)) {
+      ok(!soon.includes(k), k + ' is not built and must not be drawn');
     }
   });
-  it('hands a url to every live tile', () => {
-    for (const t of visibleTiles(['financials'])) {
-      if (t.status === 'live') ok(t.url, t.key + ' is live and needs somewhere to go');
+  it('gives every tile it does return somewhere to go', () => {
+    for (const t of visibleTiles(GROUPS.map((g) => g.key))) {
+      ok(t.url, t.key + ' was drawn without a url');
     }
   });
   it('leaks nothing about a tile somebody cannot see', () => {
@@ -96,6 +108,12 @@ describe('the catalogue itself', () => {
       else eq(t.url, '', t.key + ' is not live and should carry no url');
     }
   });
+  it('mentions no unbuilt tile in what it sends', () => {
+    const sent = JSON.stringify(visibleTiles(GROUPS.map((g) => g.key)));
+    for (const t of TILES) {
+      if (t.status !== 'live') ok(!sent.includes(t.name), t.name + ' leaked into the payload');
+    }
+  });
   it('names only groups that exist', () => {
     const known = new Set(GROUPS.map((g) => g.key).concat([EVERYONE]));
     for (const t of TILES) {
@@ -107,15 +125,44 @@ describe('the catalogue itself', () => {
   it('puts every tile in at least one group', () => {
     for (const t of TILES) ok((t.groups || []).length, t.key + ' is in no group, so nobody sees it');
   });
-  it('uses only statuses the page knows how to draw', () => {
-    for (const t of TILES) ok(['live', 'soon', 'planned'].includes(t.status), t.key);
+  it('uses only statuses the catalogue knows about', () => {
+    for (const t of TILES) ok(['live', 'soon'].includes(t.status), t.key);
+  });
+  it('puts every tile in a category that exists', () => {
+    const known = new Set(CATEGORIES.map((c) => c.key));
+    for (const t of TILES) ok(known.has(t.category), t.key + ' is in an unknown category: ' + t.category);
+  });
+});
+
+describe('tileSections', () => {
+  it('puts a tile under its own category', () => {
+    const s = tileSections(['financials']);
+    const finance = s.find((x) => x.key === 'finance');
+    ok(finance, 'there should be a Finance section');
+    eq(finance.tiles.map((t) => t.key), ['strategic']);
+  });
+  it('leaves out a heading nothing lands under', () => {
+    for (const s of tileSections(['financials'])) ok(s.tiles.length, s.key + ' is empty');
+  });
+  it('keeps the categories in the order they are declared', () => {
+    const order = tileSections(GROUPS.map((g) => g.key)).map((s) => s.key);
+    const want = CATEGORIES.map((c) => c.key).filter((k) => order.includes(k));
+    eq(order, want);
+  });
+  it('accounts for every visible tile exactly once', () => {
+    for (const who of [null, [], ['financials'], GROUPS.map((g) => g.key)]) {
+      const flat = tileSections(who).flatMap((s) => s.tiles.map((t) => t.key));
+      eq(flat.slice().sort(), visibleTiles(who).map((t) => t.key).sort(),
+         'sections and tiles disagree for ' + JSON.stringify(who));
+      eq(new Set(flat).size, flat.length, 'a tile appeared twice');
+    }
   });
 });
 
 describe('groupsFor', () => {
   it('gives somebody their groups', () => {
     eq(groupsFor('jeremy@jettylife.com'),
-       ['financials', 'leadership', 'marketing', 'wholesale', 'retail', 'jrf']);
+       ['financials', 'marketing', 'wholesale', 'retail', 'jrf']);
   });
   it('does not care about case or stray spaces', () => {
     eq(groupsFor('  JEREMY@JettyLife.com '), groupsFor('jeremy@jettylife.com'));

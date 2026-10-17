@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { visibleTiles, greeting, GROUPS } from '../worker/tiles.js';
+import { visibleTiles, tileSections, greeting, GROUPS } from '../worker/tiles.js';
 import { groupsFor } from '../worker/people.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
@@ -28,7 +28,8 @@ const me = (email) => {
   const groups = groupsFor(email);
   return {
     email, verified: true, accessConfigured: true, reason: '',
-    groups, knownGroups: GROUPS, greeting: greeting(email), tiles: visibleTiles(groups),
+    groups, knownGroups: GROUPS, greeting: greeting(email),
+    tiles: visibleTiles(groups), sections: tileSections(groups),
   };
 };
 

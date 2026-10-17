@@ -31,7 +31,10 @@
     <p class="dash-sub" id="sub">&nbsp;</p>
   </div>
 
-  <div class="tiles" id="tiles"></div>
+  <!-- The grid lives on the inner .tiles the script emits, not here: with it
+       on the container the category sections became grid items and sat side
+       by side instead of stacking. -->
+  <div id="tiles"></div>
 
   <footer class="dash-foot" id="foot"></footer>
 </main>
