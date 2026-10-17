@@ -621,6 +621,40 @@ describe('cleanTile keeps icons that Setup no longer asks for', () => {
 
 // Deleting a section. The Categories tab was wired to group/delete -- the
 // retired table -- so it quietly deleted nothing at all for weeks.
+// Four bugs have now had the same shape: something added to the repo that
+// a guarded migration never carries into a database that already exists.
+// seed() runs once. So does seedHubs, syncCategories and the icon backfill.
+// A tile added to TILES after the first deploy reaches nobody, renders
+// perfectly in the fixture, and is simply absent in production.
+describe('a tile added to the repo can actually reach a live database', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const store = fs.readFileSync(path.join(HERE, '..', 'worker', 'store.js'), 'utf8');
+
+  it('has a step that offers repo tiles to an existing database', () => {
+    ok(/async function offerNewTiles/.test(store), 'nothing carries new tiles across');
+    ok(/await offerNewTiles\(db\)/.test(store), 'offerNewTiles is never called');
+  });
+  it('runs that step on every boot, not behind a one-shot guard', () => {
+    // The whole point: it must not sit behind `if (done) return`, which is
+    // what made every other migration a one-off.
+    const fn = store.slice(store.indexOf('async function offerNewTiles'));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+    ok(!/if \(done\) return/.test(body), 'offerNewTiles is guarded like the one-shots');
+    ok(/OFFERED_KEY/.test(body), 'it does not remember what it already offered');
+  });
+  it('only offers tiles that have an address', () => {
+    const fn = store.slice(store.indexOf('async function offerNewTiles'));
+    ok(/filter\(\(t\) => t\.url\)/.test(fn.slice(0, 1200)),
+       'a tile with no url would be inserted, and the retired placeholders would return');
+  });
+  // The specific tile that went missing and prompted all this.
+  it('has Music Monday in the repo with an address and open to everyone', () => {
+    const m = TILES.find((t) => t.key === 'music-monday');
+    ok(m, 'the Music Monday tile is not in TILES');
+    eq([Boolean(m.url), m.everyone], [true, true]);
+  });
+});
+
 describe('deleting a category', () => {
   it('has an endpoint, and Setup asks for that one', () => {
     const idx = fs.readFileSync(path.join(

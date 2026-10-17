@@ -32,6 +32,7 @@ const HUBS_KEY = 'airtable-hubs-2026-10';
 // only ever touches rows still holding the default, so re-running is safe.
 const ICONS_KEY = 'category-icons-2026-10b';
 const MUSIC_KEY = 'music-monday-import-2026-10';
+const OFFERED_KEY = 'tiles-ever-offered';
 
 let ready = false;
 
@@ -63,8 +64,54 @@ export async function ensureSchema(db) {
   await seedHubs(db);
   await backfillIcons(db);
   await seedMusic(db);
+  await offerNewTiles(db);
   ready = true;
 }
+
+// Tiles added to the repo after the first deploy.
+//
+// This exists because the same mistake has now been made four times. seed()
+// is guarded, so a tile added to TILES never reaches a database that already
+// exists -- it sits in the repo looking correct, renders correctly in the
+// screenshot fixture, and is simply absent for every real person. The icon
+// backfill, the category rename and the groups merge were the same shape.
+//
+// So rather than another one-off migration each time, this remembers every
+// tile key ever OFFERED and inserts only the ones it has not offered before.
+//
+// Remembering what was offered, rather than comparing against what exists,
+// is what makes deleting safe: a tile removed in Setup was already offered
+// once, so it is never resurrected. Only genuinely new keys arrive.
+//
+// One caveat, on the very first run only: nothing has been recorded yet, so
+// every tile in the repo counts as new and INSERT OR IGNORE runs over the
+// lot. Anything already there is untouched, but a seeded tile deleted by
+// hand BEFORE this existed comes back once. Delete it again and it stays
+// gone, because by then it is on the list.
+async function offerNewTiles(db) {
+  const row = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(OFFERED_KEY).first();
+  const seen = new Set(String((row && row.value) || '')
+    .split(',').map((k) => k.trim()).filter(Boolean));
+
+  // Only tiles with an address. One without is not drawn for anybody, so
+  // inserting it buys nothing -- and it keeps the two retired placeholders,
+  // which still sit in TILES with an empty url, from coming back.
+  const candidates = [...TILES, ...HUBS].filter((t) => t.url);
+  const fresh = candidates.filter((t) => !seen.has(t.key));
+  if (!fresh.length) return;
+
+  const now = new Date().toISOString();
+  const put = db.prepare(
+    'INSERT OR IGNORE INTO tiles (tile_key, name, blurb, url, icon, category, everyone, '
+    + 'status, sort, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  await db.batch(fresh.map((t, i) => put.bind(
+    t.key, t.name, t.blurb || '', t.url, t.icon || 'link', t.category,
+    t.everyone ? 1 : 0, t.status || 'live', 200 + i, now, 'repo')));
+
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(OFFERED_KEY, [...seen, ...fresh.map((t) => t.key)].join(','), now).run();
+}
+
 
 // Thirteen years of Music Monday, imported once.
 //
