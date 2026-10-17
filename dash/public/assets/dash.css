@@ -98,7 +98,21 @@ a.tile:focus-visible{outline:2px solid var(--primary-alt);outline-offset:2px}
 
 /* Category headings. Drawn only when there is more than one, so a single
    kind of work does not get a label it does not need. */
-.sect{margin:0 0 26px}
+/* Categories read as columns across the page rather than a single stack down
+   the left, which on a wide screen left most of the width empty. Each column
+   is one kind of work, its tiles under it. */
+/* Capped rather than 1fr: with two categories on a wide screen, stretching
+   columns to half the page each turns a tile into a banner. Fixed-width
+   columns packed from the left keep a tile a tile and let more categories
+   fill the row as they arrive. */
+#tiles{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,330px));
+  gap:18px 22px;align-items:start;justify-content:start;
+}
+.sect{margin:0}
+/* Inside a column the tiles stack: the column is already about one tile wide,
+   and a grid inside a grid would fight it for the space. */
+.sect .tiles{grid-template-columns:minmax(0,1fr)}
 .sect-h{
   font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;
   opacity:.72;margin:0 0 11px;font-weight:600;
