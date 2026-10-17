@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { visibleTiles, greeting, GROUPS } from '../worker/tiles.js';
+import { groupsFor } from '../worker/people.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
 // globally here, not as a dependency of this directory.
@@ -21,16 +22,21 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'publ
 const OUT = process.argv[2] || '.';
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
 
-const me = (email, groups) => ({
-  email, verified: true, accessConfigured: true, reason: '', groupReason: '',
-  groups, knownGroups: GROUPS, greeting: greeting(email), tiles: visibleTiles(groups),
-});
+// Built the way the Worker builds it, so the screenshots are of the real
+// decision rather than a hand-written payload that agrees with nothing.
+const me = (email) => {
+  const groups = groupsFor(email);
+  return {
+    email, verified: true, accessConfigured: true, reason: '',
+    groups, knownGroups: GROUPS, greeting: greeting(email), tiles: visibleTiles(groups),
+  };
+};
 
 const CASES = [
-  { file: 'dash-director-dark', scheme: 'dark',  who: me('jeremy@jettylife.com', ['Directors', 'Marketing']) },
-  { file: 'dash-director-light', scheme: 'light', who: me('jeremy@jettylife.com', ['Directors', 'Marketing']) },
-  { file: 'dash-wholesale-dark', scheme: 'dark', who: me('wholesale@jettylife.com', ['Wholesale']) },
-  { file: 'dash-nogroups-dark', scheme: 'dark', who: me('newhire@jettylife.com', []) },
+  { file: 'dash-director-dark', scheme: 'dark',  who: me('jeremy@jettylife.com') },
+  { file: 'dash-director-light', scheme: 'light', who: me('jeremy@jettylife.com') },
+  { file: 'dash-wholesale-dark', scheme: 'dark', who: me('wholesale@jettylife.com') },
+  { file: 'dash-nogroups-dark', scheme: 'dark', who: me('bill@jettylife.com') },
 ];
 
 const browser = await chromium.launch();

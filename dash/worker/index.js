@@ -9,6 +9,7 @@
 // tile hidden here is a door not shown rather than a door shut. See tiles.js.
 
 import { identify } from './access.js';
+import { groupsFor } from './people.js';
 import { visibleTiles, greeting, GROUPS } from './tiles.js';
 
 const json = (body, status) => new Response(JSON.stringify(body), {
@@ -31,17 +32,21 @@ export default {
         return json({ error: 'Read only.' }, 405);
       }
       const who = await identify(request, env);
-      const tiles = visibleTiles(who.groups);
+      // Groups come from the repo's own list, not from Access -- see
+      // people.js for why, and what that costs. Only a verified address is
+      // looked up: null here means "we could not establish who this is",
+      // which shows strictly less than "known, and in no groups".
+      const groups = who.verified ? groupsFor(who.email) : null;
+      const tiles = visibleTiles(groups);
       const body = {
         email: who.email,
         verified: who.verified,
         accessConfigured: who.accessConfigured,
-        // Surfaced rather than swallowed: a portal that has quietly stopped
-        // being able to read group membership looks exactly like a portal
-        // somebody has been taken off, and the two need different responses.
+        // Surfaced rather than swallowed: a sign-in that cannot be verified
+        // looks exactly like a portal somebody has been taken off, and the
+        // two need different responses.
         reason: who.reason || '',
-        groupReason: who.groupReason || '',
-        groups: who.groups,
+        groups,
         knownGroups: GROUPS,
         greeting: greeting(who.email),
         tiles,

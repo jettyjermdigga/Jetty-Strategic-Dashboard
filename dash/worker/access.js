@@ -12,9 +12,11 @@
 // ACCESS_TEAM_DOMAIN and ACCESS_AUD are configured the JWT is verified and the
 // email comes out of the verified claims.
 //
-// Groups are NOT in the JWT. Access answers for them at its identity endpoint,
-// which needs the person's own Access cookie forwarded to it. That is a second
-// network call, so it is made once per page load and not for every asset.
+// Groups do not come from Access. They were going to -- Access answers for
+// them at its identity endpoint -- but this account's dashboard has no Access
+// Groups page to put anybody in, so an empty answer was the only answer it
+// could ever give. The dash keeps its own list in people.js instead. All this
+// file is asked for now is a name we can trust.
 
 const CERTS_TTL_MS = 60 * 60 * 1000;
 let certsCache = { at: 0, domain: '', keys: null };
@@ -104,39 +106,6 @@ function audList(env) {
     .filter(Boolean);
 }
 
-// Returns { groups } with the group names Access reports, or { reason } when
-// it could not be asked. The difference matters: see visibleTiles, which shows
-// strictly less when membership is unknown rather than falling open.
-async function fetchGroups(request, teamDomain) {
-  const cookie = request.headers.get('cookie') || '';
-  if (!/(^|;\s*)CF_Authorization=/.test(cookie)) {
-    return { reason: 'No Access cookie on the request, so group membership could not be looked up.' };
-  }
-  let res;
-  try {
-    res = await fetch('https://' + teamDomain + '/cdn-cgi/access/get-identity', {
-      headers: { cookie },
-    });
-  } catch (err) {
-    return { reason: 'Could not reach ' + teamDomain + ' to look up group membership.' };
-  }
-  if (!res.ok) {
-    return { reason: 'Access returned ' + res.status + ' for the identity lookup.' };
-  }
-  let body;
-  try { body = await res.json(); } catch (err) {
-    return { reason: 'Access returned something other than JSON for the identity lookup.' };
-  }
-  // Shape per Cloudflare: { email, groups: [{ id, name, email }], ... }.
-  // Defended rather than assumed, because this is the one claim here that is
-  // read from a response body instead of a verified token.
-  const raw = Array.isArray(body && body.groups) ? body.groups : [];
-  const names = raw
-    .map((g) => (g && typeof g.name === 'string' ? g.name.trim() : ''))
-    .filter(Boolean);
-  return { groups: names };
-}
-
 export async function identify(request, env) {
   const headerEmail = request.headers.get('Cf-Access-Authenticated-User-Email') || '';
   const token = request.headers.get('Cf-Access-Jwt-Assertion') || '';
@@ -173,27 +142,10 @@ export async function identify(request, env) {
       : 'No Cloudflare Access headers reached this Worker at all.';
   }
 
-  // Groups are only asked for once the email is verified. Looking them up for
-  // an identity we could not confirm would be answering a question nobody is
-  // entitled to ask.
-  let groups = null;
-  let groupReason = '';
-  if (verified && teamDomain) {
-    const got = await fetchGroups(request, teamDomain);
-    if (got.groups) groups = got.groups;
-    else groupReason = got.reason || '';
-  } else if (email) {
-    groupReason = 'Groups are not looked up until the sign-in has been verified.';
-  }
-
   return {
     email,
     verified,
     reason,
-    // null means "not known", [] means "known, and in none". The page and the
-    // tile filter treat those differently on purpose.
-    groups,
-    groupReason,
     accessConfigured: Boolean(teamDomain && auds.length),
   };
 }

@@ -73,7 +73,7 @@
     if (me.groups && me.groups.length === 0) {
       return '<div class="tiles-empty"><strong>You are not in any groups yet.</strong><br>'
         + 'That is why this page is empty rather than anything being wrong with it. '
-        + 'Ask Jeremy to add you to the groups for the tools you need.</div>';
+        + 'Ask Jeremy to put you in the groups for the tools you need.</div>';
     }
     return '<div class="tiles-empty">Nothing to show yet.</div>';
   }
