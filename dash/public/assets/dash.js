@@ -55,8 +55,15 @@
     }).join('');
   }
 
+  // Everything on this page leaves the dash, so everything opens beside it.
+  // rel=noopener is not optional with target=_blank: without it the page
+  // that opens gets a handle on this one through window.opener and can
+  // navigate it somewhere else. noreferrer keeps our address out of the
+  // other end's logs, which matters for the vendor portals among the links.
+  var OUT = ' target="_blank" rel="noopener noreferrer"';
+
   function tileLine(t) {
-    return '<a class="tl" href="' + esc(t.url) + '">'
+    return '<a class="tl"' + OUT + ' href="' + esc(t.url) + '">'
       + iconHtml(t.icon)
       + '<span class="tl-txt"><span class="tl-name">' + esc(t.name) + '</span>'
       + (t.blurb ? '<span class="tl-blurb">' + esc(t.blurb) + '</span>' : '')
@@ -85,7 +92,8 @@
     return '<div class="links-head">Links · ' + esc(cat.label) + '</div>'
       + '<div class="lk-group">'
       + cat.links.map(function (l) {
-          return '<a class="lk" href="' + esc(l.url) + '">' + esc(l.name) + '</a>';
+          return '<a class="lk"' + OUT + ' href="' + esc(l.url) + '">'
+            + esc(l.name) + '</a>';
         }).join('')
       + '</div>';
   }

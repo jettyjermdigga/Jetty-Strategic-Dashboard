@@ -211,6 +211,20 @@ for (const c of CASES) {
     });
     return [...new Set(bad)];
   });
+  // Every tile and link leaves the dash, so every one of them opens beside
+  // it -- and target=_blank without rel=noopener hands the opened page a
+  // handle on this one. Checked rather than trusted, because it is one
+  // attribute on two lines of markup and nothing else would notice.
+  const outward = await page.evaluate(() => {
+    const bad = [];
+    document.querySelectorAll('a.tl, a.lk').forEach((a) => {
+      const rel = (a.getAttribute('rel') || '');
+      if (a.getAttribute('target') !== '_blank') bad.push(a.textContent.trim().slice(0, 18) + ' (no target)');
+      else if (!/\bnoopener\b/.test(rel)) bad.push(a.textContent.trim().slice(0, 18) + ' (no noopener)');
+    });
+    return bad;
+  });
+
   // The row is meant to be one line. Eleven chips fit only because the chip
   // is tight, so a twelfth category -- or a long name -- silently turns it
   // into a drag. Measured rather than eyeballed, and reported every run.
@@ -224,6 +238,7 @@ for (const c of CASES) {
   console.log(c.file + '  ' + (await page.locator('.cb, .tl, .row').count()) + ' items'
     + (bar ? '  row: ' + bar.rows + ' line' + (bar.rows === 1 ? '' : 's')
              + (bar.over > 0 ? ', OVERFLOWS by ' + bar.over + 'px' : ', fits') : '')
+    + (outward.length ? '  NOT OPENING OUT: ' + outward.join(', ') : '')
     + (dim.length ? '  LOW CONTRAST: ' + dim.join(', ') : '  contrast ok'));
   await page.close();
 }
