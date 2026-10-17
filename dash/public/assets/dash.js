@@ -92,14 +92,12 @@
         + 'to turn sign-in on.</div>';
     }
     if (!me.verified) {
-      return '<div class="notice"><strong>Your sign-in could not be verified.</strong> '
-        + esc(me.reason || '') + ' Try signing out and in again; if it keeps happening, '
-        + 'the Access application for this site needs a look.</div>';
-    }
-    if (me.groups === null) {
-      return '<div class="notice"><strong>Your groups could not be looked up, '
-        + 'so this is not the full list.</strong> ' + esc(me.groupReason || '')
-        + ' Nothing has been taken away — reload in a minute and it should come back.</div>';
+      // Nothing is shown in this state, so the notice is the whole page. It
+      // says what is wrong rather than reassuring, because the usual cause is
+      // a hostname missing from the Access application and no amount of
+      // signing in again fixes that.
+      return '<div class="notice"><strong>You are not signed in, so nothing is shown.</strong> '
+        + esc(me.reason || '') + '</div>';
     }
     return '';
   }
@@ -114,20 +112,23 @@
   // case is the only one that needs explaining.
 
   function emptyHtml(me) {
-    if (me.groups && me.groups.length === 0) {
-      return '<div class="tiles-empty"><strong>You are not in any groups yet.</strong><br>'
+    // Signed in and holding nothing is a real state, not a fault, and saying
+    // so is the difference between "ask Jeremy" and "report a bug".
+    if (me.verified) {
+      return '<div class="tiles-empty"><strong>Nothing has been given to you yet.</strong><br>'
         + 'That is why this page is empty rather than anything being wrong with it. '
-        + 'Ask Jeremy to put you in the groups for the tools you need.</div>';
+        + 'Ask Jeremy for the tools you need.</div>';
     }
     return '<div class="tiles-empty">Nothing to show yet.</div>';
   }
 
   function footHtml(me) {
-    if (!Array.isArray(me.groups) || !me.groups.length) return '';
-    // "You are in FINANCIALS, RETAIL" read as a claim about somebody's job.
-    // It is not -- it is which sections of the portal they get.
-    return 'Your sections: <span class="grp">'
-      + me.groups.map(esc).join('</span>, <span class="grp">') + '</span>';
+    var n = (me.sections || []).length;
+    if (!n) return '';
+    // Sections, not groups. Which sections somebody has is a consequence of
+    // the tiles they hold, so it is a description of their page rather than
+    // a claim about their job -- which is how the old wording read.
+    return n === 1 ? 'One section.' : n + ' sections.';
   }
 
   var STATE = {};
@@ -139,10 +140,16 @@
     // rather than the control.
     $('#who').innerHTML = (me.isAdmin ? '<a class="setup" href="/admin.html">Setup</a> \u00b7 ' : '')
       + esc(me.email ? me.email : 'not signed in');
-    $('#greeting').textContent = me.greeting;
-    $('#sub').textContent = subLine(me);
+    // Access is in front and this request did not come through it. The
+    // notice is then the entire page: a greeting to nobody and two separate
+    // lines saying nothing is here only bury the one sentence that explains
+    // why and says how to fix it.
+    var shutOut = me.accessConfigured && !me.verified;
+    $('#greeting').textContent = shutOut ? '' : me.greeting;
+    $('#sub').textContent = shutOut ? '' : subLine(me);
     $('#notice').innerHTML = noticeHtml(me);
-    $('#cats').innerHTML = me.tiles.length ? catsHtml(me.sections || []) : emptyHtml(me);
+    $('#cats').innerHTML = shutOut ? ''
+      : (me.tiles.length ? catsHtml(me.sections || []) : emptyHtml(me));
     var links = linksHtml(me.links);
     $('#links').innerHTML = links;
     $('#links').hidden = !links;

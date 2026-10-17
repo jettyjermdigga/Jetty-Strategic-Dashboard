@@ -137,9 +137,19 @@ export async function identify(request, env) {
       reason = 'Could not reach ' + teamDomain + ' to check the token.';
     }
   } else if (teamDomain && auds.length && !token) {
+    // No token at all means the request did not pass through Access, which is
+    // almost always one thing: this hostname is not on the Access
+    // application. Naming the hostname is the whole diagnosis -- the fix is
+    // to add that exact string to the application's destinations -- so it is
+    // worth more here than any amount of advice about signing in again.
+    let host = '';
+    try { host = new URL(request.url).hostname; } catch (err) { host = ''; }
     reason = headerEmail
       ? 'Access set the email header but no token, so nothing could be verified.'
-      : 'No Cloudflare Access headers reached this Worker at all.';
+      : 'No Cloudflare Access headers reached this Worker at all'
+        + (host ? ', which means ' + host + ' is not on the Access application'
+                + ' -- add that exact hostname to its destinations' : '')
+        + '.';
   }
 
   return {

@@ -7,6 +7,7 @@
 import { visibleTiles, tileSections, linkSections, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker/clean.js';
+import { canonicalTarget } from '../worker/canon.js';
 
 let ran = 0;
 let failed = 0;
@@ -356,6 +357,46 @@ describe('the category migration', () => {
   it('leaves no tile in the catalogue pointing at a category being moved', () => {
     for (const t of TILES) {
       ok(!CAT_MOVES[t.category], t.key + ' still uses the old category ' + t.category);
+    }
+  });
+});
+
+// An Access application guards a HOSTNAME, not a Worker. The dash answers on
+// two hostnames and the application covers one, so the other reaches the
+// Worker having never met Access. These are the rules that close that.
+describe('canonicalTarget', () => {
+  const HOST = 'www.jettydash.com';
+
+  it('sends an unguarded hostname to the one Access is on', () => {
+    eq(canonicalTarget('https://jettydash.com/', HOST, false),
+       'https://www.jettydash.com/');
+  });
+  it('keeps the path and the query, so a link into Setup still lands there', () => {
+    eq(canonicalTarget('https://jettydash.com/admin.html?tab=links', HOST, false),
+       'https://www.jettydash.com/admin.html?tab=links');
+  });
+  // The redirect exists to find Access, so a request that already came
+  // through it has nothing to find. This is what lets the second hostname be
+  // added to the application later without anything here being undone.
+  it('leaves a request that already carries an Access token alone', () => {
+    eq(canonicalTarget('https://jettydash.com/', HOST, true), '');
+  });
+  it('does not redirect the canonical hostname to itself', () => {
+    eq(canonicalTarget('https://www.jettydash.com/', HOST, false), '');
+  });
+  it('ignores case in the hostname, which DNS does too', () => {
+    eq(canonicalTarget('https://WWW.JettyDash.com/', HOST, false), '');
+  });
+  it('answers wherever it is asked when no canonical host is set', () => {
+    eq(canonicalTarget('https://jettydash.com/', '', false), '');
+    eq(canonicalTarget('https://jettydash.com/', null, false), '');
+  });
+  // A loop here would be a portal nobody can open, so it is worth stating.
+  it('never produces a target equal to its own input', () => {
+    for (const u of ['https://jettydash.com/', 'https://www.jettydash.com/x',
+                     'https://jetty-dash.workers.dev/']) {
+      const out = canonicalTarget(u, HOST, false);
+      ok(out !== u, u + ' redirects to itself');
     }
   });
 });

@@ -10,6 +10,7 @@
 // tile hidden here is a door not shown rather than a door shut. See tiles.js.
 
 import { identify } from './access.js';
+import { canonicalTarget } from './canon.js';
 import { visibleTiles, tileSections, greeting } from './tiles.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
@@ -47,6 +48,17 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // Before anything else: are we even on the hostname Access guards? A
+    // request that arrives here with no token on a second hostname never met
+    // Access, and serving it would publish the portal round the side. See
+    // canon.js. 302 rather than 301, because which hostname is canonical is
+    // configuration and browsers cache a 301 more or less for ever.
+    const go = canonicalTarget(
+      request.url, env.CANONICAL_HOST,
+      Boolean(request.headers.get('Cf-Access-Jwt-Assertion')),
+    );
+    if (go) return Response.redirect(go, 302);
+
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 
     if (!env.DB) {
@@ -75,6 +87,18 @@ async function me(request, env, who) {
   // less than "known, and given nothing". Only a verified address is looked up.
   const mine = who.verified ? await tilesFor(env.DB, who.email) : null;
 
+  // Access is in front, and this request did not come through it verified.
+  //
+  // That used to fall back to the tools marked open to everyone, on the
+  // reasoning that they are open to everyone anyway. But "everyone" means
+  // everyone on staff, and an unverified request is not staff -- it is
+  // whoever found the address. The names of our tools and the links beside
+  // them are a map of how the company works, and that map is not public.
+  //
+  // So it shows nothing at all and says why. Strictly less on an unknown
+  // identity, which is the rule the rest of this file follows.
+  const shutOut = who.accessConfigured && !who.verified;
+
   if (request.method === 'HEAD') {
     return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });
   }
@@ -88,12 +112,13 @@ async function me(request, env, who) {
     reason: who.reason || '',
     isAdmin: isAdmin(env, who),
     greeting: greeting(who.email),
-    tiles: visibleTiles(mine, cat.tiles),
-    sections: tileSections(mine, cat.tiles, cat.categories),
+    tiles: shutOut ? [] : visibleTiles(mine, cat.tiles),
+    sections: shutOut ? [] : tileSections(mine, cat.tiles, cat.categories),
     // Links go to every member of staff -- see the note on the table. They
     // are sent whole rather than filtered, because there is nothing to
-    // filter them by.
-    links: linkSections(await readLinks(env.DB), cat.categories),
+    // filter them by. "Every member of staff" still means staff, so an
+    // unverified request gets none of them either.
+    links: shutOut ? [] : linkSections(await readLinks(env.DB), cat.categories),
   });
 }
 

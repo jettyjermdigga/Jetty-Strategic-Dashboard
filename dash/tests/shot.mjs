@@ -75,7 +75,19 @@ const full = (email) => ({
   links: linkSects(CATEGORIES),
 });
 
+// What somebody sees on a hostname the Access application does not cover:
+// nothing, and the reason. Worth looking at, because it is the first page
+// anybody hits when a destination is missing.
+const SHUT_OUT = {
+  email: '', verified: false, accessConfigured: true, isAdmin: false,
+  reason: 'No Cloudflare Access headers reached this Worker at all, which means'
+    + ' jettydash.com is not on the Access application -- add that exact'
+    + ' hostname to its destinations.',
+  tilesHeld: null, greeting: greeting(''), tiles: [], sections: [], links: [],
+};
+
 const CASES = [
+  { file: 'dash-shut-out', scheme: 'dark', who: SHUT_OUT, wait: '.notice' },
   { file: 'dash-full-dark', scheme: 'dark', who: full('jeremy@jettylife.com') },
   { file: 'dash-full-shut', scheme: 'dark', who: full('jeremy@jettylife.com'),
     click: '.cat-h', after: '.cat.shut' },

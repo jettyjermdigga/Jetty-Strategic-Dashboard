@@ -51,6 +51,18 @@ run_worker_first = true
 ACCESS_TEAM_DOMAIN = "wild-pine-bbc7.cloudflareaccess.com"
 ACCESS_AUD = "c68d5b4c6d1a2ac70cff0de0ad556da6a17fd5b4b7303282b04b2d7d67ee460a"
 
+# The one hostname the Access application actually guards.
+#
+# The Worker is attached to jettydash.com AND www.jettydash.com, but an Access
+# application is attached to a hostname, and this one covers only the www. A
+# request to the bare domain therefore reaches the Worker having never met
+# Access. It is redirected here instead. See worker/canon.js.
+#
+# Put both hostnames on the Access application and this can be emptied -- or
+# left alone, which costs nothing, because a request that arrives verified is
+# never redirected.
+CANONICAL_HOST = "www.jettydash.com"
+
 # Who may edit the tiles, categories, groups and roster.
 #
 # Deliberately not one of the groups. The groups are data this list governs,
