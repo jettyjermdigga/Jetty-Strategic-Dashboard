@@ -77,7 +77,7 @@ async function renameCategories(db) {
   const batch = LABEL_FIXES.map(([key, from, to]) => put.bind(to, key, from));
   if (batch.length) await db.batch(batch);
 
-  await db.prepare('INSERT OR REPLACE INTO meta (key, value, updated_at) VALUES (?, ?, ?)')
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
     .bind(LABEL_KEY, String(batch.length), new Date().toISOString()).run();
 }
 

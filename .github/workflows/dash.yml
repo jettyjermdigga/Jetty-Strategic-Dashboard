@@ -32,6 +32,15 @@ jobs:
         working-directory: dash
         run: node tests/unit.mjs
 
+      # store.js reads schema.sql through a wrangler rule, so Node cannot
+      # load it and no unit test runs a line of it. esbuild bundles a wrong
+      # column name happily -- it is text inside a string -- and D1 is the
+      # first thing that looks. Every request runs ensureSchema, so one typo
+      # takes the whole dash down. That shipped once; this is what notices.
+      - name: Check the SQL names columns that exist
+        working-directory: dash
+        run: node tests/sql.mjs
+
       # The dash is a staff portal. Deploying it with no Access application in
       # front would publish every tile and every link to anyone who found the
       # address, and it would do it quietly -- the page would look fine.

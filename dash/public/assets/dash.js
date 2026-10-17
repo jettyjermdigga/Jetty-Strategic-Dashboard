@@ -199,7 +199,16 @@
 
   fetch('/api/me', { headers: { accept: 'application/json' } })
     .then(function (r) {
-      if (!r.ok) throw new Error('The server answered ' + r.status + '.');
+      // The Worker puts the actual fault in the body -- "no such column",
+      // and so on. Reporting the status alone turned a one-line diagnosis
+      // into guesswork, so read the body before giving up on it.
+      if (!r.ok) {
+        return r.json().then(function (b) {
+          throw new Error((b && b.error) || 'The server answered ' + r.status + '.');
+        }, function () {
+          throw new Error('The server answered ' + r.status + '.');
+        });
+      }
       return r.json();
     })
     .then(render)
