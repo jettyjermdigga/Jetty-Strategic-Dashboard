@@ -39,15 +39,8 @@
     if (!bad) setTimeout(function () { if (n.textContent === msg) n.innerHTML = ''; }, 2600);
   }
 
-  var ICONS = ['link', 'calendar', 'chart', 'box', 'people', 'truck', 'store',
-    'wave', 'ink', 'megaphone', 'route', 'board', 'tag',
-    'shell', 'squeegee', 'tape', 'hanger'];
 
-  function iconSelect(cls, chosen) {
-    return '<select class="' + cls + '">' + ICONS.map(function (i) {
-      return '<option value="' + i + '"' + (i === chosen ? ' selected' : '') + '>' + i + '</option>';
-    }).join('') + '</select>';
-  }
+
 
   // ── tiles ───────────────────────────────────────────────────────────────
 
@@ -66,7 +59,6 @@
           return '<option value="' + esc(c.key) + '"'
             + (c.key === it.category ? ' selected' : '') + '>' + esc(c.label) + '</option>';
         }).join('') + '</select>'
-      + iconSelect('f-icon', it.icon)
       + '<label class="cb tiny" title="Everybody on staff gets this one">'
         + '<input type="checkbox" class="f-everyone"' + (it.everyone ? ' checked' : '') + '> All</label>'
       + '<div class="row-acts">'
@@ -84,7 +76,7 @@
       + 'everybody, if All is ticked.</p>'
       + '<div class="rows"><div class="row head">'
         + '<span>Name</span><span>Description</span><span>Address</span>'
-        + '<span>Category</span><span>Icon</span><span>All</span><span></span></div>'
+        + '<span>Category</span><span>All</span><span></span></div>'
       + D.tiles.map(tileRow).join('')
       + tileRow(null) + '</div>';
   }
@@ -213,7 +205,6 @@
     }).length;
     return '<form class="row cat-row' + (isNew ? ' new' : '') + '" data-key="' + esc(it.key) + '">'
       + '<input class="f-label" value="' + esc(it.label) + '" maxlength="60" placeholder="Name">'
-      + iconSelect('f-icon', it.icon)
       + '<span class="used">' + (isNew ? '' : tiles + (tiles === 1 ? ' tile' : ' tiles')
           + ' \u00b7 ' + people + (people === 1 ? ' person' : ' people')) + '</span>'
       + '<div class="row-acts">'
@@ -225,10 +216,12 @@
 
   function paintCats() {
     $('#pane-cats').innerHTML =
-      '<p class="pane-note">The sections of the dash, in this order. A person '
-      + 'in a section sees its tiles. General / Staff / Culture is everybody.</p>'
+      '<p class="pane-note">The sections of the dash, alphabetical across the top. '
+      + 'A section shows up on somebody\'s dash because they hold a tile in it. '
+      + 'Icons are set in the code and are not editable here \u2014 a new section '
+      + 'gets a plain one until somebody picks it a drawing.</p>'
       + '<div class="rows cats"><div class="row head">'
-        + '<span>Name</span><span>Icon</span><span></span><span></span></div>'
+        + '<span>Name</span><span></span><span></span></div>'
       + D.categories.map(catRow).join('')
       + catRow(null) + '</div>';
   }
@@ -257,7 +250,7 @@
       send = 'tile';
       body = {
         key: f.dataset.key, name: $('.f-name', f).value, blurb: $('.f-blurb', f).value,
-        url: $('.f-url', f).value, category: $('.f-cat', f).value, icon: $('.f-icon', f).value,
+        url: $('.f-url', f).value, category: $('.f-cat', f).value,
         everyone: $('.f-everyone', f).checked,
       };
     }
@@ -276,7 +269,7 @@
       };
     } else if (f.classList.contains('cat-row')) {
       send = 'category';
-      body = { key: f.dataset.key, label: $('.f-label', f).value, icon: $('.f-icon', f).value };
+      body = { key: f.dataset.key, label: $('.f-label', f).value };
     } else return;
 
     api(send, body).then(function (r) {

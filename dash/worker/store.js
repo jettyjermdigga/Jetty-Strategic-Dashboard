@@ -467,13 +467,26 @@ export async function saveCategory(db, input) {
   const key = cleanKey(input && input.key) || cleanKey(input && input.label);
   const label = String(input && input.label || '').trim().slice(0, 60);
   if (!key || !label) return { errors: ['A category needs a name.'] };
-  const icon = cleanKey(input && input.icon) || 'link';
   const sort = Number.isFinite(Number(input && input.sort)) ? Number(input.sort) : 0;
-  await db.prepare(
-    'INSERT INTO categories (cat_key, label, icon, sort) VALUES (?, ?, ?, ?) '
-    + 'ON CONFLICT(cat_key) DO UPDATE SET label = excluded.label, '
-    + 'icon = excluded.icon, sort = excluded.sort')
-    .bind(key, label, icon, sort).run();
+
+  // Setup no longer asks for an icon: they are chosen in tiles.js and
+  // backfilled. So an absent icon means LEAVE IT, and the update must not
+  // name the column at all -- `icon = excluded.icon` with nothing supplied
+  // would reset every category to the chain link the first time anybody
+  // renamed one, which is precisely the bug backfillIcons just repaired.
+  const icon = cleanKey(input && input.icon);
+  if (icon) {
+    await db.prepare(
+      'INSERT INTO categories (cat_key, label, icon, sort) VALUES (?, ?, ?, ?) '
+      + 'ON CONFLICT(cat_key) DO UPDATE SET label = excluded.label, '
+      + 'icon = excluded.icon, sort = excluded.sort')
+      .bind(key, label, icon, sort).run();
+  } else {
+    await db.prepare(
+      'INSERT INTO categories (cat_key, label, icon, sort) VALUES (?, ?, ?, ?) '
+      + 'ON CONFLICT(cat_key) DO UPDATE SET label = excluded.label, sort = excluded.sort')
+      .bind(key, label, 'link', sort).run();
+  }
   return { ok: true };
 }
 

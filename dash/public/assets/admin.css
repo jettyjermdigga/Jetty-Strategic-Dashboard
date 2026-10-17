@@ -120,11 +120,11 @@ legend{
 .row{
   display:grid;align-items:center;gap:10px;
   grid-template-columns:minmax(110px,1.1fr) minmax(150px,1.9fr) minmax(140px,1.5fr)
-                        minmax(120px,1fr) 108px 52px 96px;
+                        minmax(120px,1fr) 52px 96px;
   padding:9px 12px;border-top:1px solid var(--edge);
 }
 .rows .row:first-child{border-top:0}
-.rows.cats .row{grid-template-columns:minmax(140px,1.4fr) 118px minmax(120px,1fr) 96px}
+.rows.cats .row{grid-template-columns:minmax(140px,1.4fr) minmax(120px,1fr) 96px}
 .row.head{
   font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
   opacity:.72;background:var(--wash);padding:8px 12px;

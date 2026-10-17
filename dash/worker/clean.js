@@ -53,7 +53,7 @@ export function cleanUrl(s) {
 //
 //   Its key -- derived from the name on the way in, and then fixed, so
 //   renaming a tile is safe.
-export function cleanTile(input, cat, existingKeys) {
+export function cleanTile(input, cat, existingKeys, existing) {
   const errors = [];
 
   const name = text(input && input.name, 80);
@@ -83,7 +83,18 @@ export function cleanTile(input, cat, existingKeys) {
     row: {
       key, name, url, category,
       blurb: text(input && input.blurb, 300),
-      icon: cleanKey(input && input.icon) || 'link',
+      // Setup no longer asks for an icon, so an absent one means "leave it
+      // alone", never "reset it". Resetting is how every category came to
+      // be drawing the generic chain link, and the same trap is here: this
+      // runs on every save, so a silent default would wipe the lot the
+      // first time somebody renamed a tile.
+      //
+      // Falling back to the category's icon rather than the chain link
+      // means a tile keyed in from now on looks right without being asked.
+      icon: cleanKey(input && input.icon)
+        || (existing && cleanKey(existing.icon))
+        || (cat.find((c) => c.key === category) || {}).icon
+        || 'link',
       // Derived, not asked for: an address is what makes it real.
       status: url ? 'live' : 'soon',
       // Open to all staff, so a company-wide tool is not ticked onto twenty

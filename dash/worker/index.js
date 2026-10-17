@@ -15,7 +15,7 @@ import { visibleTiles, dashCategories, linkCats, greeting } from './tiles.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
   readLinks, cleanLink, saveLink, deleteLink,
-  cleanTile, cleanPerson, saveTile, deleteTile, savePerson, deletePerson,
+  cleanTile, cleanPerson, cleanKey, saveTile, deleteTile, savePerson, deletePerson,
   saveCategory, saveGroup, deleteGroup,
 } from './store.js';
 
@@ -162,7 +162,8 @@ async function admin(request, env, url, who) {
   if (!body) return json({ error: 'That was not JSON.' }, 400);
 
   if (what === 'tile') {
-    const out = cleanTile(body, cat.categories, cat.tiles.map((t) => t.key));
+    const out = cleanTile(body, cat.categories, cat.tiles.map((t) => t.key),
+                          cat.tiles.find((t) => t.key === cleanKey(body && body.key)));
     if (out.errors) return json({ errors: out.errors }, 400);
     await saveTile(env.DB, out.row, who.email);
     return json({ ok: true, tile: out.row });

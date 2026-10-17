@@ -568,11 +568,6 @@ describe('every icon named has a drawing behind it', () => {
 
   // The keys of the ICONS map in dash.js, which is what actually draws them.
   const drawn = new Set([...dash.matchAll(/^    ([a-z]+): '</gm)].map((m) => m[1]));
-  // The list Setup offers, so an icon that exists can actually be chosen.
-  const offered = new Set(
-    (admin.match(/var ICONS = \[([\s\S]*?)\];/) || [, ''])[1]
-      .match(/'([a-z]+)'/g) ? (admin.match(/var ICONS = \[([\s\S]*?)\];/)[1]
-      .match(/'([a-z]+)'/g) || []).map((q) => q.slice(1, -1)) : []);
 
   it('draws every icon a category asks for', () => {
     for (const c of CATEGORIES) {
@@ -584,16 +579,40 @@ describe('every icon named has a drawing behind it', () => {
       ok(drawn.has(t.icon), t.key + ' wants the "' + t.icon + '" icon, which is not drawn');
     }
   });
-  it('offers every drawable icon in Setup', () => {
-    for (const k of drawn) ok(offered.has(k), '"' + k + '" is drawn but Setup cannot pick it');
-  });
-  it('offers nothing Setup cannot draw', () => {
-    for (const k of offered) ok(drawn.has(k), 'Setup offers "' + k + '" but nothing draws it');
+  // Icons are chosen in the code now, so Setup must not ask -- and more
+  // importantly must not SEND one, because an empty value arriving at the
+  // save path is what would reset them all.
+  it('does not ask for an icon anywhere in Setup', () => {
+    ok(!/f-icon|iconSelect/.test(admin), 'Setup still has an icon field');
   });
   // The reason the whole category row looked like eleven of the same thing.
   it('does not leave most categories on the fallback', () => {
     const fallback = CATEGORIES.filter((c) => c.icon === 'link').length;
     ok(fallback === 0, fallback + ' categories still use the generic link icon');
+  });
+});
+
+// Setup stopped sending an icon, and cleanTile runs on every save. A
+// silent default here would wipe every tile's icon the first time somebody
+// renamed one -- the same shape as the bug backfillIcons just repaired.
+describe('cleanTile keeps icons that Setup no longer asks for', () => {
+  const cats = [{ key: 'finance', label: 'Finance', icon: 'chart' },
+                { key: 'general', label: 'General', icon: 'people' }];
+  const base = { name: 'Hub', url: 'https://hub.test/', category: 'finance' };
+
+  it('keeps the icon a tile already has when none is sent', () => {
+    const out = cleanTile({ ...base, key: 'hub' }, cats, [], { key: 'hub', icon: 'calendar' });
+    eq(out.row.icon, 'calendar');
+  });
+  it('falls back to the category icon for a new tile, not the chain link', () => {
+    eq(cleanTile(base, cats, []).row.icon, 'chart');
+    eq(cleanTile({ ...base, category: 'general' }, cats, []).row.icon, 'people');
+  });
+  it('still honours an icon when one is sent', () => {
+    eq(cleanTile({ ...base, icon: 'box' }, cats, []).row.icon, 'box');
+  });
+  it('only reaches the chain link when the category has no icon either', () => {
+    eq(cleanTile({ ...base, category: 'x' }, [{ key: 'x', label: 'X' }], []).row.icon, 'link');
   });
 });
 
