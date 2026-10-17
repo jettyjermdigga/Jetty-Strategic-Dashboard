@@ -40,7 +40,8 @@
   }
 
   var ICONS = ['link', 'calendar', 'chart', 'box', 'people', 'truck', 'store',
-               'wave', 'ink', 'megaphone', 'route', 'board', 'tag'];
+    'wave', 'ink', 'megaphone', 'route', 'board', 'tag',
+    'shell', 'squeegee', 'tape', 'hanger'];
 
   function iconSelect(cls, chosen) {
     return '<select class="' + cls + '">' + ICONS.map(function (i) {

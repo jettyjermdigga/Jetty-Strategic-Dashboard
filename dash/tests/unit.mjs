@@ -8,6 +8,9 @@ import { visibleTiles, tileSections, linkSections, dashCategories, linkCats, gre
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker/clean.js';
 import { canonicalTarget } from '../worker/canon.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 let ran = 0;
 let failed = 0;
@@ -550,6 +553,47 @@ describe('dashCategories: order and multi-category links', () => {
     const out = dashCategories([], [link('l1', 'finance,gone')], cats);
     ok(!out.some((c) => c.key === 'other'), 'a link with one real category is not lost');
     eq(out.filter((c) => c.links.length).map((c) => c.key), ['finance']);
+  });
+});
+
+// Icons are named in one file and drawn in two others, and nothing in the
+// build connects the three. An icon name with no drawing behind it falls
+// back silently to the generic chain link -- which is exactly how every
+// category came to look identical without anybody noticing.
+describe('every icon named has a drawing behind it', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const read = (f) => fs.readFileSync(path.join(HERE, '..', 'public', 'assets', f), 'utf8');
+  const dash = read('dash.js');
+  const admin = read('admin.js');
+
+  // The keys of the ICONS map in dash.js, which is what actually draws them.
+  const drawn = new Set([...dash.matchAll(/^    ([a-z]+): '</gm)].map((m) => m[1]));
+  // The list Setup offers, so an icon that exists can actually be chosen.
+  const offered = new Set(
+    (admin.match(/var ICONS = \[([\s\S]*?)\];/) || [, ''])[1]
+      .match(/'([a-z]+)'/g) ? (admin.match(/var ICONS = \[([\s\S]*?)\];/)[1]
+      .match(/'([a-z]+)'/g) || []).map((q) => q.slice(1, -1)) : []);
+
+  it('draws every icon a category asks for', () => {
+    for (const c of CATEGORIES) {
+      ok(drawn.has(c.icon), c.key + ' wants the "' + c.icon + '" icon, which is not drawn');
+    }
+  });
+  it('draws every icon a seeded tile asks for', () => {
+    for (const t of [...TILES, ...HUBS]) {
+      ok(drawn.has(t.icon), t.key + ' wants the "' + t.icon + '" icon, which is not drawn');
+    }
+  });
+  it('offers every drawable icon in Setup', () => {
+    for (const k of drawn) ok(offered.has(k), '"' + k + '" is drawn but Setup cannot pick it');
+  });
+  it('offers nothing Setup cannot draw', () => {
+    for (const k of offered) ok(drawn.has(k), 'Setup offers "' + k + '" but nothing draws it');
+  });
+  // The reason the whole category row looked like eleven of the same thing.
+  it('does not leave most categories on the fallback', () => {
+    const fallback = CATEGORIES.filter((c) => c.icon === 'link').length;
+    ok(fallback === 0, fallback + ' categories still use the generic link icon');
   });
 });
 

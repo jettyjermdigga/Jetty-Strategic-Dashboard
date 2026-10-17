@@ -66,13 +66,13 @@ export const CATEGORIES = [
   { key: 'general',     label: 'General', icon: 'people' },
   { key: 'box-truck',   label: 'Box Truck',                 icon: 'truck' },
   { key: 'long-branch', label: 'Long Branch',               icon: 'store' },
-  { key: 'jrf',         label: 'Jetty Rock Foundation',     icon: 'wave' },
-  { key: 'jetty-ink',   label: 'Jetty INK',                 icon: 'ink' },
+  { key: 'jrf',         label: 'Jetty Rock Foundation',     icon: 'shell' },
+  { key: 'jetty-ink',   label: 'Jetty INK',                 icon: 'squeegee' },
   { key: 'wholesale',   label: 'Wholesale',                 icon: 'box' },
   { key: 'marketing',   label: 'Marketing',                 icon: 'megaphone' },
   { key: 'logistics',   label: 'Logistics',                 icon: 'route' },
-  { key: 'prodev',      label: 'ProDev',                    icon: 'board' },
-  { key: 'womens',      label: "Women's",                   icon: 'tag' },
+  { key: 'prodev',      label: 'ProDev',                    icon: 'tape' },
+  { key: 'womens',      label: "Women's",                   icon: 'hanger' },
   { key: 'finance',     label: 'Finance',                   icon: 'chart' },
 ];
 

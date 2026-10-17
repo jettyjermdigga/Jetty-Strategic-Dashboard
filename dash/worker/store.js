@@ -27,6 +27,7 @@ const MERGE_KEY = 'groups-merged-into-departments-2026-10';
 const ASSIGN_KEY = 'tiles-assigned-to-people-2026-10';
 const LABEL_KEY = 'category-labels-2026-10b';
 const HUBS_KEY = 'airtable-hubs-2026-10';
+const ICONS_KEY = 'category-icons-2026-10';
 
 let ready = false;
 
@@ -56,7 +57,43 @@ export async function ensureSchema(db) {
   await assignTiles(db);
   await renameCategories(db);
   await seedHubs(db);
+  await backfillIcons(db);
   ready = true;
+}
+
+// Give every category the icon its seed always said it had.
+//
+// A bug worth writing down, because it is the third of its shape. The
+// categories table was created without an icon column; the column was added
+// later through ADDED_COLUMNS as `icon TEXT NOT NULL DEFAULT 'link'`. That
+// ALTER gave every existing row the default. syncCategories, which does know
+// the right icons, had already run and set its guard -- and a guarded
+// migration never revisits. So every category in a database older than that
+// column has been drawing the generic chain link ever since, and the only
+// place it looked correct was the screenshot fixture, which reads CATEGORIES
+// out of the repo rather than the database.
+//
+// The lesson, now stated three times in this file: adding a column with a
+// DEFAULT does not backfill it, and the guarded sync that knows the real
+// value will not run again to help.
+//
+// Only rows still holding the default are touched. 'link' is a legitimate
+// choice somebody might pick in Setup, but nobody has picked it yet, and a
+// migration that overwrites a deliberate edit is worse than one that does
+// nothing.
+async function backfillIcons(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(ICONS_KEY).first();
+  if (done) return;
+
+  const put = db.prepare(
+    "UPDATE categories SET icon = ? WHERE cat_key = ? AND (icon = 'link' OR icon = '')");
+  const batch = CATEGORIES
+    .filter((c) => c.icon && c.icon !== 'link')
+    .map((c) => put.bind(c.icon, c.key));
+  if (batch.length) await db.batch(batch);
+
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(ICONS_KEY, String(batch.length), new Date().toISOString()).run();
 }
 
 // The hubs that already exist in Airtable, added as tiles.

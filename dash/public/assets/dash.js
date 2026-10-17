@@ -28,6 +28,12 @@
     route: '<circle cx="6" cy="5.5" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M6 8v4.5a3.5 3.5 0 0 0 3.5 3.5H15"/>',
     board: '<rect x="3" y="4" width="18" height="16.5" rx="2"/><path d="M3 9h18M9 9v11.5M15 9v11.5"/>',
     tag: '<path d="M11 2.8H20a1.2 1.2 0 0 1 1.2 1.2v9l-9.4 9.4a1.2 1.2 0 0 1-1.7 0l-8-8a1.2 1.2 0 0 1 0-1.7z"/><circle cx="17" cy="7" r="1.6"/>',
+    // On-brand rather than generic: the foundation recycles shells, INK
+    // pulls screens, ProDev measures garments, and Women's hangs them.
+    shell: '<path d="M12 20.5C6.8 17.8 3.2 13 3.2 8.6A5.4 5.4 0 0 1 12 4.3a5.4 5.4 0 0 1 8.8 4.3c0 4.4-3.6 9.2-8.8 11.9z"/><path d="M12 20.5V4.3M7.4 18.1 9.6 5.1M16.6 18.1 14.4 5.1"/>',
+    squeegee: '<path d="M4.5 3.8h15v5.4h-15z"/><path d="M12 9.2v7.4"/><path d="M6.5 20.2h11"/><path d="M8.8 16.6h6.4v3.6H8.8z"/>',
+    tape: '<path d="M3 7.5h18v9H3z"/><path d="M6.5 7.5v3M9.5 7.5v4.5M12.5 7.5v3M15.5 7.5v4.5M18.5 7.5v3"/>',
+    hanger: '<path d="M12 7.6a2.2 2.2 0 1 1 2.2-2.2"/><path d="M12 7.6v2.2L3.4 16a1.3 1.3 0 0 0 .8 2.4h15.6a1.3 1.3 0 0 0 .8-2.4L12 9.8"/>',
   };
 
   function iconHtml(key) {
