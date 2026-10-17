@@ -211,7 +211,19 @@ for (const c of CASES) {
     });
     return [...new Set(bad)];
   });
+  // The row is meant to be one line. Eleven chips fit only because the chip
+  // is tight, so a twelfth category -- or a long name -- silently turns it
+  // into a drag. Measured rather than eyeballed, and reported every run.
+  const bar = await page.evaluate(() => {
+    const el = document.querySelector('.catbar');
+    if (!el) return null;
+    const tops = new Set([...el.querySelectorAll('.cb')]
+      .map((c) => Math.round(c.getBoundingClientRect().top)));
+    return { over: el.scrollWidth - el.clientWidth, rows: tops.size };
+  });
   console.log(c.file + '  ' + (await page.locator('.cb, .tl, .row').count()) + ' items'
+    + (bar ? '  row: ' + bar.rows + ' line' + (bar.rows === 1 ? '' : 's')
+             + (bar.over > 0 ? ', OVERFLOWS by ' + bar.over + 'px' : ', fits') : '')
     + (dim.length ? '  LOW CONTRAST: ' + dim.join(', ') : '  contrast ok'));
   await page.close();
 }

@@ -423,6 +423,28 @@ describe('dashCategories', () => {
   });
 });
 
+// Renaming a category after it is already in a database. The seed alone
+// never reaches one that exists, because syncCategories is guarded.
+describe('the category rename', () => {
+  it('renames away from a label no category still uses', () => {
+    const live = new Set(CATEGORIES.map((c) => c.label));
+    // Each fix is [key, from, to]. Mirrors LABEL_FIXES in store.js, which
+    // cannot be imported here: store.js reads schema.sql through a wrangler
+    // rule and will not load in Node.
+    const FIXES = [['general', 'General / Staff / Culture', 'General']];
+    for (const [, from] of FIXES) {
+      ok(!live.has(from), from + ' is both a live label and one being renamed away');
+    }
+  });
+  it('renames to a label the category list actually has', () => {
+    const byKey = new Map(CATEGORIES.map((c) => [c.key, c.label]));
+    const FIXES = [['general', 'General / Staff / Culture', 'General']];
+    for (const [key, , to] of FIXES) {
+      eq(byKey.get(key), to, key + ' is renamed to something the seed disagrees with');
+    }
+  });
+});
+
 describe('canonicalTarget', () => {
   const HOST = 'www.jettydash.com';
 

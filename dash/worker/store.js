@@ -25,6 +25,7 @@ const SEED_KEY = 'seeded-from-repo-2026-10';
 const CATS_KEY = 'categories-by-department-2026-10';
 const MERGE_KEY = 'groups-merged-into-departments-2026-10';
 const ASSIGN_KEY = 'tiles-assigned-to-people-2026-10';
+const LABEL_KEY = 'category-labels-2026-10b';
 
 let ready = false;
 
@@ -52,7 +53,32 @@ export async function ensureSchema(db) {
   await syncCategories(db);
   await mergeGroups(db);
   await assignTiles(db);
+  await renameCategories(db);
   ready = true;
+}
+
+// Renaming a category after it has been seeded.
+//
+// syncCategories is guarded and has already run, so changing the label in
+// tiles.js alone never reaches a database that exists. This is the narrow
+// version: rename this one key, and only if it still holds the exact old
+// label. Somebody who has already renamed it by hand in Setup keeps their
+// wording -- a migration that overwrites a deliberate edit is worse than one
+// that does nothing.
+const LABEL_FIXES = [
+  ['general', 'General / Staff / Culture', 'General'],
+];
+
+async function renameCategories(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(LABEL_KEY).first();
+  if (done) return;
+
+  const put = db.prepare('UPDATE categories SET label = ? WHERE cat_key = ? AND label = ?');
+  const batch = LABEL_FIXES.map(([key, from, to]) => put.bind(to, key, from));
+  if (batch.length) await db.batch(batch);
+
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, updated_at) VALUES (?, ?, ?)')
+    .bind(LABEL_KEY, String(batch.length), new Date().toISOString()).run();
 }
 
 // One-time: who sees what used to be a department somebody was in. It is now

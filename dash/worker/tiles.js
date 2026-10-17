@@ -63,7 +63,7 @@ export const EVERYONE = 'everyone';
 // people; `groups` decides who sees a tile and nothing else does. The
 // categories only decide where it sits on the page.
 export const CATEGORIES = [
-  { key: 'general',     label: 'General / Staff / Culture', icon: 'people' },
+  { key: 'general',     label: 'General', icon: 'people' },
   { key: 'box-truck',   label: 'Box Truck',                 icon: 'truck' },
   { key: 'long-branch', label: 'Long Branch',               icon: 'store' },
   { key: 'jrf',         label: 'Jetty Rock Foundation',     icon: 'wave' },
