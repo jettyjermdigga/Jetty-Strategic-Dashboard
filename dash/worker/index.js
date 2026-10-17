@@ -11,10 +11,10 @@
 
 import { identify } from './access.js';
 import { canonicalTarget } from './canon.js';
-import { visibleTiles, tileSections, withEmptyCategories, greeting } from './tiles.js';
+import { visibleTiles, dashCategories, greeting } from './tiles.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
-  readLinks, linkSections, cleanLink, saveLink, deleteLink,
+  readLinks, cleanLink, saveLink, deleteLink,
   cleanTile, cleanPerson, saveTile, deleteTile, savePerson, deletePerson,
   saveCategory, saveGroup, deleteGroup,
 } from './store.js';
@@ -100,6 +100,12 @@ async function me(request, env, who) {
   // identity, which is the rule the rest of this file follows.
   const shutOut = who.accessConfigured && !who.verified;
 
+  const visible = shutOut ? [] : visibleTiles(mine, cat.tiles);
+  // Links go to every member of staff -- see the note on the table -- so
+  // they are read whole rather than filtered. "Every member of staff" still
+  // means staff, which is why an unverified request gets none of them.
+  const links = shutOut ? [] : await readLinks(env.DB);
+
   if (request.method === 'HEAD') {
     return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });
   }
@@ -113,19 +119,11 @@ async function me(request, env, who) {
     reason: who.reason || '',
     isAdmin: admin,
     greeting: greeting(who.email),
-    tiles: shutOut ? [] : visibleTiles(mine, cat.tiles),
-    // An admin also gets the categories with nothing in them, flagged, so the
-    // page shows the shape of what is being filled in rather than looking
-    // broken while the catalogue is nearly empty. See withEmptyCategories.
-    sections: shutOut ? []
-      : (admin
-          ? withEmptyCategories(tileSections(mine, cat.tiles, cat.categories), cat.categories)
-          : tileSections(mine, cat.tiles, cat.categories)),
-    // Links go to every member of staff -- see the note on the table. They
-    // are sent whole rather than filtered, because there is nothing to
-    // filter them by. "Every member of staff" still means staff, so an
-    // unverified request gets none of them either.
-    links: shutOut ? [] : linkSections(await readLinks(env.DB), cat.categories),
+    tiles: shutOut ? [] : visible,
+    // Every category, in order, each carrying what this person has in it and
+    // whether that is anything at all. The page draws the whole row and lets
+    // the closed ones sit there unclickable -- see dashCategories.
+    cats: shutOut ? [] : dashCategories(visible, links, cat.categories),
   });
 }
 

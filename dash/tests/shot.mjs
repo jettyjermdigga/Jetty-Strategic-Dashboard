@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { visibleTiles, tileSections, linkSections, withEmptyCategories, greeting, TILES, CATEGORIES } from '../worker/tiles.js';
+import { visibleTiles, dashCategories, greeting, TILES, CATEGORIES } from '../worker/tiles.js';
 import { PEOPLE } from '../worker/people.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
@@ -26,16 +26,16 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 // decision rather than a hand-written payload that agrees with nothing.
 const me = (email) => {
   const held = email.startsWith('jeremy@') ? TILES.map((t) => t.key) : [];
+  const vis = visibleTiles(held);
   return {
     email, verified: true, accessConfigured: true, reason: '',
     tilesHeld: held, greeting: greeting(email), isAdmin: email.startsWith('jeremy@'),
-    tiles: visibleTiles(held), sections: tileSections(held),
-    links: linkSects(CATEGORIES),
+    tiles: vis, cats: dashCategories(vis, [], CATEGORIES),
   };
 };
 
-// A catalogue with enough in it to exercise the cap and the side list. The
-// real one has two live tiles, which shows neither.
+// A catalogue with enough in it to exercise the row. The real one has two
+// live tiles, which lights two of eleven.
 const FULL = [
   ['general', 'Company Calendar', 'Events, Marketing, Meetings, & Deadlines across every department within the company.'],
   ['general', 'Staff Handbook', 'Policies, benefits, time off and who to ask about what.'],
@@ -63,55 +63,58 @@ const LINKS = [
   ['wholesale', 'Faire Storefront', 'https://example.test/faire'],
 ].map(([category, name, url], i) => ({ key: 'l' + i, name, url, category, sort: i }));
 
-// The real filing, not a second copy of it that could quietly disagree --
-// same reason `me` above builds its tiles through visibleTiles.
-const linkSects = (cats) => linkSections(LINKS, cats);
+const full = (email) => {
+  const vis = visibleTiles(HELD, FULL);
+  return {
+    email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
+    tilesHeld: HELD, greeting: greeting(email),
+    tiles: vis, cats: dashCategories(vis, LINKS, CATEGORIES),
+  };
+};
 
-const full = (email) => ({
-  email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
-  tilesHeld: HELD, greeting: greeting(email),
-  tiles: visibleTiles(HELD, FULL),
-  sections: tileSections(HELD, FULL, CATEGORIES),
-  links: linkSects(CATEGORIES),
+// Exactly what is live today: the two seeded tiles, no links. Two of eleven
+// lit, which is the state that looked broken before.
+const BARE = (email) => {
+  const held = TILES.map((t) => t.key);
+  const vis = visibleTiles(held);
+  return {
+    email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
+    tilesHeld: held, greeting: greeting(email),
+    tiles: vis, cats: dashCategories(vis, [], CATEGORIES),
+  };
+};
+
+// Somebody who holds no tiles at all but can still reach the links. The
+// category lights on its links alone, and the pane says why it has no tools.
+const LINKS_ONLY = (email) => ({
+  email, verified: true, accessConfigured: true, reason: '', isAdmin: false,
+  tilesHeld: [], greeting: greeting(email),
+  tiles: [], cats: dashCategories([], LINKS, CATEGORIES),
 });
 
 // What somebody sees on a hostname the Access application does not cover:
-// nothing, and the reason. Worth looking at, because it is the first page
-// anybody hits when a destination is missing.
+// nothing, and the reason.
 const SHUT_OUT = {
   email: '', verified: false, accessConfigured: true, isAdmin: false,
   reason: 'No Cloudflare Access headers reached this Worker at all, which means'
     + ' jettydash.com is not on the Access application -- add that exact'
     + ' hostname to its destinations.',
-  tilesHeld: null, greeting: greeting(''), tiles: [], sections: [], links: [],
-};
-
-// Exactly what is live today: an admin, the two seeded tiles, no links. This
-// is the case that looked broken -- two bars and nothing else -- and the one
-// worth checking before anything is said about it being fixed.
-const BARE = (email) => {
-  const held = TILES.map((t) => t.key);
-  return {
-    email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
-    tilesHeld: held, greeting: greeting(email),
-    tiles: visibleTiles(held),
-    sections: withEmptyCategories(tileSections(held), CATEGORIES),
-    links: [],
-  };
+  tilesHeld: null, greeting: greeting(''), tiles: [], cats: [],
 };
 
 const CASES = [
-  { file: 'dash-bare-light', scheme: 'light', who: BARE('jeremy@jettylife.com') },
-  { file: 'dash-bare-dark', scheme: 'dark', who: BARE('jeremy@jettylife.com') },
+  { file: 'dash-bare-light', scheme: 'light', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
+  { file: 'dash-bare-dark', scheme: 'dark', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
+  { file: 'dash-full-dark', scheme: 'dark', who: full('jeremy@jettylife.com'), wait: '.catbar' },
+  { file: 'dash-full-light', scheme: 'light', who: full('jeremy@jettylife.com'), wait: '.catbar' },
+  // Click a category with both tiles and links in it.
+  { file: 'dash-full-marketing', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    wait: '.catbar', click: '.cb[data-cat="marketing"]', after: '.cb.on[data-cat="marketing"]' },
+  { file: 'dash-links-only', scheme: 'dark', who: LINKS_ONLY('amy@jettylife.com'),
+    wait: '.catbar' },
   { file: 'dash-shut-out', scheme: 'dark', who: SHUT_OUT, wait: '.notice' },
-  { file: 'dash-full-dark', scheme: 'dark', who: full('jeremy@jettylife.com') },
-  { file: 'dash-full-shut', scheme: 'dark', who: full('jeremy@jettylife.com'),
-    click: '.cat-h', after: '.cat.shut' },
-  { file: 'dash-director-dark', scheme: 'dark',  who: me('jeremy@jettylife.com') },
-  { file: 'dash-director-light', scheme: 'light', who: me('jeremy@jettylife.com') },
-  { file: 'dash-amy-dark', scheme: 'dark', who: me('amy@jettylife.com') },
-  { file: 'dash-wholesale-dark', scheme: 'dark', who: me('wholesale@jettylife.com') },
-  { file: 'dash-nogroups-dark', scheme: 'dark', who: me('bill@jettylife.com') },
+  { file: 'dash-director-dark', scheme: 'dark',  who: me('jeremy@jettylife.com'), wait: '.catbar' },
+  { file: 'dash-amy-dark', scheme: 'dark', who: me('amy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-admin-dark', scheme: 'dark', who: me('jeremy@jettylife.com'),
     path: 'admin.html', wait: '.tile-row' },
   { file: 'dash-admin-people', scheme: 'dark', who: me('jeremy@jettylife.com'),
@@ -153,7 +156,7 @@ for (const c of CASES) {
     });
   });
   await page.goto('http://local.test/' + (c.path || ''));
-  await page.waitForSelector(c.wait || '.tl, .tiles-empty');
+  await page.waitForSelector(c.wait || '.catbar, .pane-empty');
   if (c.click) {
     await page.locator(c.click).first().click();
     await page.waitForSelector(c.after || '.side-row');
@@ -208,7 +211,7 @@ for (const c of CASES) {
     });
     return [...new Set(bad)];
   });
-  console.log(c.file + '  ' + (await page.locator('.tl, .row, .card').count()) + ' items'
+  console.log(c.file + '  ' + (await page.locator('.cb, .tl, .row').count()) + ' items'
     + (dim.length ? '  LOW CONTRAST: ' + dim.join(', ') : '  contrast ok'));
   await page.close();
 }

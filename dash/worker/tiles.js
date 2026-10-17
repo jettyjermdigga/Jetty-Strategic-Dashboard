@@ -257,19 +257,46 @@ export function linkSections(links, cats) {
 }
 
 
-// The admin's view of the page while it is being filled in.
+// Every category, across the top, with what this person has in each.
 //
-// A category with nothing in it is hidden, which is the rule: nobody should
-// read a list of rooms they cannot enter. But the person BUILDING the thing
-// needs the opposite -- with two tiles in the catalogue the dash showed two
-// bars and looked broken, when it was simply empty.
+// One row of all of them, always, in the order CATEGORIES lists them. A
+// category you have something in is open and can be clicked; one you have
+// nothing in is shown and cannot. Showing the name of a department is not the
+// same as showing the tools inside it -- the names are how the company is
+// organised, which everybody already knows, and the tools behind them are
+// what is actually being withheld.
 //
-// So the empty ones are appended, flagged, and drawn only for an admin. The
-// rule is untouched for everybody else.
-export function withEmptyCategories(sections, cats) {
-  const have = new Set((sections || []).map((s) => s.key));
-  const empties = (cats || [])
-    .filter((c) => !have.has(c.key))
-    .map((c) => ({ key: c.key, label: c.label, icon: c.icon, tiles: [], empty: true }));
-  return [...(sections || []), ...empties];
+// Tiles and links are gated differently and deliberately:
+//
+//   A tile is one of our tools, so it appears only for somebody it has been
+//   assigned to on the People tab.
+//
+//   A link is an address with nothing of ours behind it, so there is nothing
+//   to assign and everybody gets it.
+//
+// Which means a category can be open because of its links alone, with no
+// tiles in it for this person. That is correct, not a leak: they could have
+// typed the address anyway.
+export function dashCategories(visible, links, cats) {
+  const tiles = visible || [];
+  const all = links || [];
+  const out = (cats || []).map((c) => ({
+    key: c.key,
+    label: c.label,
+    icon: c.icon,
+    tiles: tiles.filter((t) => t.category === c.key),
+    links: all.filter((l) => l.category === c.key && l.url),
+  }));
+
+  // Anything filed under a category that has since been deleted. Without
+  // this it would vanish from a page that still counts it.
+  const known = new Set((cats || []).map((c) => c.key));
+  const lostTiles = tiles.filter((t) => !known.has(t.category));
+  const lostLinks = all.filter((l) => l.url && !known.has(l.category));
+  if (lostTiles.length || lostLinks.length) {
+    out.push({ key: 'other', label: 'Other', icon: 'link',
+               tiles: lostTiles, links: lostLinks });
+  }
+
+  return out.map((c) => ({ ...c, open: c.tiles.length > 0 || c.links.length > 0 }));
 }

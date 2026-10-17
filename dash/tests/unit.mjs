@@ -4,7 +4,7 @@
 // never more. A portal that falls open when an endpoint times out is a worse
 // failure than one that goes quiet.
 
-import { visibleTiles, tileSections, linkSections, withEmptyCategories, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
+import { visibleTiles, tileSections, linkSections, dashCategories, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker/clean.js';
 import { canonicalTarget } from '../worker/canon.js';
@@ -364,38 +364,62 @@ describe('the category migration', () => {
 // An Access application guards a HOSTNAME, not a Worker. The dash answers on
 // two hostnames and the application covers one, so the other reaches the
 // Worker having never met Access. These are the rules that close that.
-// Hiding an empty category is the rule for staff. It is the wrong rule for
-// the person filling the thing in, who otherwise sees two bars and a page
-// that looks broken rather than empty.
-describe('withEmptyCategories', () => {
+// Every category across the top, with what this person has in each.
+//
+// The two gates are different on purpose: a tile is one of our tools and is
+// assigned person by person, a link is an address with nothing of ours behind
+// it and goes to everybody. So a category can be open on links alone.
+describe('dashCategories', () => {
   const cats = [{ key: 'general', label: 'General', icon: 'star' },
                 { key: 'finance', label: 'Finance', icon: 'chart' },
-                { key: 'wholesale', label: 'Wholesale', icon: 'box' }];
-  const held = [{ key: 'finance', label: 'Finance', icon: 'chart', tiles: [{ key: 't1' }] }];
+                { key: 'marketing', label: 'Marketing', icon: 'mega' }];
+  const tile = (key, category) => ({ key, name: key, category, url: 'https://t.test/' + key });
+  const link = (key, category, url) => ({ key, name: key, category,
+                                          url: url === undefined ? 'https://l.test/' + key : url });
 
-  it('appends the categories with nothing in them', () => {
-    eq(withEmptyCategories(held, cats).map((s) => s.key),
-       ['finance', 'general', 'wholesale']);
+  it('lists every category, in the order they are set up', () => {
+    eq(dashCategories([], [], cats).map((c) => c.key), ['general', 'finance', 'marketing']);
   });
-  it('flags the appended ones so the page can tell them apart', () => {
-    const out = withEmptyCategories(held, cats);
-    eq(out[0].empty, undefined);
-    eq([out[1].empty, out[2].empty], [true, true]);
+  it('opens a category the person has a tile in', () => {
+    const out = dashCategories([tile('t1', 'finance')], [], cats);
+    eq(out.map((c) => c.open), [false, true, false]);
   });
-  it('leaves the ones that have tiles exactly as they were', () => {
-    eq(withEmptyCategories(held, cats)[0], held[0]);
+  // The case that decides the whole design: links are not assigned, so they
+  // can open a category on their own.
+  it('opens a category on its links alone, with no tile in it', () => {
+    const out = dashCategories([], [link('l1', 'marketing')], cats);
+    eq(out.map((c) => c.open), [false, false, true]);
+    eq(out[2].tiles, []);
+    eq(out[2].links.map((l) => l.key), ['l1']);
   });
-  it('gives an empty one no tiles, so nothing can be drawn in it', () => {
-    eq(withEmptyCategories(held, cats)[1].tiles, []);
+  it('leaves a category with nothing in it shut', () => {
+    ok(dashCategories([tile('t1', 'finance')], [], cats).every(
+      (c) => c.key === 'finance' || !c.open));
   });
-  it('adds nothing when every category already has something', () => {
-    const everything = cats.map((c) => ({ ...c, tiles: [{ key: 'x' }] }));
-    eq(withEmptyCategories(everything, cats).length, 3);
+  it('files tiles and links into the same category together', () => {
+    const out = dashCategories([tile('t1', 'marketing')], [link('l1', 'marketing')], cats);
+    eq([out[2].tiles.length, out[2].links.length, out[2].open], [1, 1, true]);
   });
-  it('lists all of them when nothing is held at all', () => {
-    eq(withEmptyCategories([], cats).map((s) => s.key),
-       ['general', 'finance', 'wholesale']);
-    ok(withEmptyCategories([], cats).every((s) => s.empty));
+  it('drops a link with no address, which would be a dead bookmark', () => {
+    const out = dashCategories([], [link('l1', 'marketing', '')], cats);
+    eq(out[2].open, false);
+  });
+  // Deleting a category must not silently delete what was filed under it.
+  it('gathers anything under a category that no longer exists', () => {
+    const out = dashCategories([tile('t1', 'gone')], [link('l1', 'gone')], cats);
+    eq(out[out.length - 1].key, 'other');
+    eq([out[3].tiles.length, out[3].links.length, out[3].open], [1, 1, true]);
+  });
+  it('adds no Other bucket when everything is filed somewhere real', () => {
+    eq(dashCategories([tile('t1', 'finance')], [], cats).length, 3);
+  });
+  // A tile only reaches here if visibleTiles let it through, so this is the
+  // seam where the People tab actually takes effect.
+  it('shows only the tiles it is given, which is what the People tab sets', () => {
+    const fx = [{ key: 'mine', category: 'finance', url: 'https://a.test' },
+                { key: 'theirs', category: 'finance', url: 'https://b.test' }];
+    const out = dashCategories(visibleTiles(['mine'], fx), [], cats);
+    eq(out[1].tiles.map((t) => t.key), ['mine']);
   });
 });
 
