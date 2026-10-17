@@ -277,28 +277,50 @@ export function linkSections(links, cats) {
 // Which means a category can be open because of its links alone, with no
 // tiles in it for this person. That is correct, not a leak: they could have
 // typed the address anyway.
+// A link can sit in more than one category, so it turns up under more than
+// one filter -- a vendor portal is often Logistics AND Finance, and filing
+// it under one of them means half the people looking never find it.
+//
+// Stored comma-separated in the one column, the same way a person's tiles
+// are. A single key still parses as a list of one, so every row written
+// before this reads correctly.
+export function linkCats(l) {
+  const raw = l && l.category;
+  if (Array.isArray(raw)) return raw.map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+  return String(raw || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+}
+
 export function dashCategories(visible, links, cats) {
   const tiles = visible || [];
-  const all = links || [];
+  const all = (links || []).filter((l) => l.url);
   const out = (cats || []).map((c) => ({
     key: c.key,
     label: c.label,
     icon: c.icon,
     tiles: tiles.filter((t) => t.category === c.key),
-    links: all.filter((l) => l.category === c.key && l.url),
+    links: all.filter((l) => linkCats(l).includes(c.key)),
   }));
 
   // Anything filed under a category that has since been deleted. Without
   // this it would vanish from a page that still counts it.
   const known = new Set((cats || []).map((c) => c.key));
   const lostTiles = tiles.filter((t) => !known.has(t.category));
-  const lostLinks = all.filter((l) => l.url && !known.has(l.category));
+  const lostLinks = all.filter((l) => !linkCats(l).some((k) => known.has(k)));
   if (lostTiles.length || lostLinks.length) {
     out.push({ key: 'other', label: 'Other', icon: 'link',
                tiles: lostTiles, links: lostLinks });
   }
 
-  return out.map((c) => ({ ...c, open: c.tiles.length > 0 || c.links.length > 0 }));
+  // Alphabetical, left to right, with Other last whatever it is called.
+  // The order categories were set up in is a fact about Setup, not about
+  // the person reading the page, and eleven chips are easier to find a name
+  // in when the name is where the alphabet says it will be.
+  const other = out.filter((c) => c.key === 'other');
+  const rest = out.filter((c) => c.key !== 'other')
+    .sort((a, b) => a.label.localeCompare(b.label, 'en'));
+
+  return [...rest, ...other]
+    .map((c) => ({ ...c, open: c.tiles.length > 0 || c.links.length > 0 }));
 }
 
 // The hubs that already exist in Airtable.

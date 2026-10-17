@@ -11,7 +11,7 @@
 
 import { identify } from './access.js';
 import { canonicalTarget } from './canon.js';
-import { visibleTiles, dashCategories, greeting } from './tiles.js';
+import { visibleTiles, dashCategories, linkCats, greeting } from './tiles.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
   readLinks, cleanLink, saveLink, deleteLink,
@@ -124,6 +124,15 @@ async function me(request, env, who) {
     // whether that is anything at all. The page draws the whole row and lets
     // the closed ones sit there unclickable -- see dashCategories.
     cats: shutOut ? [] : dashCategories(visible, links, cat.categories),
+    // The whole set, flat, so the Links & Forms column can filter on its own
+    // without going back to the server. It is deliberately NOT tied to which
+    // category is selected above: that row is about tiles, and a tile you do
+    // not hold leaves its chip shut -- which would make the links filed
+    // under it unreachable for exactly the people links are meant to be
+    // open to.
+    links: shutOut ? [] : links.map((l) => ({
+      key: l.key, name: l.name, url: l.url, cats: linkCats(l),
+    })),
   });
 }
 

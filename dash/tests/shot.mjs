@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { visibleTiles, dashCategories, greeting, TILES, HUBS, CATEGORIES } from '../worker/tiles.js';
+import { visibleTiles, dashCategories, linkCats, greeting, TILES, HUBS, CATEGORIES } from '../worker/tiles.js';
 import { PEOPLE } from '../worker/people.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
@@ -61,7 +61,13 @@ const LINKS = [
   ['general', 'Benefits Portal', 'https://example.test/benefits'],
   ['general', 'IT Help', 'https://example.test/it'],
   ['wholesale', 'Faire Storefront', 'https://example.test/faire'],
+  // Two categories, so it turns up under both filters -- the case the
+  // whole multi-category change exists for.
+  ['logistics,finance', 'Freight Vendor Portal', 'https://example.test/freight'],
+  ['general,prodev', 'Fit Model Survey', 'https://example.test/fit'],
 ].map(([category, name, url], i) => ({ key: 'l' + i, name, url, category, sort: i }));
+
+const flat = (ls) => ls.map((l) => ({ key: l.key, name: l.name, url: l.url, cats: linkCats(l) }));
 
 const full = (email) => {
   const vis = visibleTiles(HELD, FULL);
@@ -69,6 +75,7 @@ const full = (email) => {
     email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
     tilesHeld: HELD, greeting: greeting(email),
     tiles: vis, cats: dashCategories(vis, LINKS, CATEGORIES),
+    links: flat(LINKS),
   };
 };
 
@@ -90,6 +97,7 @@ const LINKS_ONLY = (email) => ({
   email, verified: true, accessConfigured: true, reason: '', isAdmin: false,
   tilesHeld: [], greeting: greeting(email),
   tiles: [], cats: dashCategories([], LINKS, CATEGORIES),
+  links: flat(LINKS),
 });
 
 // What somebody sees on a hostname the Access application does not cover:
@@ -148,7 +156,7 @@ const CASES = [
 const ADMIN = {
   tiles: FULL,
   categories: CATEGORIES,
-  links: LINKS,
+  links: LINKS.map((l) => ({ ...l, cats: linkCats(l) })),
   people: Object.keys(PEOPLE).sort().map((e, i) => ({
     email: e, name: '', tiles: i % 3 === 0 ? HELD.slice(0, 2) : HELD.slice(0, 1),
   })),

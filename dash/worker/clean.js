@@ -131,8 +131,19 @@ export function cleanLink(input, cats, existingKeys) {
   }
   if (!key) errors.push('That name has no letters or numbers in it to make a key from.');
 
-  const category = cleanKey(input && input.category);
-  if (!cats.some((c) => c.key === category)) errors.push('Pick a category that exists.');
+  // Several categories, so one link turns up under several filters. Stored
+  // comma-separated in the one column, the way a person's tiles are.
+  const known = new Set((cats || []).map((c) => c.key));
+  const want = Array.isArray(input && input.category)
+    ? input.category : splitList(input && input.category);
+  const picked = [];
+  for (const raw of want) {
+    const k = cleanKey(raw);
+    if (!k) continue;
+    if (!known.has(k)) { errors.push('No such category: ' + k); continue; }
+    if (!picked.includes(k)) picked.push(k);
+  }
+  if (!picked.length) errors.push('Pick at least one category.');
 
   // A link with no address is not a link. Unlike a tile, there is nothing
   // else to it, so an empty one is refused rather than kept for later.
@@ -140,7 +151,7 @@ export function cleanLink(input, cats, existingKeys) {
   if (!url) errors.push('A link needs a web address starting https://.');
 
   if (errors.length) return { errors };
-  return { row: { key, name, url, category,
+  return { row: { key, name, url, category: picked.join(','),
                   sort: Number.isFinite(Number(input && input.sort)) ? Number(input.sort) : 0 } };
 }
 

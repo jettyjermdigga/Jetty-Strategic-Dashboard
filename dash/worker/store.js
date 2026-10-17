@@ -12,7 +12,7 @@
 
 import schema from './schema.sql';
 import { sqlStatements } from './sql.js';
-import { TILES, HUBS, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES } from './tiles.js';
+import { TILES, HUBS, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES, linkCats } from './tiles.js';
 import { cleanKey, cleanUrl, cleanTile, cleanPerson, cleanLink } from './clean.js';
 import { PEOPLE } from './people.js';
 
@@ -350,6 +350,10 @@ export async function readLinks(db) {
   const res = await db.prepare('SELECT * FROM links ORDER BY sort, name').all();
   return (res.results || []).map((r) => ({
     key: r.link_key, name: r.name, url: r.url, category: r.category, sort: r.sort,
+    // Parsed for the Setup page, which edits them as a set of chips. The
+    // raw comma-separated string stays on `category` for anything reading
+    // the row as it is stored.
+    cats: linkCats(r),
   }));
 }
 

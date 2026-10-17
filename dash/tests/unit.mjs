@@ -4,7 +4,7 @@
 // never more. A portal that falls open when an endpoint times out is a worse
 // failure than one that goes quiet.
 
-import { visibleTiles, tileSections, linkSections, dashCategories, greeting, TILES, HUBS, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
+import { visibleTiles, tileSections, linkSections, dashCategories, linkCats, greeting, TILES, HUBS, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker/clean.js';
 import { canonicalTarget } from '../worker/canon.js';
@@ -244,12 +244,28 @@ describe('cleanPerson', () => {
 describe('cleanLink', () => {
   const cats = [{ key: 'marketing' }, { key: 'general' }];
   const good = { name: 'Model Inquiry Form', url: 'https://forms.test/models',
-                 category: 'marketing' };
+                 category: ['marketing'] };
 
   it('accepts a name, an address and a category', () => {
     const out = cleanLink(good, cats, []);
     ok(!out.errors, JSON.stringify(out.errors));
     eq([out.row.name, out.row.category], ['Model Inquiry Form', 'marketing']);
+  });
+  it('stores several categories, so one link lands under several filters', () => {
+    const out = cleanLink({ ...good, category: ['marketing', 'general'] }, cats, []);
+    ok(!out.errors, JSON.stringify(out.errors));
+    eq(out.row.category, 'marketing,general');
+  });
+  it('accepts them comma-separated too, the way a row comes back', () => {
+    eq(cleanLink({ ...good, category: 'marketing, general' }, cats, []).row.category,
+       'marketing,general');
+  });
+  it('does not store the same category twice', () => {
+    eq(cleanLink({ ...good, category: ['marketing', 'marketing'] }, cats, []).row.category,
+       'marketing');
+  });
+  it('refuses a link filed under nothing at all', () => {
+    ok(cleanLink({ ...good, category: [] }, cats, []).errors);
   });
   it('refuses a link with no address, unlike a tile', () => {
     ok(cleanLink({ ...good, url: '' }, cats, []).errors);
@@ -259,8 +275,9 @@ describe('cleanLink', () => {
   it('refuses an address that is not one', () => {
     ok(cleanLink({ ...good, url: 'forms.test/models' }, cats, []).errors);
   });
-  it('refuses a category that does not exist', () => {
-    ok(cleanLink({ ...good, category: 'made-up' }, cats, []).errors);
+  it('refuses a category that does not exist, even beside a real one', () => {
+    ok(cleanLink({ ...good, category: ['made-up'] }, cats, []).errors);
+    ok(cleanLink({ ...good, category: ['marketing', 'made-up'] }, cats, []).errors);
   });
   it('makes a key out of the name and does not collide', () => {
     eq(cleanLink(good, cats, []).row.key, 'model-inquiry-form');
@@ -377,12 +394,13 @@ describe('dashCategories', () => {
   const link = (key, category, url) => ({ key, name: key, category,
                                           url: url === undefined ? 'https://l.test/' + key : url });
 
-  it('lists every category, in the order they are set up', () => {
-    eq(dashCategories([], [], cats).map((c) => c.key), ['general', 'finance', 'marketing']);
+  // Alphabetical by label, not the order Setup lists them in.
+  it('lists every category, alphabetically', () => {
+    eq(dashCategories([], [], cats).map((c) => c.key), ['finance', 'general', 'marketing']);
   });
   it('opens a category the person has a tile in', () => {
     const out = dashCategories([tile('t1', 'finance')], [], cats);
-    eq(out.map((c) => c.open), [false, true, false]);
+    eq(out.filter((c) => c.open).map((c) => c.key), ['finance']);
   });
   // The case that decides the whole design: links are not assigned, so they
   // can open a category on their own.
@@ -419,7 +437,8 @@ describe('dashCategories', () => {
     const fx = [{ key: 'mine', category: 'finance', url: 'https://a.test' },
                 { key: 'theirs', category: 'finance', url: 'https://b.test' }];
     const out = dashCategories(visibleTiles(['mine'], fx), [], cats);
-    eq(out[1].tiles.map((t) => t.key), ['mine']);
+    const fin = out.filter((c) => c.key === 'finance')[0];
+    eq(fin.tiles.map((t) => t.key), ['mine']);
   });
 });
 
@@ -480,6 +499,57 @@ describe('the category rename', () => {
     for (const [key, , to] of FIXES) {
       eq(byKey.get(key), to, key + ' is renamed to something the seed disagrees with');
     }
+  });
+});
+
+describe('linkCats', () => {
+  it('reads a single category, the way every row written before this one is', () => {
+    eq(linkCats({ category: 'marketing' }), ['marketing']);
+  });
+  it('reads several', () => {
+    eq(linkCats({ category: 'logistics,finance' }), ['logistics', 'finance']);
+  });
+  it('copes with spacing and case', () => {
+    eq(linkCats({ category: ' Logistics , FINANCE ' }), ['logistics', 'finance']);
+  });
+  it('reads an array as well, which is what Setup sends', () => {
+    eq(linkCats({ category: ['a', 'b'] }), ['a', 'b']);
+  });
+  it('says nothing rather than something empty', () => {
+    eq(linkCats({ category: '' }), []);
+    eq(linkCats({}), []);
+    eq(linkCats(null), []);
+  });
+});
+
+// Alphabetical, and a link in two categories reachable from both.
+describe('dashCategories: order and multi-category links', () => {
+  const cats = [{ key: 'wholesale', label: 'Wholesale', icon: 'box' },
+                { key: 'finance', label: 'Finance', icon: 'chart' },
+                { key: 'box-truck', label: 'Box Truck', icon: 'truck' }];
+  const link = (key, category) => ({ key, name: key, category, url: 'https://l.test/' + key });
+
+  it('orders the row alphabetically by label, not by how Setup lists them', () => {
+    eq(dashCategories([], [], cats).map((c) => c.label),
+       ['Box Truck', 'Finance', 'Wholesale']);
+  });
+  it('puts a link in two categories under both of them', () => {
+    const out = dashCategories([], [link('l1', 'finance,box-truck')], cats);
+    const inIt = out.filter((c) => c.links.length).map((c) => c.key);
+    eq(inIt, ['box-truck', 'finance']);
+  });
+  it('opens both of those categories', () => {
+    const out = dashCategories([], [link('l1', 'finance,box-truck')], cats);
+    eq(out.filter((c) => c.open).map((c) => c.key), ['box-truck', 'finance']);
+  });
+  it('keeps Other last however the alphabet falls', () => {
+    const out = dashCategories([], [link('l1', 'gone')], cats);
+    eq(out[out.length - 1].key, 'other');
+  });
+  it('only calls a link lost when none of its categories exist', () => {
+    const out = dashCategories([], [link('l1', 'finance,gone')], cats);
+    ok(!out.some((c) => c.key === 'other'), 'a link with one real category is not lost');
+    eq(out.filter((c) => c.links.length).map((c) => c.key), ['finance']);
   });
 });
 

@@ -148,49 +148,54 @@ button,select,input{font-family:inherit;color:inherit}
    what is left -- the tools are the thing being read, the links are a
    shelf beside them. */
 .shell{display:grid;grid-template-columns:minmax(0,1fr);gap:26px;align-items:start}
-.shell.split{grid-template-columns:minmax(0,1fr) 270px}
-@media (max-width:900px){ .shell.split{grid-template-columns:minmax(0,1fr)} }
+.shell.split{grid-template-columns:minmax(0,1fr) 300px}
+@media (max-width:980px){ .shell.split{grid-template-columns:minmax(0,1fr)} }
 
 /* ── The category row ────────────────────────────────────────────────────
-   Every category, always, in the order Setup lists them. Wraps rather than
-   scrolling sideways: eleven of these do not fit on a laptop in one line,
-   and a row you have to drag hides exactly the ones at the end. */
+   Every category, always, alphabetical, one line.
+
+   A grid of equal columns rather than a flex row, so the row cannot wrap
+   and cannot overflow however many categories there are: twelve simply
+   makes each one narrower. The label wraps inside its own chip instead,
+   which is what buys that -- "Jetty Rock Foundation" was the single thing
+   holding the old flex row hostage. */
 .catbar{
-  display:flex;flex-wrap:nowrap;gap:4px;
-  margin:0 0 22px;padding:0 0 18px;border-bottom:1px solid var(--edge);
-  /* One line. Eleven of these fit across a laptop only because the chip is
-     tight -- see the sizes below. Narrower than that and the row scrolls
-     rather than clipping, which is the one case where dragging beats
-     hiding the end of the list. */
-  overflow-x:auto;scrollbar-width:thin;
+  display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px;
+  margin:0 0 24px;padding:0 0 20px;border-bottom:1px solid var(--edge);
 }
-.catbar::-webkit-scrollbar{height:6px}
-.catbar::-webkit-scrollbar-thumb{background:var(--edge);border-radius:3px}
 .cb{
-  display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;white-space:nowrap;
-  font-family:var(--mono);font-size:9px;letter-spacing:.03em;text-transform:uppercase;
-  font-weight:600;line-height:1;
-  padding:8px 9px;border-radius:999px;
+  display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+  gap:7px;min-width:0;position:relative;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;
+  font-weight:600;line-height:1.25;text-align:center;
+  padding:13px 7px 11px;border-radius:12px;
   border:1px solid var(--edge);background:var(--card);color:var(--ink);
-  cursor:pointer;transition:background .12s,border-color .12s;
+  cursor:pointer;transition:background .12s,border-color .12s,transform .12s;
 }
 .cb:hover{background:var(--card-hover)}
+.cb:active{transform:translateY(1px)}
+.cb-ico{
+  display:flex;align-items:center;justify-content:center;
+  width:30px;height:30px;flex:0 0 30px;
+}
+.cb-ico svg{width:23px;height:23px}
+.cb-name{display:block;min-width:0;overflow-wrap:anywhere}
 /* The selected one. Filled rather than outlined, so which is open reads at
-   a glance from across the row. */
-/* --surface, not --paper: there is no --paper token, and an undefined var
-   makes the whole declaration invalid, so the text fell back to inheriting
-   --ink and painted ink on ink. The sweep caught it at 1.00:1. */
+   a glance from across the row. --surface, not --paper: there is no --paper
+   token and an undefined var invalidates the declaration, which once left
+   this painting ink on ink. */
 .cb.on{background:var(--ink);color:var(--surface);border-color:var(--ink)}
-.cb.on .cb-n{border-color:var(--surface);opacity:.85}
+.cb.on .cb-n{border-color:var(--surface);background:var(--ink);opacity:.9}
 .cb-n{
+  position:absolute;top:6px;right:7px;
   font-size:8px;border:1px solid var(--edge);border-radius:999px;
-  padding:2px 4px;opacity:.72;
+  padding:1px 4px;opacity:.7;background:var(--card);
 }
 /* Nothing in it for you. Not a button, no count, no hover: it is there so
    the row is the same shape for everybody, and that is all. */
 .cb.shut{
   background:transparent;border-style:dashed;cursor:default;
-  color:var(--ink);opacity:.45;
+  color:var(--ink);opacity:.4;
 }
 
 /* ── The selected category's tiles ───────────────────────────────────── */
@@ -228,21 +233,22 @@ button,select,input{font-family:inherit;color:inherit}
 .links[hidden]{display:none}
 .links-head{
   font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-  font-weight:600;opacity:.75;padding:12px 15px;border-bottom:1px solid var(--edge);
+  font-weight:600;opacity:.75;padding:13px 15px 11px;
 }
+.lk-filter{
+  display:block;width:calc(100% - 30px);margin:0 15px 12px;
+  font-family:var(--body);font-size:13px;
+  padding:7px 9px;border-radius:7px;
+  border:1px solid var(--field-line);background:var(--field);color:var(--ink);
+}
+.lk-list{border-top:1px solid var(--edge);max-height:60vh;overflow-y:auto}
 .lk-empty{
   font-family:var(--body);font-size:12.5px;line-height:1.55;
-  padding:12px 15px;opacity:.8;
-}
-.lk-group{padding:11px 15px;border-bottom:1px solid var(--edge)}
-.lk-group:last-child{border-bottom:0}
-.lk-cat{
-  font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
-  opacity:.72;margin-bottom:6px;
+  padding:12px 15px;opacity:.8;border-top:1px solid var(--edge);
 }
 .lk{
-  display:block;font-family:var(--body);font-size:13.5px;line-height:1.45;
-  color:inherit;text-decoration:none;padding:4px 0;
-  border-bottom:1px solid transparent;
+  display:block;font-family:var(--body);font-size:13.5px;line-height:1.4;
+  color:inherit;text-decoration:none;padding:10px 15px;
+  border-bottom:1px solid var(--edge);
 }
 .lk:hover{border-bottom-color:currentColor}

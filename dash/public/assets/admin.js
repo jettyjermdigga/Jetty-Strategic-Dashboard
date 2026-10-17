@@ -97,26 +97,41 @@
   // because there is something in it, and is absent otherwise.
   function tileBox(selected) {
     var sel = selected || [];
+    return chipBox('tiles', sel);
+  }
+
+  // The same box of chips serves two jobs now: the tiles a person holds,
+  // and the categories a link is filed under. One widget, told which list
+  // to draw from, rather than a second one that behaves almost the same.
+  function chipSrc(src) {
+    if (src === 'cats') {
+      return D.categories.map(function (c) { return { key: c.key, label: c.label }; });
+    }
+    // A tile open to everyone is not offered: ticking it onto one person
+    // would say something the tile has already said for all of them.
+    return D.tiles.filter(function (t) { return !t.everyone; })
+      .map(function (t) { return { key: t.key, label: t.name }; });
+  }
+
+  function chipBox(src, sel) {
+    var list = chipSrc(src);
     var label = function (k) {
-      var t = D.tiles.filter(function (x) { return x.key === k; })[0];
-      return t ? t.name : k;
+      var m = list.filter(function (x) { return x.key === k; })[0];
+      return m ? m.label : k;
     };
     var chips = sel.map(function (k) {
       return '<span class="chip" data-key="' + esc(k) + '">' + esc(label(k))
         + '<button type="button" class="chip-x" aria-label="Remove">\u00d7</button></span>';
     }).join('');
-    // A tile open to everyone is not offered: ticking it onto one person
-    // would say something the tile has already said for all of them.
-    var rest = D.tiles.filter(function (t) {
-      return !t.everyone && sel.indexOf(t.key) < 0;
-    });
+    var rest = list.filter(function (x) { return sel.indexOf(x.key) < 0; });
     var add = rest.length
-      ? '<select class="sec-add"><option value="">+ Tile</option>'
-        + rest.map(function (t) {
-            return '<option value="' + esc(t.key) + '">' + esc(t.name) + '</option>';
+      ? '<select class="sec-add"><option value="">+ ' + (src === 'cats' ? 'Category' : 'Tile')
+        + '</option>'
+        + rest.map(function (x) {
+            return '<option value="' + esc(x.key) + '">' + esc(x.label) + '</option>';
           }).join('') + '</select>'
       : '';
-    return '<div class="secbox">' + chips + add + '</div>';
+    return '<div class="secbox" data-src="' + esc(src) + '">' + chips + add + '</div>';
   }
 
   function personRow(p) {
@@ -156,14 +171,11 @@
   // thing on the far end sets its own access just as a tile's tool does.
   function linkRow(l) {
     var isNew = !l;
-    var it = l || { key: '', name: '', url: '', category: (D.categories[0] || {}).key };
+    var it = l || { key: '', name: '', url: '', cats: [] };
     return '<form class="row link-row' + (isNew ? ' new' : '') + '" data-key="' + esc(it.key) + '">'
       + '<input class="f-lname" value="' + esc(it.name) + '" maxlength="80" placeholder="Name">'
       + '<input class="f-lurl" value="' + esc(it.url) + '" placeholder="https://">'
-      + '<select class="f-lcat">' + D.categories.map(function (c) {
-          return '<option value="' + esc(c.key) + '"'
-            + (c.key === it.category ? ' selected' : '') + '>' + esc(c.label) + '</option>';
-        }).join('') + '</select>'
+      + chipBox('cats', it.cats || [])
       + '<div class="row-acts">'
         + '<button type="submit" class="btn small primary">' + (isNew ? 'Add' : 'Save') + '</button>'
         + (isNew ? '' : '<button type="button" class="btn small danger del">&times;</button>')
@@ -174,10 +186,13 @@
   function paintLinks() {
     $('#pane-links').innerHTML =
       '<p class="pane-note">' + D.links.length + ' links. A link is an address with '
-      + 'nothing of ours behind it \u2014 a form, a doc, a vendor portal. They sit down '
-      + 'the right of the dash under their section, and everybody sees them.</p>'
+      + 'nothing of ours behind it \u2014 a form, a doc, a vendor portal. They sit in '
+      + 'Links &amp; Forms down the right of the dash and everybody sees them, whatever '
+      + 'tiles they hold. Categories here do not decide who sees a link, only how the '
+      + 'list can be narrowed \u2014 so put a link in every category somebody might '
+      + 'look for it under.</p>'
       + '<div class="rows links"><div class="row head">'
-        + '<span>Name</span><span>Address</span><span>Category</span><span></span></div>'
+        + '<span>Name</span><span>Address</span><span>Categories</span><span></span></div>'
       + D.links.map(linkRow).join('')
       + linkRow(null) + '</div>';
   }
@@ -255,7 +270,8 @@
       send = 'link';
       body = {
         key: f.dataset.key, name: $('.f-lname', f).value,
-        url: $('.f-lurl', f).value, category: $('.f-lcat', f).value,
+        url: $('.f-lurl', f).value,
+        category: $$('.secbox .chip', f).map(function (c) { return c.dataset.key; }),
       };
     } else if (f.classList.contains('cat-row')) {
       send = 'category';
@@ -276,11 +292,11 @@
     var key = e.target.value;
     if (!key) return;
     var box = e.target.closest('.secbox');
-    var g = D.tiles.filter(function (x) { return x.key === key; })[0];
+    var g = chipSrc(box.dataset.src).filter(function (x) { return x.key === key; })[0];
     var chip = document.createElement('span');
     chip.className = 'chip';
     chip.dataset.key = key;
-    chip.innerHTML = esc(g ? g.name : key)
+    chip.innerHTML = esc(g ? g.label : key)
       + '<button type="button" class="chip-x" aria-label="Remove">\u00d7</button>';
     box.insertBefore(chip, e.target);
     e.target.querySelector('option[value="' + key + '"]').remove();
@@ -292,12 +308,13 @@
     if (x) {
       e.preventDefault();
       var chip = x.closest('.chip');
-      var sel = chip.closest('.secbox').querySelector('.sec-add');
-      var g = D.tiles.filter(function (y) { return y.key === chip.dataset.key; })[0];
+      var box = chip.closest('.secbox');
+      var sel = box.querySelector('.sec-add');
+      var g = chipSrc(box.dataset.src).filter(function (y) { return y.key === chip.dataset.key; })[0];
       if (sel && g) {
         var opt = document.createElement('option');
         opt.value = g.key;
-        opt.textContent = g.name;
+        opt.textContent = g.label;
         sel.appendChild(opt);
       }
       chip.remove();

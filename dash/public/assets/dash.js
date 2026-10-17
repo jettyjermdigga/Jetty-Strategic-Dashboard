@@ -17,6 +17,17 @@
     box: '<path d="M3 8l9-5 9 5v8l-9 5-9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
     people: '<circle cx="9" cy="8" r="3.4"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16.5 5.2a3.4 3.4 0 0 1 0 6.6M17.5 14.4c2.4.5 4 2.6 4 5.6"/>',
     link: '<path d="M10 13.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.6 1.6"/><path d="M14 10.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.6-1.6"/>',
+    // Every category had an icon name from the start; only five of them
+    // existed, so most of the page fell back to the generic chain link and
+    // the row read as eleven of the same thing. These are the rest.
+    truck: '<path d="M2 7.5h11v9H2zM13 11h4.2l2.8 3v2.5h-7z"/><circle cx="6.5" cy="18.5" r="1.9"/><circle cx="16.5" cy="18.5" r="1.9"/>',
+    store: '<path d="M3.5 9.5h17V20h-17z"/><path d="M2.5 9.5 4.5 4h15l2 5.5"/><path d="M9.5 20v-5.5h5V20"/>',
+    wave: '<path d="M2 9c2.5-2.5 5-2.5 7.5 0S15 11.5 17.5 9 22 6.5 22 6.5"/><path d="M2 14.5c2.5-2.5 5-2.5 7.5 0s5.5 2.5 8 0 4.5-2.5 4.5-2.5"/><path d="M2 20c2.5-2.5 5-2.5 7.5 0"/>',
+    ink: '<path d="M12 2.8s6 6.4 6 10.3a6 6 0 0 1-12 0C6 9.2 12 2.8 12 2.8z"/><path d="M9.5 13.8a2.6 2.6 0 0 0 2.5 2.6"/>',
+    megaphone: '<path d="M3.5 10v4a1.5 1.5 0 0 0 1.5 1.5h2L15 20V4L7 8.5H5A1.5 1.5 0 0 0 3.5 10z"/><path d="M18.5 9.5a4 4 0 0 1 0 5"/><path d="M7 15.5V20"/>',
+    route: '<circle cx="6" cy="5.5" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M6 8v4.5a3.5 3.5 0 0 0 3.5 3.5H15"/>',
+    board: '<rect x="3" y="4" width="18" height="16.5" rx="2"/><path d="M3 9h18M9 9v11.5M15 9v11.5"/>',
+    tag: '<path d="M11 2.8H20a1.2 1.2 0 0 1 1.2 1.2v9l-9.4 9.4a1.2 1.2 0 0 1-1.7 0l-8-8a1.2 1.2 0 0 1 0-1.7z"/><circle cx="17" cy="7" r="1.6"/>',
   };
 
   function iconHtml(key) {
@@ -45,14 +56,26 @@
         // Not a button: there is nothing behind it, and a thing that looks
         // clickable and is not is worse than a thing that looks inert.
         return '<span class="cb shut" aria-disabled="true">'
+          + catIcon(c.icon)
           + '<span class="cb-name">' + esc(c.label) + '</span></span>';
       }
       return '<button type="button" class="cb' + (c.key === sel ? ' on' : '') + '" '
         + 'data-cat="' + esc(c.key) + '" aria-pressed="' + (c.key === sel) + '">'
+        + catIcon(c.icon)
         + '<span class="cb-name">' + esc(c.label) + '</span>'
         + '<span class="cb-n">' + n + '</span>'
         + '</button>';
     }).join('');
+  }
+
+  // Bigger than the tile icon, and above the label rather than beside it, so
+  // the row reads as eleven distinct things at a glance instead of eleven
+  // lines of small caps.
+  function catIcon(key) {
+    var path = ICONS[key] || ICONS.link;
+    return '<span class="cb-ico"><svg viewBox="0 0 24 24" fill="none" '
+      + 'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
+      + 'stroke-linejoin="round" aria-hidden="true">' + path + '</svg></span>';
   }
 
   // Everything on this page leaves the dash, so everything opens beside it.
@@ -84,18 +107,63 @@
       + cat.tiles.map(tileLine).join('') + '</div></div>';
   }
 
-  // The right column: the selected category's links. Bookmarks rather than
-  // tools -- an address with nothing of ours behind it -- so everybody gets
-  // them and there is nothing to assign.
-  function linksHtml(cat) {
-    if (!cat || !cat.links.length) return '';
-    return '<div class="links-head">Links · ' + esc(cat.label) + '</div>'
-      + '<div class="lk-group">'
-      + cat.links.map(function (l) {
-          return '<a class="lk"' + OUT + ' href="' + esc(l.url) + '">'
-            + esc(l.name) + '</a>';
-        }).join('')
+  // The right column. Links are bookmarks rather than tools -- an address
+  // with nothing of ours behind it -- so everybody gets all of them and the
+  // category is only a way to narrow the list.
+  //
+  // Its filter is deliberately its own, not the row along the top. That row
+  // is about tiles, and a category you hold no tile in leaves its chip shut
+  // -- so following it would make those links unreachable for precisely the
+  // people links exist to serve.
+  var LFILTER = '';
+
+  function linksHtml(me) {
+    var all = me.links || [];
+    if (!all.length) {
+      if (!me.isAdmin) return '';
+      return head('')
+        + '<div class="lk-empty">No links yet. They are bookmarks and forms rather'
+        + ' than tools \u2014 a form, a doc, a vendor portal \u2014 and everybody'
+        + ' sees them. Add them under Links in Setup.</div>';
+    }
+
+    // Only categories that actually hold a link, so the filter never offers
+    // a choice that empties the list.
+    var used = {};
+    all.forEach(function (l) { (l.cats || []).forEach(function (k) { used[k] = true; }); });
+    var opts = (me.cats || []).filter(function (c) { return used[c.key]; });
+
+    var shown = LFILTER
+      ? all.filter(function (l) { return (l.cats || []).indexOf(LFILTER) !== -1; })
+      : all;
+
+    return head(opts)
+      + '<div class="lk-list">'
+      + (shown.length
+          ? shown.map(function (l) {
+              return '<a class="lk"' + OUT + ' href="' + esc(l.url) + '">'
+                + esc(l.name) + '</a>';
+            }).join('')
+          : '<div class="lk-empty">Nothing filed under that one.</div>')
       + '</div>';
+
+    function head(options) {
+      var sel = '';
+      if (options && options.length) {
+        sel = '<select class="lk-filter" id="lkfilter" aria-label="Filter links by category">'
+          + '<option value="">All (' + all.length + ')</option>'
+          + options.map(function (c) {
+              var n = all.filter(function (l) {
+                return (l.cats || []).indexOf(c.key) !== -1;
+              }).length;
+              return '<option value="' + esc(c.key) + '"'
+                + (c.key === LFILTER ? ' selected' : '') + '>'
+                + esc(c.label) + ' (' + n + ')</option>';
+            }).join('')
+          + '</select>';
+      }
+      return '<div class="links-head">Links &amp; Forms</div>' + sel;
+    }
   }
 
   function noticeHtml(me) {
@@ -142,7 +210,7 @@
     var cat = cats.filter(function (c) { return c.key === SEL; })[0];
     $('#catbar').innerHTML = catbarHtml(cats, SEL);
     $('#pane').innerHTML = paneHtml(cat);
-    var links = linksHtml(cat);
+    var links = linksHtml(STATE);
     $('#links').innerHTML = links;
     $('#links').hidden = !links;
     $('#shell').classList.toggle('split', Boolean(links));
@@ -168,11 +236,23 @@
 
     var cats = me.cats || [];
     var openOnes = cats.filter(function (c) { return c.open; });
-    if (shutOut || !openOnes.length) {
-      $('#catbar').innerHTML = shutOut ? '' : catbarHtml(cats, '');
-      $('#pane').innerHTML = shutOut ? '' : emptyHtml(me);
+    if (shutOut) {
+      $('#catbar').innerHTML = '';
+      $('#pane').innerHTML = '';
       $('#links').hidden = true;
       $('#shell').classList.remove('split');
+      return;
+    }
+    if (!openOnes.length) {
+      // Holding no tiles does not mean an empty page any more. Links go to
+      // everybody, so the column still stands -- it is the one thing on
+      // here a brand new person can use on their first morning.
+      $('#catbar').innerHTML = catbarHtml(cats, '');
+      $('#pane').innerHTML = emptyHtml(me);
+      var only = linksHtml(me);
+      $('#links').innerHTML = only;
+      $('#links').hidden = !only;
+      $('#shell').classList.toggle('split', Boolean(only));
       return;
     }
     // Land on the first one that has something in it. Opening on an empty
@@ -203,6 +283,16 @@
     if (!t) return;
     SEL = t.dataset.cat;
     paint();
+  });
+
+  // Narrowing the links does not touch the tiles, and repainting the whole
+  // page would throw away which category is open above.
+  document.addEventListener('change', function (e) {
+    if (!e.target || e.target.id !== 'lkfilter') return;
+    LFILTER = e.target.value;
+    var el = $('#links');
+    el.innerHTML = linksHtml(STATE);
+    el.hidden = !el.innerHTML;
   });
 
   fetch('/api/me', { headers: { accept: 'application/json' } })
