@@ -124,8 +124,10 @@
 
   function footHtml(me) {
     if (!Array.isArray(me.groups) || !me.groups.length) return '';
-    return 'You are in <span class="grp">' + me.groups.map(esc).join('</span>, <span class="grp">')
-      + '</span>';
+    // "You are in FINANCIALS, RETAIL" read as a claim about somebody's job.
+    // It is not -- it is which sections of the portal they get.
+    return 'Your sections: <span class="grp">'
+      + me.groups.map(esc).join('</span>, <span class="grp">') + '</span>';
   }
 
   var STATE = {};

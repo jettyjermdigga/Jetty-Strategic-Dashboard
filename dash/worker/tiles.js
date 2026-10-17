@@ -19,32 +19,26 @@
 //   `groups` must name the same people that tool's own policy names, and
 //   keeping those two in step is the job.
 
-// Groups are named for the door they open, not for the job somebody holds.
+// One list, used twice.
 //
-// That was learned the moment the list was first written: Amy is not a
-// director but needs the Strategic Dashboard. Against a group called
-// "Directors" she is an exception, and exceptions are what these lists rot
-// around -- either somebody is quietly recorded as a director to get her the
-// tiles, or a one-off is bolted on beside the groups and becomes the second
-// mechanism nobody remembers to check. Against "Financials" she is simply a
-// member, and nothing has to bend.
+// There were two: departments for where a tile sits, and separately-named
+// groups for who could see it. Two lists with overlapping names is one list
+// too many -- the first thing anybody asked on seeing their own dash was what
+// the second one meant.
 //
-// So when a new tool arrives the question is not "whose department is this?"
-// It is "what is the permission, and who needs it?"
+// They merged because the dash is not a lock. Each tool behind it decides who
+// actually gets in: Cory's wholesale tables already let his outside reps in,
+// and whoever builds the Ambassador hub will set up its own access. All this
+// list does is decide which sections of the portal an internal member of
+// staff sees, and that does not need a vocabulary of its own.
 //
-// EVERYONE is not a real group. It means "anybody Access let through the front
-// door", which on a staff portal is every member of staff.
+// So a department is both the section a tile appears under and the thing a
+// person is in. Being in Finance means you get the finance tools on your
+// dash; it is not a claim about your job title.
+//
+// EVERYONE is not a department. It means "anybody Access let through the front
+// door", which on an internal staff portal is every member of staff.
 export const EVERYONE = 'everyone';
-
-export const GROUPS = [
-  { key: 'financials',  label: 'Financials',
-    note: 'Revenue, cash and inventory. Not the same thing as being a director.' },
-  { key: 'marketing',   label: 'Marketing' },
-  { key: 'wholesale',   label: 'Wholesale' },
-  { key: 'retail',      label: 'Retail' },
-  { key: 'ambassadors', label: 'Ambassadors' },
-  { key: 'jrf',         label: 'Jetty Rock Foundation' },
-];
 
 // What part of the business a tool belongs to. The page groups tiles under
 // these, in this order, and skips any heading nothing lands under -- so
@@ -71,6 +65,12 @@ export const CATEGORIES = [
   { key: 'finance',   label: 'Finance' },
 ];
 
+// Who sees what is drawn from the same list as where things sit, so Setup
+// offers one set of names in both places.
+export const GROUPS = CATEGORIES.map((c) => ({ key: c.key, label: c.label }));
+
+
+
 // Where tiles went when the categories changed from shapes of work to parts
 // of the business. Lives here beside CATEGORIES, and not in store.js where it
 // is used, because store.js reads schema.sql through a wrangler rule and so
@@ -81,6 +81,19 @@ export const CAT_MOVES = {
   sales: 'wholesale',
   community: 'jrf',
   // finance and marketing keep their keys and are simply relabelled.
+};
+
+// Where the old permission names went when the two lists became one. Same
+// reasoning as CAT_MOVES: it lives here so it can be tested, and a move
+// pointing at a department that does not exist would silently strip somebody
+// of a section.
+//
+// retail has no department on the list -- Flagship is not on it either -- so
+// Long Branch is a guess, flagged here and easily corrected in Setup.
+export const GROUP_MOVES = {
+  financials: 'finance',
+  retail: 'long-branch',
+  ambassadors: 'marketing',
 };
 
 // status:
@@ -110,7 +123,7 @@ export const TILES = [
     url: 'https://jetty-strategic.jeremy-85e.workers.dev',
     icon: 'chart',
     category: 'finance',
-    groups: ['financials'],
+    groups: ['finance'],
     status: 'live',
   },
 
@@ -135,7 +148,7 @@ export const TILES = [
     url: '',
     icon: 'people',
     category: 'marketing',
-    groups: ['ambassadors', 'marketing'],
+    groups: ['marketing'],
     status: 'soon',
   },
 ];

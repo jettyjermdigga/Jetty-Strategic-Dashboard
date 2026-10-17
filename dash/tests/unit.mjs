@@ -4,7 +4,7 @@
 // never more. A portal that falls open when an endpoint times out is a worse
 // failure than one that goes quiet.
 
-import { visibleTiles, tileSections, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, EVERYONE } from '../worker/tiles.js';
+import { visibleTiles, tileSections, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanKey, cleanUrl } from '../worker/clean.js';
 
@@ -32,24 +32,22 @@ describe('visibleTiles', () => {
     eq(keys([]), ['calendar']);
   });
   it('adds a tile when the group matches', () => {
-    ok(keys(['financials']).includes('strategic'), 'Financials should see the Strategic Dashboard');
+    ok(keys(['finance']).includes('strategic'), 'Finance should see the Strategic Dashboard');
   });
   it('does not show it to somebody who is not in that group', () => {
     ok(!keys(['wholesale']).includes('strategic'), 'Wholesale should not see it');
   });
 
-  // The case the group names were chosen around: Amy needs the numbers
-  // without being a director. If this ever needs her in a group called
-  // anything like Leadership to pass, the naming has slipped back.
-  it('lets somebody see the financials without being leadership', () => {
+  // Amy needs the numbers without being a director. Departments are
+  // sections of the portal, not ranks, so she is simply in finance.
+  it('lets somebody see the finance tools without being a director', () => {
     const amy = groupsFor('amy@jettylife.com');
-    ok(amy.includes('financials'), 'Amy is in Financials');
-    ok(!amy.includes('leadership'), 'Amy is not leadership');
+    ok(amy.includes('finance'), 'Amy is in finance');
     ok(keys(amy).includes('strategic'), 'and she sees the Strategic Dashboard');
   });
   it('matches group names whatever the case', () => {
-    eq(keys(['FINANCIALS']), keys(['financials']));
-    eq(keys(['  Financials  ']), keys(['financials']));
+    eq(keys(['FINANCE']), keys(['finance']));
+    eq(keys(['  Finance  ']), keys(['finance']));
   });
   // Against a fixture, because hiding every unbuilt tile leaves no live tile
   // owned by two groups -- and this rule should not go untested until the day
@@ -137,13 +135,13 @@ describe('the catalogue itself', () => {
 
 describe('tileSections', () => {
   it('puts a tile under its own category', () => {
-    const s = tileSections(['financials']);
+    const s = tileSections(['finance']);
     const finance = s.find((x) => x.key === 'finance');
     ok(finance, 'there should be a Finance section');
     eq(finance.tiles.map((t) => t.key), ['strategic']);
   });
   it('leaves out a heading nothing lands under', () => {
-    for (const s of tileSections(['financials'])) ok(s.tiles.length, s.key + ' is empty');
+    for (const s of tileSections(['finance'])) ok(s.tiles.length, s.key + ' is empty');
   });
   it('keeps the categories in the order they are declared', () => {
     const order = tileSections(GROUPS.map((g) => g.key)).map((s) => s.key);
@@ -151,7 +149,7 @@ describe('tileSections', () => {
     eq(order, want);
   });
   it('accounts for every visible tile exactly once', () => {
-    for (const who of [null, [], ['financials'], GROUPS.map((g) => g.key)]) {
+    for (const who of [null, [], ['finance'], GROUPS.map((g) => g.key)]) {
       const flat = tileSections(who).flatMap((s) => s.tiles.map((t) => t.key));
       eq(flat.slice().sort(), visibleTiles(who).map((t) => t.key).sort(),
          'sections and tiles disagree for ' + JSON.stringify(who));
@@ -162,8 +160,8 @@ describe('tileSections', () => {
 
 describe('groupsFor', () => {
   it('gives somebody their groups', () => {
-    eq(groupsFor('jeremy@jettylife.com'),
-       ['financials', 'marketing', 'wholesale', 'retail', 'jrf']);
+    ok(groupsFor('jeremy@jettylife.com').includes('finance'));
+    ok(groupsFor('jeremy@jettylife.com').includes('general'));
   });
   it('does not care about case or stray spaces', () => {
     eq(groupsFor('  JEREMY@JettyLife.com '), groupsFor('jeremy@jettylife.com'));
@@ -203,13 +201,10 @@ describe('the roster itself', () => {
       for (const g of groups) ok(known.has(g), email + ' is in a group that does not exist: ' + g);
     }
   });
-  it('has somebody in every group, so no group is a dead letter', () => {
-    const used = new Set(roster().flatMap((p) => p.groups));
-    const empty = GROUPS.filter((g) => !used.has(g.key)).map((g) => g.key);
-    // Ambassadors is knowingly empty until somebody says who is in it. Any
-    // other empty group is a tile nobody can see and nobody meant to hide.
-    eq(empty, ['ambassadors'], 'unexpected empty groups: ' + empty.join(', '));
-  });
+  // Departments with nobody in them are expected now: the list is every part
+  // of the business, and some have no tools and no assigned staff yet. What
+  // would be wrong is a department nobody is in that nonetheless owns a tile,
+  // which the next check covers.
   it('gives every tile somebody who can see it, except the ones we know about', () => {
     const all = roster().map((p) => p.groups);
     for (const t of TILES) {
@@ -308,6 +303,33 @@ describe('cleanPerson', () => {
   });
   it('refuses a group that does not exist', () => {
     ok(cleanPerson({ email: 'a@b.test', groups: ['made-up'] }, grps).errors);
+  });
+});
+
+describe('the group merge', () => {
+  it('moves every old permission name onto a department that exists', () => {
+    const known = new Set(GROUPS.map((g) => g.key));
+    for (const [from, to] of Object.entries(GROUP_MOVES)) {
+      ok(known.has(to), from + ' moves to ' + to + ', which is not a department');
+    }
+  });
+  it('does not move a name that is still live', () => {
+    const known = new Set(GROUPS.map((g) => g.key));
+    for (const from of Object.keys(GROUP_MOVES)) {
+      ok(!known.has(from), from + ' is both a live department and being moved away');
+    }
+  });
+  it('leaves nothing in the seed still using an old name', () => {
+    for (const t of TILES) {
+      for (const g of t.groups || []) ok(!GROUP_MOVES[g], t.key + ' still uses ' + g);
+    }
+    for (const { email, groups } of roster()) {
+      for (const g of groups) ok(!GROUP_MOVES[g], email + ' still uses ' + g);
+    }
+  });
+  // Departments and sections are now the same list, which is the point.
+  it('draws who-sees-it from the same list as where-it-sits', () => {
+    eq(GROUPS.map((g) => g.key), CATEGORIES.map((c) => c.key));
   });
 });
 

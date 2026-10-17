@@ -12,7 +12,7 @@
 
 import schema from './schema.sql';
 import { sqlStatements } from './sql.js';
-import { TILES, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES } from './tiles.js';
+import { TILES, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES } from './tiles.js';
 import { cleanKey, cleanUrl, cleanTile, cleanPerson } from './clean.js';
 import { PEOPLE } from './people.js';
 
@@ -22,6 +22,7 @@ export { cleanKey, cleanUrl, cleanTile, cleanPerson };
 
 const SEED_KEY = 'seeded-from-repo-2026-10';
 const CATS_KEY = 'categories-by-department-2026-10';
+const MERGE_KEY = 'groups-merged-into-departments-2026-10';
 
 let ready = false;
 
@@ -30,7 +31,49 @@ export async function ensureSchema(db) {
   for (const stmt of sqlStatements(schema)) await db.prepare(stmt).run();
   await seed(db);
   await syncCategories(db);
+  await mergeGroups(db);
   ready = true;
+}
+
+// One-time: who-can-see-it used to be its own list of names -- financials,
+// retail, ambassadors -- separate from the departments a tile sat under. Two
+// lists with overlapping names is one too many, and the dash is not a lock
+// anyway: each tool decides who actually gets in. So there is one list now,
+// and this moves everybody and every tile onto it.
+//
+// Everyone also picks up 'general', which is the section every member of
+// staff belongs to. It changes nothing they can see -- the tools open to
+// everyone already are -- but it makes the Setup page read honestly.
+async function mergeGroups(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(MERGE_KEY).first();
+  if (done) return;
+
+  const live = new Set(GROUPS.map((g) => g.key));
+  const remap = (csv, addGeneral) => {
+    const out = [];
+    for (const raw of String(csv || '').split(',').map((x) => x.trim().toLowerCase())) {
+      if (!raw) continue;
+      const moved = GROUP_MOVES[raw] || raw;
+      // EVERYONE is not a department and must survive the move untouched.
+      if (moved !== EVERYONE && !live.has(moved)) continue;
+      if (!out.includes(moved)) out.push(moved);
+    }
+    if (addGeneral && !out.includes('general')) out.unshift('general');
+    return out.join(',');
+  };
+
+  const batch = [];
+  const people = await db.prepare('SELECT email, groups FROM people').all();
+  const pStmt = db.prepare('UPDATE people SET groups = ? WHERE email = ?');
+  for (const r of people.results || []) batch.push(pStmt.bind(remap(r.groups, true), r.email));
+
+  const tiles = await db.prepare('SELECT tile_key, groups FROM tiles').all();
+  const tStmt = db.prepare('UPDATE tiles SET groups = ? WHERE tile_key = ?');
+  for (const r of tiles.results || []) batch.push(tStmt.bind(remap(r.groups, false), r.tile_key));
+
+  if (batch.length) await db.batch(batch);
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(MERGE_KEY, String(batch.length), new Date().toISOString()).run();
 }
 
 // One-time: the first categories were shapes of work -- Company, Finance,

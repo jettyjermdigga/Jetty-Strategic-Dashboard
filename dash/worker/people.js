@@ -32,43 +32,39 @@ import { EVERYONE, GROUPS } from './tiles.js';
 // they are staff, and they get the tools that are open to everyone. They just
 // do not get the ones that are not.
 export const PEOPLE = {
-  // Financials -- the Strategic Dashboard. The four on its policy today.
-  // Amy is here without being a director, which is the case that decided how
-  // these groups are named.
-  // Listed in each group he needs rather than given an "admin" group that
-  // skips the model. A bypass is a second mechanism, and the second mechanism
-  // is always the one nobody remembers to check.
-  'jeremy@jettylife.com':        ['financials', 'marketing', 'wholesale',
-                                  'retail', 'jrf'],
-  'cory@jettylife.com':          ['financials'],
-  'john@jettylife.com':          ['financials'],
-  'amy@jettylife.com':           ['financials'],
+  // Departments, not job titles: being in finance means the finance tools
+  // show up on your dash. Amy is in finance without being a director, which
+  // is the whole reason this is a list of sections rather than of ranks.
+  'jeremy@jettylife.com':        ['general', 'finance', 'marketing', 'wholesale',
+                                  'long-branch', 'jrf', 'box-truck', 'jetty-ink',
+                                  'logistics', 'prodev', 'womens'],
+  'cory@jettylife.com':          ['general', 'finance', 'wholesale'],
+  'john@jettylife.com':          ['general', 'finance'],
+  'amy@jettylife.com':           ['general', 'finance'],
 
   // Marketing. joncoen manages social; the rest are calendar editors whose
-  // department I am guessing at -- correct these.
-  'joncoen@jettylife.com':       ['marketing'],
-  'arlynn@jettylife.com':        ['marketing'],
-  'colleen@jettylife.com':       ['marketing'],
+  // department I am guessing at -- correct these in Setup.
+  'joncoen@jettylife.com':       ['general', 'marketing'],
+  'arlynn@jettylife.com':        ['general', 'marketing'],
+  'colleen@jettylife.com':       ['general', 'marketing'],
 
-  // Wholesale.
-  'wholesale@jettylife.com':     ['wholesale'],
-  'jjmckenna@jettylife.com':     ['wholesale'],
+  'wholesale@jettylife.com':     ['general', 'wholesale'],
+  'jjmckenna@jettylife.com':     ['general', 'wholesale'],
 
-  // Retail. A guess from the calendar editor list -- likely wrong.
-  'd.bachowski@jettylife.com':   ['retail'],
-  'joem@jettylife.com':          ['retail'],
+  // Was "retail", which is not one of the departments. Long Branch is the
+  // nearest and is a guess -- Flagship is not on the list at all.
+  'd.bachowski@jettylife.com':   ['general', 'long-branch'],
+  'joem@jettylife.com':          ['general', 'long-branch'],
 
-  // Jetty Rock Foundation.
-  'kyle@jettyrockfoundation.org':    ['jrf'],
-  'jessica@jettyrockfoundation.org': ['jrf'],
+  'kyle@jettyrockfoundation.org':    ['general', 'jrf'],
+  'jessica@jettyrockfoundation.org': ['general', 'jrf'],
 
-  // Signed in to Access but not yet placed. Listed with no groups rather than
-  // left out, so the file says "known, and not assigned" instead of leaving
-  // somebody to wonder whether they were forgotten.
-  'bill@jettylife.com':          [],
-  'brooke.carty@jettylife.com':  [],
-  'collin@jettylife.com':        [],
-  'dhenry@jettylife.com':        [],
+  // Signed in to Access but not placed in a department yet. They still get
+  // everything open to everyone.
+  'bill@jettylife.com':          ['general'],
+  'brooke.carty@jettylife.com':  ['general'],
+  'collin@jettylife.com':        ['general'],
+  'dhenry@jettylife.com':        ['general'],
 };
 
 const KNOWN = new Set(GROUPS.map((g) => g.key));
