@@ -47,7 +47,7 @@ jobs:
           if [ -z "$aud" ] || [ -z "$team" ]; then
             echo "::error::ACCESS_AUD and ACCESS_TEAM_DOMAIN must both be set in dash/wrangler.toml."
             echo "The dash is a staff portal; it does not deploy without an Access application."
-            echo "Create the Access application for thejettydash.com, then put its"
+            echo "Create the Access application for jettydash.com, then put its"
             echo "Application Audience tag in ACCESS_AUD."
             exit 1
           fi
@@ -61,7 +61,7 @@ jobs:
         run: |
           if ! grep -q '^workers_dev *= *false' wrangler.toml; then
             echo "::error::workers_dev must stay false. A workers.dev address is a"
-            echo "different hostname from thejettydash.com, so the Access application"
+            echo "different hostname from jettydash.com, so the Access application"
             echo "does not cover it and the portal would be open there."
             exit 1
           fi
