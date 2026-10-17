@@ -14,10 +14,11 @@ CREATE TABLE IF NOT EXISTS tiles (
   url         TEXT NOT NULL DEFAULT '',
   icon        TEXT NOT NULL DEFAULT 'link',
   category    TEXT NOT NULL DEFAULT 'company',
-  -- Comma-separated group keys, or the single word 'everyone'. A list rather
-  -- than a join table: it is read whole on every page load and written whole
-  -- by one form, and a join table would buy nothing but a second place to go
-  -- out of step.
+  -- 1 when the tile is open to every member of staff, so the Company
+  -- Calendar does not have to be ticked onto twenty people one at a time.
+  everyone    INTEGER NOT NULL DEFAULT 0,
+  -- Historical: who-can-see-it used to live here as a list of group keys.
+  -- It is set per person now, on the person. Kept so old rows still read.
   groups      TEXT NOT NULL DEFAULT '',
   -- 'live' is drawn; anything else is kept and never sent. See tiles.js.
   status      TEXT NOT NULL DEFAULT 'soon',
@@ -48,6 +49,12 @@ CREATE TABLE IF NOT EXISTS groups (
 CREATE TABLE IF NOT EXISTS people (
   email      TEXT PRIMARY KEY,
   name       TEXT NOT NULL DEFAULT '',
+  -- The tiles this person has been given, comma-separated. A list rather
+  -- than a join table: it is read whole on every page load and written whole
+  -- by one row of one form.
+  tiles      TEXT NOT NULL DEFAULT '',
+  -- Historical: the departments they were in, before tiles were assigned
+  -- directly. Kept so old rows still read.
   groups     TEXT NOT NULL DEFAULT '',
   updated_at TEXT,
   updated_by TEXT

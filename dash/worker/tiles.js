@@ -19,6 +19,17 @@
 //   `groups` must name the same people that tool's own policy names, and
 //   keeping those two in step is the job.
 
+// The sections of the dash: where a tile sits, and nothing more.
+//
+// Who sees a tile is now set on the tile, person by person. A section appears
+// on somebody's dash because they have a tile in it, so an empty one is
+// simply absent rather than being something to hide.
+//
+// (Historical: this list was once two -- departments for where a tile sat,
+// separately-named groups for who could see it -- and then one list used for
+// both. Assigning tiles directly retired the second use. GROUPS is kept as a
+// view of it only until the stored rows finish moving across.)
+//
 // One list, used twice.
 //
 // There were two: departments for where a tile sits, and separately-named
@@ -118,7 +129,7 @@ export const TILES = [
     url: 'https://jetty-calendar.jeremy-85e.workers.dev',
     icon: 'calendar',
     category: 'general',
-    groups: [EVERYONE],
+    everyone: true,
     status: 'live',
   },
   {
@@ -128,7 +139,7 @@ export const TILES = [
     url: 'https://jetty-strategic.jeremy-85e.workers.dev',
     icon: 'chart',
     category: 'finance',
-    groups: ['finance'],
+    everyone: false,
     status: 'live',
   },
 
@@ -143,7 +154,7 @@ export const TILES = [
     url: '',
     icon: 'box',
     category: 'wholesale',
-    groups: ['wholesale'],
+    everyone: false,
     status: 'soon',
   },
   {
@@ -153,7 +164,7 @@ export const TILES = [
     url: '',
     icon: 'people',
     category: 'marketing',
-    groups: ['marketing'],
+    everyone: false,
     status: 'soon',
   },
 ];
@@ -175,20 +186,25 @@ function norm(s) {
 // fixture. Once every unbuilt tile is hidden there is no live tile owned by
 // two groups, and the rule that a tile shows to ANY of its groups would go
 // untested until the day somebody relied on it.
-export function visibleTiles(groups, list) {
-  const known = Array.isArray(groups);
-  const mine = known ? groups.map(norm) : [];
+// Which tiles this person sees.
+//
+// `mine` is the list of tile keys they have been given, or null when we could
+// not establish who they are at all. Not knowing shows only what is open to
+// everyone -- a portal that falls open when something upstream fails is a
+// worse failure than one that goes quiet.
+//
+// A category is not consulted. It decides where a tile sits on the page and
+// nothing else; a section appears because somebody has a tile in it, and
+// stays hidden otherwise.
+export function visibleTiles(mine, list) {
+  const known = Array.isArray(mine);
+  const have = new Set(known ? mine.map(norm) : []);
 
   return (list || TILES).filter((t) => {
-    // Rule one: if it cannot be opened, it is not drawn. For anybody.
+    // If it cannot be opened, it is not drawn. For anybody.
     if (!t.url) return false;
-    const cat = norm(t.category);
-    // Rule two: the section a tile sits in is the section you have to be in
-    // to see it. There is no separate list of who-can-see, because the
-    // department already answers that -- see the note above GROUPS.
-    if (cat === EVERYONE_CAT) return true;
-    if (!known) return false;
-    return mine.includes(cat);
+    if (t.everyone) return true;
+    return known && have.has(norm(t.key));
   }).map((t) => ({
     key: t.key,
     name: t.name,

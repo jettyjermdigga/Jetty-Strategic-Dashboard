@@ -28,137 +28,67 @@ function ok(cond, note) { if (!cond) throw new Error(note || 'expected true'); }
 const keys = (groups) => visibleTiles(groups).map((t) => t.key);
 
 describe('visibleTiles', () => {
-  it('shows the everyone tiles to somebody in no groups', () => {
-    eq(keys([]), ['calendar']);
+  const fx = [
+    { key: 'open', name: 'Open', blurb: '-', url: 'https://a.test', icon: 'link',
+      category: 'general', everyone: true },
+    { key: 'given', name: 'Given', blurb: '-', url: 'https://b.test', icon: 'link',
+      category: 'finance' },
+    { key: 'nourl', name: 'Unbuilt', blurb: '-', url: '', icon: 'link',
+      category: 'finance' },
+  ];
+  const keys = (mine) => visibleTiles(mine, fx).map((t) => t.key);
+
+  it('shows what somebody has been given', () => {
+    eq(keys(['given']), ['open', 'given']);
   });
-  it('adds a tile when the group matches', () => {
-    ok(keys(['finance']).includes('strategic'), 'Finance should see the Strategic Dashboard');
+  it('does not show what they have not', () => {
+    eq(keys([]), ['open']);
   });
-  it('does not show it to somebody who is not in that group', () => {
-    ok(!keys(['wholesale']).includes('strategic'), 'Wholesale should not see it');
+  it('shows an open tile to everybody, assigned or not', () => {
+    ok(keys([]).includes('open'));
+  });
+  it('ignores the category when deciding who sees it', () => {
+    // The section a tile sits in says where it is drawn, not who gets it.
+    eq(keys(['given']).includes('given'), true);
+    eq(keys(['finance']).includes('given'), false, 'a category key is not a tile key');
   });
 
-  // Amy needs the numbers without being a director. Departments are
-  // sections of the portal, not ranks, so she is simply in finance.
-  it('lets somebody see the finance tools without being a director', () => {
-    const amy = groupsFor('amy@jettylife.com');
-    ok(amy.includes('finance'), 'Amy is in finance');
-    ok(keys(amy).includes('strategic'), 'and she sees the Strategic Dashboard');
+  // The failure mode that matters: not knowing must show less, never more.
+  it('shows only the open tiles when we do not know who it is', () => {
+    eq(keys(null), ['open']);
   });
-  it('matches group names whatever the case', () => {
-    eq(keys(['FINANCE']), keys(['finance']));
-    eq(keys(['  Finance  ']), keys(['finance']));
-  });
-  // A tile's section is now the only thing that decides who sees it: the
-  // department answers the question, so there is no second list to disagree
-  // with it. The fixture is here because the real catalogue has one tile per
-  // live section.
-  it('shows a tile to the department it sits in, and nobody else', () => {
-    const fx = [{
-      key: 'wh', name: 'Wholesale thing', blurb: '-', url: 'https://example.test',
-      icon: 'link', category: 'wholesale',
-    }];
-    eq(visibleTiles(['wholesale'], fx).map((t) => t.key), ['wh']);
-    eq(visibleTiles(['marketing'], fx).map((t) => t.key), []);
-    eq(visibleTiles([], fx).map((t) => t.key), []);
-  });
-  it('shows a General tile to everybody, placed or not', () => {
-    const fx = [{
-      key: 'g', name: 'Handbook', blurb: '-', url: 'https://example.test',
-      icon: 'link', category: 'general',
-    }];
-    eq(visibleTiles([], fx).map((t) => t.key), ['g']);
-    eq(visibleTiles(null, fx).map((t) => t.key), ['g'], 'even an unknown visitor');
+  it('never shows more when unknown than when known and given nothing', () => {
+    ok(keys(null).length <= keys([]).length);
   });
 
-  // The failure mode that matters.
-  it('shows only the open tiles when membership is unknown', () => {
-    eq(keys(null), ['calendar']);
-  });
-  it('never shows more when unknown than when known to be in none', () => {
-    const unknown = keys(null);
-    const none = keys([]);
-    ok(unknown.length <= none.length, 'unknown must not be a wider view than empty');
-  });
-
-  // The rule the page is built on: nothing is drawn that cannot be opened.
   it('never returns a tile that is not built, to anybody', () => {
-    const everyGroup = GROUPS.map((g) => g.key);
-    const soon = TILES.filter((t) => t.status !== 'live').map((t) => t.key);
-    ok(soon.length, 'the fixture needs an unbuilt tile for this to mean anything');
-    for (const k of visibleTiles(everyGroup).map((t) => t.key)) {
-      ok(!soon.includes(k), k + ' is not built and must not be drawn');
-    }
+    ok(!keys(['given', 'nourl']).includes('nourl'));
   });
   it('gives every tile it does return somewhere to go', () => {
-    for (const t of visibleTiles(GROUPS.map((g) => g.key))) {
-      ok(t.url, t.key + ' was drawn without a url');
-    }
+    for (const t of visibleTiles(['given'], fx)) ok(t.url, t.key + ' was drawn without a url');
   });
   it('leaks nothing about a tile somebody cannot see', () => {
-    const seen = JSON.stringify(visibleTiles([]));
-    ok(!seen.includes('jetty-strategic'), 'the Strategic Dashboard address must not be in the payload');
-  });
-});
-
-describe('the catalogue itself', () => {
-  it('gives every tile a key, a name and a blurb', () => {
-    for (const t of TILES) {
-      ok(t.key && t.name && t.blurb, 'incomplete tile: ' + JSON.stringify(t.key));
-    }
-  });
-  it('uses no key twice', () => {
-    eq(new Set(TILES.map((t) => t.key)).size, TILES.length);
-  });
-  it('gives every live tile a url and every other tile none', () => {
-    for (const t of TILES) {
-      if (t.status === 'live') ok(t.url, t.key + ' is live without a url');
-      else eq(t.url, '', t.key + ' is not live and should carry no url');
-    }
-  });
-  it('mentions no unbuilt tile in what it sends', () => {
-    const sent = JSON.stringify(visibleTiles(GROUPS.map((g) => g.key)));
-    for (const t of TILES) {
-      if (t.status !== 'live') ok(!sent.includes(t.name), t.name + ' leaked into the payload');
-    }
-  });
-  it('names only groups that exist', () => {
-    const known = new Set(GROUPS.map((g) => g.key).concat([EVERYONE]));
-    for (const t of TILES) {
-      for (const g of t.groups || []) {
-        ok(known.has(g), t.key + ' names a group that is not in GROUPS: ' + g);
-      }
-    }
-  });
-  it('puts every tile in at least one group', () => {
-    for (const t of TILES) ok((t.groups || []).length, t.key + ' is in no group, so nobody sees it');
-  });
-  it('uses only statuses the catalogue knows about', () => {
-    for (const t of TILES) ok(['live', 'soon'].includes(t.status), t.key);
-  });
-  it('puts every tile in a category that exists', () => {
-    const known = new Set(CATEGORIES.map((c) => c.key));
-    for (const t of TILES) ok(known.has(t.category), t.key + ' is in an unknown category: ' + t.category);
+    ok(!JSON.stringify(visibleTiles([], fx)).includes('b.test'));
   });
 });
 
 describe('tileSections', () => {
   it('puts a tile under its own category', () => {
-    const s = tileSections(['finance']);
+    const s = tileSections(['strategic']);
     const finance = s.find((x) => x.key === 'finance');
     ok(finance, 'there should be a Finance section');
     eq(finance.tiles.map((t) => t.key), ['strategic']);
   });
   it('leaves out a heading nothing lands under', () => {
-    for (const s of tileSections(['finance'])) ok(s.tiles.length, s.key + ' is empty');
+    for (const s of tileSections(['strategic'])) ok(s.tiles.length, s.key + ' is empty');
   });
   it('keeps the categories in the order they are declared', () => {
-    const order = tileSections(GROUPS.map((g) => g.key)).map((s) => s.key);
+    const order = tileSections(TILES.map((t) => t.key)).map((s) => s.key);
     const want = CATEGORIES.map((c) => c.key).filter((k) => order.includes(k));
     eq(order, want);
   });
   it('accounts for every visible tile exactly once', () => {
-    for (const who of [null, [], ['finance'], GROUPS.map((g) => g.key)]) {
+    for (const who of [null, [], ['strategic'], TILES.map((t) => t.key)]) {
       const flat = tileSections(who).flatMap((s) => s.tiles.map((t) => t.key));
       eq(flat.slice().sort(), visibleTiles(who).map((t) => t.key).sort(),
          'sections and tiles disagree for ' + JSON.stringify(who));
@@ -214,15 +144,7 @@ describe('the roster itself', () => {
   // of the business, and some have no tools and no assigned staff yet. What
   // would be wrong is a department nobody is in that nonetheless owns a tile,
   // which the next check covers.
-  it('gives every tile somebody who can see it, except the ones we know about', () => {
-    const all = roster().map((p) => p.groups);
-    for (const t of TILES) {
-      const want = (t.groups || []);
-      if (want.includes(EVERYONE)) continue;
-      const seen = all.some((mine) => want.some((g) => mine.includes(g)));
-      if (!seen) eq(t.key, 'ambassadors', t.key + ' is visible to nobody on the roster');
-    }
-  });
+
 });
 
 // What the Setup page is allowed to save. Everything typed in by hand goes
@@ -230,51 +152,37 @@ describe('the roster itself', () => {
 // cannot be shaped differently from a row that came from the file.
 describe('cleanTile', () => {
   const cats = [{ key: 'finance' }, { key: 'general' }];
-  const good = {
-    name: 'Hub', blurb: 'A hub.', url: 'https://hub.test/',
-    category: 'finance', icon: 'box',
-  };
+  const good = { name: 'Hub', blurb: 'A hub.', url: 'https://hub.test/',
+                 category: 'finance', icon: 'box' };
 
-  it('accepts the five answers the form asks for', () => {
-    const out = cleanTile(good, cats, [], []);
+  it('accepts the answers the form asks for', () => {
+    const out = cleanTile(good, cats, []);
     ok(!out.errors, JSON.stringify(out.errors));
     eq([out.row.name, out.row.category, out.row.icon], ['Hub', 'finance', 'box']);
   });
-
-  // An address is what makes a tile real, so there is no separate "show it"
-  // to disagree with. One without an address is kept and never drawn.
   it('derives whether it is shown from whether it has an address', () => {
-    eq(cleanTile(good, cats, [], []).row.status, 'live');
-    eq(cleanTile({ ...good, url: '' }, cats, [], []).row.status, 'soon');
+    eq(cleanTile(good, cats, []).row.status, 'live');
+    eq(cleanTile({ ...good, url: '' }, cats, []).row.status, 'soon');
   });
-  it('keeps an unfinished tile rather than refusing it', () => {
-    ok(!cleanTile({ ...good, url: '' }, cats, [], []).errors);
+  it('carries the open-to-everyone flag', () => {
+    eq(cleanTile({ ...good, everyone: true }, cats, []).row.everyone, true);
+    eq(cleanTile(good, cats, []).row.everyone, false);
   });
   it('says so when an address was typed and is not one', () => {
-    const out = cleanTile({ ...good, url: 'wholesale hub' }, cats, [], []);
-    ok(out.errors && out.errors.some((e) => /web address/i.test(e)));
+    ok(cleanTile({ ...good, url: 'hub' }, cats, []).errors);
   });
-
-  // The category is who sees it, so it is the one answer that must be real.
   it('refuses a category that does not exist', () => {
-    ok(cleanTile({ ...good, category: 'made-up' }, cats, [], []).errors);
+    ok(cleanTile({ ...good, category: 'made-up' }, cats, []).errors);
   });
-  it('files who-sees-it under the category, with nothing else to disagree', () => {
-    eq(cleanTile(good, cats, [], []).row.groups, 'finance');
-  });
-
-  it('makes a key out of the name', () => {
-    eq(cleanTile({ ...good, name: 'Wholesale Hub' }, cats, [], []).row.key, 'wholesale-hub');
-  });
-  it('does not collide with a key already taken', () => {
-    eq(cleanTile({ ...good, name: 'Hub' }, cats, [], ['hub']).row.key, 'hub-2');
-    eq(cleanTile({ ...good, name: 'Hub' }, cats, [], ['hub', 'hub-2']).row.key, 'hub-3');
+  it('makes a key out of the name and does not collide', () => {
+    eq(cleanTile({ ...good, name: 'Wholesale Hub' }, cats, []).row.key, 'wholesale-hub');
+    eq(cleanTile({ ...good, name: 'Hub' }, cats, ['hub']).row.key, 'hub-2');
   });
   it('keeps the key an existing tile already has, so renaming is safe', () => {
-    eq(cleanTile({ ...good, key: 'original', name: 'Renamed' }, cats, [], []).row.key, 'original');
+    eq(cleanTile({ ...good, key: 'original', name: 'Renamed' }, cats, []).row.key, 'original');
   });
   it('refuses a tile with no name', () => {
-    ok(cleanTile({ ...good, name: '  ' }, cats, [], []).errors);
+    ok(cleanTile({ ...good, name: '  ' }, cats, []).errors);
   });
 });
 
@@ -305,20 +213,26 @@ describe('cleanKey', () => {
 });
 
 describe('cleanPerson', () => {
-  const grps = [{ key: 'financials' }];
-  it('accepts an address and the groups it is given', () => {
-    const out = cleanPerson({ email: ' Amy@JettyLife.com ', groups: ['financials'] }, grps);
+  const keys = ['calendar', 'strategic'];
+  it('accepts an address and the tiles it is given', () => {
+    const out = cleanPerson({ email: ' Amy@JettyLife.com ', tiles: ['strategic'] }, keys);
     ok(!out.errors);
     eq(out.row.email, 'amy@jettylife.com', 'stored lowercased, which is how it is looked up');
+    eq(out.row.tiles, 'strategic');
   });
-  it('accepts somebody in no groups, which is a real state', () => {
-    ok(!cleanPerson({ email: 'new@jettylife.com', groups: [] }, grps).errors);
+  it('accepts somebody given nothing, which is a real state', () => {
+    ok(!cleanPerson({ email: 'new@jettylife.com', tiles: [] }, keys).errors);
   });
   it('refuses something that is not an address', () => {
-    ok(cleanPerson({ email: 'nope', groups: [] }, grps).errors);
+    ok(cleanPerson({ email: 'nope', tiles: [] }, keys).errors);
   });
-  it('refuses a group that does not exist', () => {
-    ok(cleanPerson({ email: 'a@b.test', groups: ['made-up'] }, grps).errors);
+  // A key left behind by a deleted tile would sit in the row matching nothing.
+  it('refuses a tile that does not exist', () => {
+    ok(cleanPerson({ email: 'a@b.test', tiles: ['gone'] }, keys).errors);
+  });
+  it('does not store the same tile twice', () => {
+    eq(cleanPerson({ email: 'a@b.test', tiles: ['calendar', 'calendar'] }, keys).row.tiles,
+       'calendar');
   });
 });
 

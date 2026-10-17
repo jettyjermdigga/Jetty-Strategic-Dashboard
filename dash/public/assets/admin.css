@@ -119,8 +119,8 @@ legend{
 }
 .row{
   display:grid;align-items:center;gap:10px;
-  grid-template-columns:minmax(120px,1.1fr) minmax(160px,2fr) minmax(150px,1.6fr)
-                        minmax(130px,1fr) 118px 96px;
+  grid-template-columns:minmax(110px,1.1fr) minmax(150px,1.9fr) minmax(140px,1.5fr)
+                        minmax(120px,1fr) 108px 52px 96px;
   padding:9px 12px;border-top:1px solid var(--edge);
 }
 .rows .row:first-child{border-top:0}
@@ -184,3 +184,13 @@ legend{
 @media (max-width:900px){
   .rows.people .row{grid-template-columns:minmax(0,1fr)}
 }
+
+/* The All box on a tile row: open to every member of staff, so a company-wide
+   tool is not ticked onto twenty people one at a time. */
+.cb.tiny{
+  flex-direction:row !important;align-items:center;gap:5px !important;
+  font-family:var(--mono) !important;font-size:10.5px !important;
+  text-transform:uppercase;letter-spacing:.06em;cursor:pointer;opacity:.9;
+}
+.cb.tiny input{width:auto}
+@media (max-width:900px){ .cb.tiny{justify-content:flex-start} }

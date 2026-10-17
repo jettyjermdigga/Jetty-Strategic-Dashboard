@@ -23,6 +23,7 @@ export { cleanKey, cleanUrl, cleanTile, cleanPerson };
 const SEED_KEY = 'seeded-from-repo-2026-10';
 const CATS_KEY = 'categories-by-department-2026-10';
 const MERGE_KEY = 'groups-merged-into-departments-2026-10';
+const ASSIGN_KEY = 'tiles-assigned-to-people-2026-10';
 
 let ready = false;
 
@@ -32,6 +33,8 @@ let ready = false;
 // run after the first.
 const ADDED_COLUMNS = [
   ['categories', 'icon TEXT NOT NULL DEFAULT \'link\''],
+  ['tiles', 'everyone INTEGER NOT NULL DEFAULT 0'],
+  ['people', 'tiles TEXT NOT NULL DEFAULT \'\''],
 ];
 
 export async function ensureSchema(db) {
@@ -47,7 +50,54 @@ export async function ensureSchema(db) {
   await seed(db);
   await syncCategories(db);
   await mergeGroups(db);
+  await assignTiles(db);
   ready = true;
+}
+
+// One-time: who sees what used to be a department somebody was in. It is now
+// the tiles they have been given, which is one hop instead of two -- and it
+// means a section appears on a dash because there is something in it, rather
+// than because somebody was filed under its name.
+//
+// Nobody loses anything in the move: each person is given every tile that was
+// in a department they were in, so their dash looks the same the morning
+// after as it did the night before.
+//
+// Tiles in the General section become open-to-everyone, which is what that
+// section already meant and what keeps the Company Calendar from having to be
+// ticked onto twenty people one at a time.
+async function assignTiles(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(ASSIGN_KEY).first();
+  if (done) return;
+
+  const tiles = await db.prepare('SELECT tile_key, category FROM tiles').all();
+  const rows = tiles.results || [];
+  const byCat = new Map();
+  for (const t of rows) {
+    const c = String(t.category || '').toLowerCase();
+    if (!byCat.has(c)) byCat.set(c, []);
+    byCat.get(c).push(t.tile_key);
+  }
+
+  const batch = [];
+  const everyone = db.prepare('UPDATE tiles SET everyone = 1 WHERE category = ?');
+  batch.push(everyone.bind('general'));
+
+  const people = await db.prepare('SELECT email, groups, tiles FROM people').all();
+  const pStmt = db.prepare('UPDATE people SET tiles = ? WHERE email = ?');
+  for (const r of people.results || []) {
+    // Anything already assigned wins; this only fills in from the old shape.
+    if (String(r.tiles || '').trim()) continue;
+    const mine = [];
+    for (const g of String(r.groups || '').split(',').map((x) => x.trim().toLowerCase())) {
+      for (const key of byCat.get(g) || []) if (!mine.includes(key)) mine.push(key);
+    }
+    batch.push(pStmt.bind(mine.join(','), r.email));
+  }
+
+  if (batch.length) await db.batch(batch);
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(ASSIGN_KEY, String(batch.length), new Date().toISOString()).run();
 }
 
 // One-time: who-can-see-it used to be its own list of names -- financials,
@@ -149,17 +199,20 @@ async function seed(db) {
   GROUPS.forEach((g, i) => batch.push(grp.bind(g.key, g.label, g.note || '', i)));
 
   const tile = db.prepare(
-    'INSERT OR IGNORE INTO tiles (tile_key, name, blurb, url, icon, category, groups, '
+    'INSERT OR IGNORE INTO tiles (tile_key, name, blurb, url, icon, category, everyone, '
     + 'status, sort, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   TILES.forEach((t, i) => batch.push(tile.bind(
     t.key, t.name, t.blurb, t.url || '', t.icon || 'link', t.category,
-    (t.groups || []).join(','), t.status, i, now, 'seed')));
+    t.everyone ? 1 : 0, t.status, i, now, 'seed')));
 
+  // The seed roster is still written as departments, and assignTiles -- which
+  // runs straight after -- turns those into the tiles each person holds. One
+  // path for a fresh database and an existing one, rather than two that have
+  // to agree.
   const per = db.prepare(
     'INSERT OR IGNORE INTO people (email, name, groups, updated_at, updated_by) '
     + 'VALUES (?, ?, ?, ?, ?)');
   for (const email of Object.keys(PEOPLE)) {
-    per.bind; // keep the shape obvious
     batch.push(per.bind(email.toLowerCase(), '', (PEOPLE[email] || []).join(','), now, 'seed'));
   }
 
@@ -183,7 +236,7 @@ export async function readCatalogue(db) {
   return {
     tiles: (tiles.results || []).map((r) => ({
       key: r.tile_key, name: r.name, blurb: r.blurb, url: r.url, icon: r.icon,
-      category: r.category, groups: splitList(r.groups), status: r.status, sort: r.sort,
+      category: r.category, everyone: Boolean(r.everyone), status: r.status, sort: r.sort,
     })),
     categories: (cats.results || []).map((r) => ({
       key: r.cat_key, label: r.label, icon: r.icon || 'link', sort: r.sort,
@@ -194,21 +247,22 @@ export async function readCatalogue(db) {
   };
 }
 
-// Returns the groups for a verified address, or [] for somebody nobody has
-// placed yet -- which is different from the null the caller uses for "we could
-// not establish who this is at all".
-export async function groupsFor(db, email) {
+// The tiles a verified address has been given. Somebody nobody has assigned
+// anything to comes back as [] -- known, and given nothing -- which is
+// different from the null meaning "we could not establish who this is", and
+// which still leaves them everything that is open to everyone.
+export async function tilesFor(db, email) {
   const key = String(email || '').trim().toLowerCase();
   if (!key) return null;
-  const row = await db.prepare('SELECT groups FROM people WHERE email = ?').bind(key).first();
+  const row = await db.prepare('SELECT tiles FROM people WHERE email = ?').bind(key).first();
   if (!row) return [];
-  return splitList(row.groups);
+  return splitList(row.tiles);
 }
 
 export async function readPeople(db) {
   const res = await db.prepare('SELECT * FROM people ORDER BY email').all();
   return (res.results || []).map((r) => ({
-    email: r.email, name: r.name, groups: splitList(r.groups),
+    email: r.email, name: r.name, tiles: splitList(r.tiles),
     updated_at: r.updated_at, updated_by: r.updated_by,
   }));
 }
@@ -218,27 +272,39 @@ export async function readPeople(db) {
 export async function saveTile(db, row, who) {
   const now = new Date().toISOString();
   await db.prepare(
-    'INSERT INTO tiles (tile_key, name, blurb, url, icon, category, groups, status, sort, '
+    'INSERT INTO tiles (tile_key, name, blurb, url, icon, category, everyone, status, sort, '
     + 'updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
     + 'ON CONFLICT(tile_key) DO UPDATE SET name = excluded.name, blurb = excluded.blurb, '
     + 'url = excluded.url, icon = excluded.icon, category = excluded.category, '
-    + 'groups = excluded.groups, status = excluded.status, sort = excluded.sort, '
+    + 'everyone = excluded.everyone, status = excluded.status, sort = excluded.sort, '
     + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
-    .bind(row.key, row.name, row.blurb, row.url, row.icon, row.category, row.groups,
-          row.status, row.sort, now, who).run();
+    .bind(row.key, row.name, row.blurb, row.url, row.icon, row.category,
+          row.everyone ? 1 : 0, row.status, row.sort, now, who).run();
 }
 
+// Taking a tile off everybody who had it, in the same breath. Otherwise the
+// key sits in their row forever, matching nothing.
 export async function deleteTile(db, key) {
-  await db.prepare('DELETE FROM tiles WHERE tile_key = ?').bind(cleanKey(key)).run();
+  const k = cleanKey(key);
+  if (!k) return;
+  const held = await db.prepare('SELECT email, tiles FROM people WHERE tiles LIKE ?')
+    .bind('%' + k + '%').all();
+  const batch = [db.prepare('DELETE FROM tiles WHERE tile_key = ?').bind(k)];
+  const stmt = db.prepare('UPDATE people SET tiles = ? WHERE email = ?');
+  for (const r of held.results || []) {
+    const left = splitList(r.tiles).filter((x) => x !== k);
+    if (left.length !== splitList(r.tiles).length) batch.push(stmt.bind(left.join(','), r.email));
+  }
+  await db.batch(batch);
 }
 
 export async function savePerson(db, row, who) {
   const now = new Date().toISOString();
   await db.prepare(
-    'INSERT INTO people (email, name, groups, updated_at, updated_by) VALUES (?, ?, ?, ?, ?) '
-    + 'ON CONFLICT(email) DO UPDATE SET name = excluded.name, groups = excluded.groups, '
+    'INSERT INTO people (email, name, tiles, updated_at, updated_by) VALUES (?, ?, ?, ?, ?) '
+    + 'ON CONFLICT(email) DO UPDATE SET name = excluded.name, tiles = excluded.tiles, '
     + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
-    .bind(row.email, row.name, row.groups, now, who).run();
+    .bind(row.email, row.name, row.tiles, now, who).run();
 }
 
 export async function deletePerson(db, email) {

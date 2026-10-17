@@ -66,6 +66,15 @@ jobs:
             exit 1
           fi
 
+      # The unit tests import the pure modules, which means a broken import
+      # anywhere else -- a function renamed and not re-exported, say -- gets
+      # as far as Cloudflare before anything notices. Bundling the Worker the
+      # way wrangler does catches it here instead. It caught exactly that
+      # while the tile assignment was being written.
+      - name: Check the Worker bundles
+        working-directory: dash
+        run: npx --yes esbuild worker/index.js --bundle --format=esm --loader:.sql=text --outfile=/dev/null
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'

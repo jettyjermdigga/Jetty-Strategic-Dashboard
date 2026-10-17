@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { visibleTiles, tileSections, greeting, GROUPS, TILES, CATEGORIES } from '../worker/tiles.js';
-import { groupsFor, PEOPLE } from '../worker/people.js';
+import { PEOPLE } from '../worker/people.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
 // globally here, not as a dependency of this directory.
@@ -25,11 +25,11 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 // Built the way the Worker builds it, so the screenshots are of the real
 // decision rather than a hand-written payload that agrees with nothing.
 const me = (email) => {
-  const groups = groupsFor(email);
+  const held = email.startsWith('jeremy@') ? TILES.map((t) => t.key) : [];
   return {
     email, verified: true, accessConfigured: true, reason: '',
-    groups, knownGroups: GROUPS, greeting: greeting(email), isAdmin: email.startsWith('jeremy@'),
-    tiles: visibleTiles(groups), sections: tileSections(groups),
+    tilesHeld: held, greeting: greeting(email), isAdmin: email.startsWith('jeremy@'),
+    tiles: visibleTiles(held), sections: tileSections(held),
   };
 };
 
@@ -48,18 +48,18 @@ const FULL = [
   ['jrf', 'Grants', 'Applications, awards and reporting.'],
 ].map(([category, name, blurb], i) => ({
   key: 'f' + i, name, blurb, url: 'https://example.test/' + i,
-  icon: 'link', category, groups: ['everyone'], status: 'live',
+  icon: 'link', category, everyone: category === 'general', status: 'live',
 }));
 
-const full = (email) => {
-  const groups = groupsFor(email);
-  return {
-    email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
-    groups, knownGroups: GROUPS, greeting: greeting(email),
-    tiles: visibleTiles(groups, FULL),
-    sections: tileSections(groups, FULL, CATEGORIES),
-  };
-};
+// Everything not open to everyone is given to this fixture person.
+const HELD = FULL.filter((t) => !t.everyone).map((t) => t.key);
+
+const full = (email) => ({
+  email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
+  tilesHeld: HELD, greeting: greeting(email),
+  tiles: visibleTiles(HELD, FULL),
+  sections: tileSections(HELD, FULL, CATEGORIES),
+});
 
 const CASES = [
   { file: 'dash-full-dark', scheme: 'dark', who: full('jeremy@jettylife.com') },
@@ -82,10 +82,11 @@ const CASES = [
 
 // What /api/admin/all answers, built from the same seed the store uses.
 const ADMIN = {
-  tiles: FULL.map((t) => ({ ...t, groups: [t.category] })),
+  tiles: FULL,
   categories: CATEGORIES,
-  groups: GROUPS,
-  people: Object.keys(PEOPLE).sort().map((e) => ({ email: e, name: '', groups: PEOPLE[e] })),
+  people: Object.keys(PEOPLE).sort().map((e, i) => ({
+    email: e, name: '', tiles: i % 3 === 0 ? HELD.slice(0, 2) : HELD.slice(0, 1),
+  })),
   admins: ['jeremy@jettylife.com'],
   you: 'jeremy@jettylife.com',
 };

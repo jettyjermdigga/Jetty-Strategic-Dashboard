@@ -12,7 +12,7 @@
 import { identify } from './access.js';
 import { visibleTiles, tileSections, greeting } from './tiles.js';
 import {
-  ensureSchema, readCatalogue, readPeople, groupsFor,
+  ensureSchema, readCatalogue, readPeople, tilesFor,
   cleanTile, cleanPerson, saveTile, deleteTile, savePerson, deletePerson,
   saveCategory, saveGroup, deleteGroup,
 } from './store.js';
@@ -71,8 +71,8 @@ async function me(request, env, who) {
   }
   const cat = await readCatalogue(env.DB);
   // null means "we could not establish who this is", which shows strictly
-  // less than "known, and in no groups". Only a verified address is looked up.
-  const groups = who.verified ? await groupsFor(env.DB, who.email) : null;
+  // less than "known, and given nothing". Only a verified address is looked up.
+  const mine = who.verified ? await tilesFor(env.DB, who.email) : null;
 
   if (request.method === 'HEAD') {
     return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });
@@ -86,10 +86,9 @@ async function me(request, env, who) {
     // different responses.
     reason: who.reason || '',
     isAdmin: isAdmin(env, who),
-    groups,
     greeting: greeting(who.email),
-    tiles: visibleTiles(groups, cat.tiles),
-    sections: tileSections(groups, cat.tiles, cat.categories),
+    tiles: visibleTiles(mine, cat.tiles),
+    sections: tileSections(mine, cat.tiles, cat.categories),
   });
 }
 
@@ -107,7 +106,6 @@ async function admin(request, env, url, who) {
     return json({
       tiles: cat.tiles,
       categories: cat.categories,
-      groups: cat.groups,
       people: await readPeople(env.DB),
       admins: adminList(env),
       you: who.email,
@@ -119,8 +117,7 @@ async function admin(request, env, url, who) {
   if (!body) return json({ error: 'That was not JSON.' }, 400);
 
   if (what === 'tile') {
-    const out = cleanTile(body, cat.categories, cat.groups,
-                          cat.tiles.map((t) => t.key));
+    const out = cleanTile(body, cat.categories, cat.tiles.map((t) => t.key));
     if (out.errors) return json({ errors: out.errors }, 400);
     await saveTile(env.DB, out.row, who.email);
     return json({ ok: true, tile: out.row });
@@ -130,7 +127,7 @@ async function admin(request, env, url, who) {
     return json({ ok: true });
   }
   if (what === 'person') {
-    const out = cleanPerson(body, cat.groups);
+    const out = cleanPerson(body, cat.tiles.map((t) => t.key));
     if (out.errors) return json({ errors: out.errors }, 400);
     await savePerson(env.DB, out.row, who.email);
     return json({ ok: true, person: out.row });

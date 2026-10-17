@@ -39,16 +39,6 @@
     if (!bad) setTimeout(function () { if (n.textContent === msg) n.innerHTML = ''; }, 2600);
   }
 
-  // The sections somebody is in. Drawn from the same list as the categories,
-  // because they are the same list.
-  function groupBoxes(selected) {
-    var sel = selected || [];
-    return D.groups.map(function (g) {
-      return '<label class="cb"><input type="checkbox" class="g" value="' + esc(g.key) + '"'
-        + (sel.indexOf(g.key) >= 0 ? ' checked' : '') + '> ' + esc(g.label) + '</label>';
-    }).join('');
-  }
-
   var ICONS = ['link', 'calendar', 'chart', 'box', 'people', 'truck', 'store',
                'wave', 'ink', 'megaphone', 'route', 'board', 'tag'];
 
@@ -66,7 +56,7 @@
   function tileRow(t) {
     var isNew = !t;
     var it = t || { key: '', name: '', blurb: '', url: '',
-                    category: (D.categories[0] || {}).key, icon: 'link' };
+                    category: (D.categories[0] || {}).key, icon: 'link', everyone: false };
     return '<form class="row tile-row' + (isNew ? ' new' : '') + '" data-key="' + esc(it.key) + '">'
       + '<input class="f-name" value="' + esc(it.name) + '" maxlength="80" placeholder="Name">'
       + '<input class="f-blurb" value="' + esc(it.blurb) + '" maxlength="300" placeholder="Description">'
@@ -76,6 +66,8 @@
             + (c.key === it.category ? ' selected' : '') + '>' + esc(c.label) + '</option>';
         }).join('') + '</select>'
       + iconSelect('f-icon', it.icon)
+      + '<label class="cb tiny" title="Everybody on staff gets this one">'
+        + '<input type="checkbox" class="f-everyone"' + (it.everyone ? ' checked' : '') + '> All</label>'
       + '<div class="row-acts">'
         + '<button type="submit" class="btn small primary">' + (isNew ? 'Add' : 'Save') + '</button>'
         + (isNew ? '' : '<button type="button" class="btn small danger del">&times;</button>')
@@ -87,10 +79,11 @@
     var live = D.tiles.filter(function (t) { return t.url; }).length;
     $('#pane-tiles').innerHTML =
       '<p class="pane-note">' + D.tiles.length + ' tiles, ' + live + ' of them on the dash. '
-      + 'A tile shows once it has an address, to the people in its category.</p>'
+      + 'A tile shows once it has an address, to the people it is given to \u2014 or to '
+      + 'everybody, if All is ticked.</p>'
       + '<div class="rows"><div class="row head">'
         + '<span>Name</span><span>Description</span><span>Address</span>'
-        + '<span>Category</span><span>Icon</span><span></span></div>'
+        + '<span>Category</span><span>Icon</span><span>All</span><span></span></div>'
       + D.tiles.map(tileRow).join('')
       + tileRow(null) + '</div>';
   }
@@ -99,22 +92,28 @@
 
   // ── people ──────────────────────────────────────────────────────────────
 
-  // The sections somebody is in, as a box of chips rather than eleven
-  // checkboxes. With eleven departments the checkbox grid was taller than the
-  // rest of the row put together, and what you want to read down the list is
-  // "who is in what", not "which of eleven boxes is ticked".
-  function secBox(selected) {
+  // The tiles somebody has been given, as a box of chips. Assigning a tile
+  // is the only thing that puts it on their dash -- a section appears
+  // because there is something in it, and is absent otherwise.
+  function tileBox(selected) {
     var sel = selected || [];
+    var label = function (k) {
+      var t = D.tiles.filter(function (x) { return x.key === k; })[0];
+      return t ? t.name : k;
+    };
     var chips = sel.map(function (k) {
-      var g = D.groups.filter(function (x) { return x.key === k; })[0];
-      return '<span class="chip" data-key="' + esc(k) + '">' + esc(g ? g.label : k)
+      return '<span class="chip" data-key="' + esc(k) + '">' + esc(label(k))
         + '<button type="button" class="chip-x" aria-label="Remove">\u00d7</button></span>';
     }).join('');
-    var rest = D.groups.filter(function (g) { return sel.indexOf(g.key) < 0; });
+    // A tile open to everyone is not offered: ticking it onto one person
+    // would say something the tile has already said for all of them.
+    var rest = D.tiles.filter(function (t) {
+      return !t.everyone && sel.indexOf(t.key) < 0;
+    });
     var add = rest.length
-      ? '<select class="sec-add"><option value="">+ Section</option>'
-        + rest.map(function (g) {
-            return '<option value="' + esc(g.key) + '">' + esc(g.label) + '</option>';
+      ? '<select class="sec-add"><option value="">+ Tile</option>'
+        + rest.map(function (t) {
+            return '<option value="' + esc(t.key) + '">' + esc(t.name) + '</option>';
           }).join('') + '</select>'
       : '';
     return '<div class="secbox">' + chips + add + '</div>';
@@ -122,12 +121,12 @@
 
   function personRow(p) {
     var isNew = !p;
-    var it = p || { email: '', name: '', groups: [] };
+    var it = p || { email: '', name: '', tiles: [] };
     return '<form class="row person" data-email="' + esc(it.email) + '">'
       + '<input class="f-pname" value="' + esc(it.name) + '" maxlength="80" placeholder="Name">'
       + '<input class="f-email" value="' + esc(it.email) + '" '
         + (isNew ? 'placeholder="name@jettylife.com"' : 'readonly') + '>'
-      + secBox(it.groups)
+      + tileBox(it.tiles)
       + '<div class="row-acts">'
         + '<button type="submit" class="btn small primary">' + (isNew ? 'Add' : 'Save') + '</button>'
         + (isNew ? '' : '<button type="button" class="btn small danger del">&times;</button>')
@@ -136,16 +135,16 @@
   }
 
   function paintPeople() {
-    var none = D.people.filter(function (p) {
-      return !p.groups.filter(function (g) { return g !== 'general'; }).length;
-    }).length;
+    var none = D.people.filter(function (p) { return !p.tiles.length; }).length;
+    var open = D.tiles.filter(function (t) { return t.everyone; }).length;
     $('#pane-people').innerHTML =
       '<p class="pane-note">' + D.people.length + ' people'
-      + (none ? ', ' + none + ' of them in no section beyond General \u2014 they still '
-          + 'sign in, and still see everything under General.' : '.')
-      + ' A section here is a section of the dash, not a job title.</p>'
+      + (none ? ', ' + none + ' of them given nothing yet \u2014 they still sign in, and '
+          + 'still get the ' + open + ' ' + (open === 1 ? 'tile' : 'tiles')
+          + ' open to everyone.' : '.')
+      + ' A section appears on somebody\u2019s dash because they have a tile in it.</p>'
       + '<div class="rows people"><div class="row head">'
-        + '<span>Name</span><span>Email</span><span>Sections they see</span><span></span></div>'
+        + '<span>Name</span><span>Email</span><span>Tiles they get</span><span></span></div>'
       + D.people.map(personRow).join('')
       + personRow(null) + '</div>';
   }
@@ -156,7 +155,13 @@
     var isNew = !c;
     var it = c || { key: '', label: '', icon: 'link' };
     var tiles = D.tiles.filter(function (t) { return t.category === it.key; }).length;
-    var people = D.people.filter(function (p) { return p.groups.indexOf(it.key) >= 0; }).length;
+    // How many people hold a tile in this section -- the honest measure of
+    // whether a section is doing anything.
+    var keys = D.tiles.filter(function (t) { return t.category === it.key; })
+      .map(function (t) { return t.key; });
+    var people = D.people.filter(function (p) {
+      return p.tiles.some(function (k) { return keys.indexOf(k) >= 0; });
+    }).length;
     return '<form class="row cat-row' + (isNew ? ' new' : '') + '" data-key="' + esc(it.key) + '">'
       + '<input class="f-label" value="' + esc(it.label) + '" maxlength="60" placeholder="Name">'
       + iconSelect('f-icon', it.icon)
@@ -204,13 +209,14 @@
       body = {
         key: f.dataset.key, name: $('.f-name', f).value, blurb: $('.f-blurb', f).value,
         url: $('.f-url', f).value, category: $('.f-cat', f).value, icon: $('.f-icon', f).value,
+        everyone: $('.f-everyone', f).checked,
       };
     }
     else if (f.classList.contains('person')) {
       send = 'person';
       body = {
         email: $('.f-email', f).value, name: $('.f-pname', f).value,
-        groups: $$('.secbox .chip', f).map(function (c) { return c.dataset.key; }),
+        tiles: $$('.secbox .chip', f).map(function (c) { return c.dataset.key; }),
       };
     } else if (f.classList.contains('cat-row')) {
       send = 'category';
@@ -231,11 +237,11 @@
     var key = e.target.value;
     if (!key) return;
     var box = e.target.closest('.secbox');
-    var g = D.groups.filter(function (x) { return x.key === key; })[0];
+    var g = D.tiles.filter(function (x) { return x.key === key; })[0];
     var chip = document.createElement('span');
     chip.className = 'chip';
     chip.dataset.key = key;
-    chip.innerHTML = esc(g ? g.label : key)
+    chip.innerHTML = esc(g ? g.name : key)
       + '<button type="button" class="chip-x" aria-label="Remove">\u00d7</button>';
     box.insertBefore(chip, e.target);
     e.target.querySelector('option[value="' + key + '"]').remove();
@@ -248,11 +254,11 @@
       e.preventDefault();
       var chip = x.closest('.chip');
       var sel = chip.closest('.secbox').querySelector('.sec-add');
-      var g = D.groups.filter(function (y) { return y.key === chip.dataset.key; })[0];
+      var g = D.tiles.filter(function (y) { return y.key === chip.dataset.key; })[0];
       if (sel && g) {
         var opt = document.createElement('option');
         opt.value = g.key;
-        opt.textContent = g.label;
+        opt.textContent = g.name;
         sel.appendChild(opt);
       }
       chip.remove();

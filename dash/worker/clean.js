@@ -53,7 +53,7 @@ export function cleanUrl(s) {
 //
 //   Its key -- derived from the name on the way in, and then fixed, so
 //   renaming a tile is safe.
-export function cleanTile(input, cat, grp, existingKeys) {
+export function cleanTile(input, cat, existingKeys) {
   const errors = [];
 
   const name = text(input && input.name, 80);
@@ -86,24 +86,33 @@ export function cleanTile(input, cat, grp, existingKeys) {
       icon: cleanKey(input && input.icon) || 'link',
       // Derived, not asked for: an address is what makes it real.
       status: url ? 'live' : 'soon',
-      groups: category,
+      // Open to all staff, so a company-wide tool is not ticked onto twenty
+      // people one at a time.
+      everyone: Boolean(input && input.everyone),
       sort: Number.isFinite(Number(input && input.sort)) ? Number(input.sort) : 0,
     },
   };
 }
 
-export function cleanPerson(input, grp) {
+// A person is an address, a name, and the tiles they have been given.
+//
+// Validated against the tiles that exist, so a key left over from a deleted
+// tile cannot be stored -- it would sit in their row matching nothing.
+export function cleanPerson(input, tileKeys) {
   const errors = [];
   const email = text(input && input.email, 254).toLowerCase();
   if (!EMAIL_RE.test(email)) errors.push('That does not look like an email address.');
 
-  const want = Array.isArray(input && input.groups) ? input.groups : splitList(input && input.groups);
-  const groups = want.map((g) => String(g).trim().toLowerCase()).filter(Boolean);
-  for (const g of groups) {
-    if (!grp.some((x) => x.key === g)) errors.push('No such group: ' + g);
+  const known = new Set((tileKeys || []).map((k) => String(k).toLowerCase()));
+  const want = Array.isArray(input && input.tiles) ? input.tiles : splitList(input && input.tiles);
+  const tiles = [];
+  for (const raw of want) {
+    const k = String(raw).trim().toLowerCase();
+    if (!k) continue;
+    if (!known.has(k)) { errors.push('No such tile: ' + k); continue; }
+    if (!tiles.includes(k)) tiles.push(k);
   }
 
   if (errors.length) return { errors };
-  return { row: { email, name: text(input && input.name, 80), groups: groups.join(',') } };
+  return { row: { email, name: text(input && input.name, 80), tiles: tiles.join(',') } };
 }
-
