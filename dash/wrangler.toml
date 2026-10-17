@@ -49,7 +49,7 @@ run_worker_first = true
 # to everyone and says on the page that it is not behind Access yet, rather
 # than pretending the sign-in is sound.
 ACCESS_TEAM_DOMAIN = "wild-pine-bbc7.cloudflareaccess.com"
-ACCESS_AUD = ""
+ACCESS_AUD = "c68d5b4c6d1a2ac70cff0de0ad556da6a17fd5b4b7303282b04b2d7d67ee460a"
 
 # Who may edit the tiles, categories, groups and roster.
 #
