@@ -1,0 +1,135 @@
+/* ── Theme surfaces ──────────────────────────────────────────────────────
+   Same lesson the calendar learned the hard way: anything whose colour
+   differs between light and dark is a token declared once per theme, so a
+   rule appended later cannot quietly undo a theme. color-scheme goes with
+   them, so scrollbars and native controls follow the page. */
+:root{
+  --card:#fff; --card-hover:#f1f3f4;
+  --wash:rgba(67,87,94,.07);
+  --edge:var(--surface-alt);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --card:#22262e; --card-hover:#2b3038;
+    --wash:rgba(255,255,255,.08);
+    --edge:#333843;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --card:#22262e; --card-hover:#2b3038;
+  --wash:rgba(255,255,255,.08);
+  --edge:#333843;
+  color-scheme:dark;
+}
+:root[data-theme="light"]{
+  --card:#fff; --card-hover:#f1f3f4;
+  --wash:rgba(67,87,94,.07);
+  --edge:var(--surface-alt);
+  color-scheme:light;
+}
+
+/* ── Page chrome ─────────────────────────────────────────────────────── */
+
+.site-top{
+  background:var(--primary);
+  display:flex;align-items:center;justify-content:space-between;
+  gap:24px;padding:18px 32px;
+}
+.site-top .brand{display:flex;align-items:center;gap:20px;min-width:0}
+.site-top .brand img{height:34px;width:auto;display:block}
+.site-top .divider{width:1px;align-self:stretch;background:rgba(255,255,255,.22);margin:2px 0}
+.title-main{font-family:var(--display);font-weight:800;font-size:20px;color:#fff;white-space:nowrap}
+.title-sub{
+  font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+  color:rgba(255,255,255,.78);margin-top:2px;
+}
+.site-who{
+  font-family:var(--mono);font-size:11px;letter-spacing:.04em;
+  color:rgba(255,255,255,.76);white-space:nowrap;
+}
+
+button,select,input{font-family:inherit;color:inherit}
+
+.dash-shell{max-width:1180px;margin:0 auto;padding:34px 26px 60px}
+
+.dash-head{margin:0 0 26px}
+.dash-head h1{
+  font-family:var(--display);font-weight:800;font-size:30px;letter-spacing:-.01em;
+  margin:0 0 6px;
+}
+.dash-sub{font-family:var(--body);font-size:15px;line-height:1.6;opacity:.78;margin:0;max-width:62ch}
+
+/* ── Tiles ───────────────────────────────────────────────────────────── */
+
+.tiles{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px;
+}
+
+/* A live tile is an <a>; one that is not yet built is a <div>. The element
+   itself carries whether there is somewhere to go, so a tile cannot look
+   clickable and do nothing. */
+.tile{
+  display:flex;flex-direction:column;gap:9px;
+  background:var(--card);border:1px solid var(--edge);border-radius:10px;
+  padding:19px 20px 18px;text-decoration:none;color:inherit;
+  transition:border-color .12s,background .12s,transform .12s;
+}
+a.tile:hover{
+  border-color:var(--primary-alt);background:var(--card-hover);transform:translateY(-1px);
+}
+a.tile:focus-visible{outline:2px solid var(--primary-alt);outline-offset:2px}
+
+.tile-top{display:flex;align-items:center;gap:11px}
+.tile-ico{
+  width:30px;height:30px;flex:0 0 30px;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;
+  background:color-mix(in srgb,var(--primary) 16%,transparent);
+}
+.tile-ico svg{width:17px;height:17px;display:block}
+.tile-name{font-family:var(--display);font-weight:700;font-size:16px}
+.tile-blurb{font-family:var(--body);font-size:13.5px;line-height:1.55;opacity:.78;margin:0}
+
+.tile-flag{
+  font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  align-self:flex-start;margin-top:2px;padding:3px 7px;border-radius:999px;
+  border:1px solid var(--edge);opacity:.85;
+}
+.tile.soon{opacity:.72}
+.tile.soon .tile-ico{background:var(--wash)}
+
+.tiles-empty{
+  font-family:var(--body);font-size:14.5px;line-height:1.7;opacity:.8;
+  background:var(--card);border:1px solid var(--edge);border-radius:10px;padding:20px 22px;
+}
+
+/* ── Notice ──────────────────────────────────────────────────────────── */
+
+/* Something is wrong with the sign-in or the group lookup. Said out loud,
+   because a portal that has lost its ability to read group membership looks
+   exactly like one somebody has been removed from. */
+.notice{
+  font-family:var(--body);font-size:14px;line-height:1.65;
+  background:color-mix(in srgb,var(--watch) 10%,transparent);
+  border:1px solid color-mix(in srgb,var(--watch) 34%,transparent);
+  border-left:3px solid var(--watch);
+  border-radius:8px;padding:13px 17px;margin:0 0 24px;
+}
+.notice strong{font-family:var(--display)}
+.notice code{font-family:var(--mono);font-size:12.5px}
+
+.dash-foot{
+  margin-top:34px;padding-top:18px;border-top:1px solid var(--edge);
+  font-family:var(--mono);font-size:11px;letter-spacing:.04em;opacity:.7;
+}
+.dash-foot .grp{text-transform:uppercase}
+
+@media (max-width:820px){
+  .site-top{flex-wrap:wrap;gap:10px;padding:14px 18px}
+  .site-top .brand{width:100%}
+  .site-who{width:100%}
+  .dash-shell{padding:24px 16px 48px}
+  .dash-head h1{font-size:25px}
+  .tiles{grid-template-columns:minmax(0,1fr)}
+}
