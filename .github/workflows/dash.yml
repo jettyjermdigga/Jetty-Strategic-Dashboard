@@ -1,0 +1,76 @@
+name: Deploy Jetty Dash
+
+# Separate from calendar.yml and update.yml for the same reason those two are
+# separate from each other: the dash deploys when the dash changes, and work on
+# any one of the three can never disturb the other two.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dash/**'
+      - '.github/workflows/dash.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dash-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run the dash's unit tests
+        working-directory: dash
+        run: node tests/unit.mjs
+
+      # The dash is a staff portal. Deploying it with no Access application in
+      # front would publish every tile and every link to anyone who found the
+      # address, and it would do it quietly -- the page would look fine.
+      #
+      # So the deploy refuses rather than warns. An empty ACCESS_AUD is the
+      # state this repo ships in, which means the first deploy cannot happen by
+      # accident: somebody has to put the real tag in wrangler.toml first.
+      - name: Refuse to deploy without Access in front
+        working-directory: dash
+        run: |
+          aud=$(sed -n 's/^ACCESS_AUD *= *"\(.*\)"/\1/p' wrangler.toml)
+          team=$(sed -n 's/^ACCESS_TEAM_DOMAIN *= *"\(.*\)"/\1/p' wrangler.toml)
+          if [ -z "$aud" ] || [ -z "$team" ]; then
+            echo "::error::ACCESS_AUD and ACCESS_TEAM_DOMAIN must both be set in dash/wrangler.toml."
+            echo "The dash is a staff portal; it does not deploy without an Access application."
+            echo "Create the Access application for thejettydash.com, then put its"
+            echo "Application Audience tag in ACCESS_AUD."
+            exit 1
+          fi
+          echo "Access application configured on $team."
+
+      # Belt and braces with workers_dev = false in wrangler.toml: that setting
+      # is what actually closes the address, and this is what notices if it is
+      # ever removed.
+      - name: Refuse to deploy with a workers.dev address open
+        working-directory: dash
+        run: |
+          if ! grep -q '^workers_dev *= *false' wrangler.toml; then
+            echo "::error::workers_dev must stay false. A workers.dev address is a"
+            echo "different hostname from thejettydash.com, so the Access application"
+            echo "does not cover it and the portal would be open there."
+            exit 1
+          fi
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          workingDirectory: dash
+          command: deploy

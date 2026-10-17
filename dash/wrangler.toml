@@ -10,6 +10,13 @@ name = "jetty-dash"
 main = "worker/index.js"
 compatibility_date = "2024-09-23"
 
+# No workers.dev address, ever. Access applications are attached to hostnames,
+# and jetty-dash.<account>.workers.dev is a different hostname from
+# thejettydash.com -- so leaving it on would publish the whole staff portal at
+# an address with nothing in front of it. The custom domain is the only way in.
+
+workers_dev = false
+
 [assets]
 directory = "./public"
 binding = "ASSETS"
