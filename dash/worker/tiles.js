@@ -1,9 +1,10 @@
 // What is on the dash, and who sees it.
 //
-// This file is the catalogue. Adding a tool means adding a row here; it does
-// not mean touching the Worker. Each row says what the thing is called, what
-// it is for, what kind of work it belongs to, where it lives, and which groups
-// it is for.
+// This file holds the DEFAULTS and the rules. The live catalogue lives in the
+// database, where it can be edited by somebody who is not editing the repo --
+// see store.js, which seeds the first rows from the lists below and then never
+// reads them again. The functions here are the rules, and they apply whether a
+// row came from this file or from the admin page.
 //
 // Two rules, and they are the whole design:
 //
@@ -157,10 +158,10 @@ export function visibleTiles(groups, list) {
 // The same tiles, arranged as the page draws them: category headings in
 // CATEGORIES order, each with at least one tile under it. Done here rather
 // than in the browser so the order is testable and the page stays simple.
-export function tileSections(groups, list) {
+export function tileSections(groups, list, cats) {
   const mine = visibleTiles(groups, list);
   const out = [];
-  for (const c of CATEGORIES) {
+  for (const c of (cats || CATEGORIES)) {
     const inIt = mine.filter((t) => t.category === c.key);
     if (inIt.length) out.push({ key: c.key, label: c.label, tiles: inIt });
   }

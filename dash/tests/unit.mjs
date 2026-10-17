@@ -6,6 +6,7 @@
 
 import { visibleTiles, tileSections, greeting, TILES, GROUPS, CATEGORIES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
+import { cleanTile, cleanPerson, cleanKey, cleanUrl } from '../worker/clean.js';
 
 let ran = 0;
 let failed = 0;
@@ -217,6 +218,96 @@ describe('the roster itself', () => {
       const seen = all.some((mine) => want.some((g) => mine.includes(g)));
       if (!seen) eq(t.key, 'ambassadors', t.key + ' is visible to nobody on the roster');
     }
+  });
+});
+
+// What the Setup page is allowed to save. Everything typed in by hand goes
+// through the same cleaning the seeded rows went through, so a row keyed in
+// cannot be shaped differently from a row that came from the file.
+describe('cleanTile', () => {
+  const cats = [{ key: 'finance' }, { key: 'company' }];
+  const grps = [{ key: 'financials' }, { key: 'wholesale' }];
+  const good = {
+    key: 'hub', name: 'Hub', blurb: 'A hub.', url: 'https://hub.test/',
+    category: 'finance', icon: 'box', groups: ['financials'], status: 'live',
+  };
+
+  it('accepts a complete tile', () => {
+    const out = cleanTile(good, cats, grps);
+    ok(!out.errors, JSON.stringify(out.errors));
+    eq(out.row.key, 'hub');
+  });
+
+  // The rule the whole page rests on: nothing is drawn that cannot be opened.
+  // A tile cannot be marked live without somewhere to go, or the dash would
+  // put an empty link in front of somebody.
+  it('refuses to call a tile live without an address', () => {
+    const out = cleanTile({ ...good, url: '' }, cats, grps);
+    ok(out.errors && out.errors.some((e) => /address/i.test(e)));
+  });
+  it('keeps an unfinished tile rather than refusing it', () => {
+    const out = cleanTile({ ...good, url: '', status: 'soon' }, cats, grps);
+    ok(!out.errors, 'an unbuilt tile is allowed, it is just never drawn');
+    eq(out.row.status, 'soon');
+  });
+  it('refuses a tile nobody is given', () => {
+    const out = cleanTile({ ...good, groups: [] }, cats, grps);
+    ok(out.errors && out.errors.some((e) => /nobody/i.test(e)));
+  });
+  it('refuses a group or category that does not exist', () => {
+    ok(cleanTile({ ...good, groups: ['made-up'] }, cats, grps).errors);
+    ok(cleanTile({ ...good, category: 'made-up' }, cats, grps).errors);
+  });
+  it('allows everyone, which is not a group but is a valid answer', () => {
+    ok(!cleanTile({ ...good, groups: ['everyone'] }, cats, grps).errors);
+  });
+  it('refuses a tile with no key or no name', () => {
+    ok(cleanTile({ ...good, key: '' }, cats, grps).errors);
+    ok(cleanTile({ ...good, name: '  ' }, cats, grps).errors);
+  });
+});
+
+describe('cleanUrl', () => {
+  it('keeps an http or https address', () => {
+    eq(cleanUrl('https://a.test/x'), 'https://a.test/x');
+  });
+  // A tile is a link somebody clicks. javascript: and data: are not addresses
+  // anybody should be sent to, and an empty url means the tile is not drawn --
+  // so a bad one fails closed rather than being put on the page.
+  it('throws away anything that is not a web address', () => {
+    eq(cleanUrl('javascript:alert(1)'), '');
+    eq(cleanUrl('data:text/html,<script>'), '');
+    eq(cleanUrl('not a url'), '');
+    eq(cleanUrl(''), '');
+  });
+});
+
+describe('cleanKey', () => {
+  it('tidies something typed by hand into a usable key', () => {
+    eq(cleanKey('  Wholesale Hub '), 'wholesale-hub');
+    eq(cleanKey('Finance'), 'finance');
+  });
+  it('refuses one that cleans down to nothing', () => {
+    eq(cleanKey('!!!'), '');
+    eq(cleanKey(''), '');
+  });
+});
+
+describe('cleanPerson', () => {
+  const grps = [{ key: 'financials' }];
+  it('accepts an address and the groups it is given', () => {
+    const out = cleanPerson({ email: ' Amy@JettyLife.com ', groups: ['financials'] }, grps);
+    ok(!out.errors);
+    eq(out.row.email, 'amy@jettylife.com', 'stored lowercased, which is how it is looked up');
+  });
+  it('accepts somebody in no groups, which is a real state', () => {
+    ok(!cleanPerson({ email: 'new@jettylife.com', groups: [] }, grps).errors);
+  });
+  it('refuses something that is not an address', () => {
+    ok(cleanPerson({ email: 'nope', groups: [] }, grps).errors);
+  });
+  it('refuses a group that does not exist', () => {
+    ok(cleanPerson({ email: 'a@b.test', groups: ['made-up'] }, grps).errors);
   });
 });
 

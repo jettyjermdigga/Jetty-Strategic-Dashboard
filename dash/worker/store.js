@@ -1,0 +1,191 @@
+// Reading and writing the dash's four lists.
+//
+// The catalogue used to be tiles.js and the roster used to be people.js. Both
+// are still there, and are still the only place the defaults are written down
+// -- but they are now a seed rather than the live answer. The database is the
+// live answer, because somebody who is not editing the repo has to be able to
+// change it.
+//
+// Nothing here trusts what it is handed. Every write goes through the same
+// cleaning the seed went through, so a row keyed in by hand cannot be shaped
+// differently from a row that came from the file.
+
+import schema from './schema.sql';
+import { sqlStatements } from './sql.js';
+import { TILES, CATEGORIES, GROUPS, EVERYONE } from './tiles.js';
+import { cleanKey, cleanUrl, cleanTile, cleanPerson } from './clean.js';
+import { PEOPLE } from './people.js';
+
+// Re-exported so callers have one import for "the store", while the rules
+// themselves stay in a file Node can load.
+export { cleanKey, cleanUrl, cleanTile, cleanPerson };
+
+const SEED_KEY = 'seeded-from-repo-2026-10';
+
+let ready = false;
+
+export async function ensureSchema(db) {
+  if (ready) return;
+  for (const stmt of sqlStatements(schema)) await db.prepare(stmt).run();
+  await seed(db);
+  ready = true;
+}
+
+// The files become the first rows, once. Guarded by meta rather than by "is
+// the table empty", because an account that deliberately deletes every tile
+// should stay deleted rather than having the defaults walk back in.
+async function seed(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(SEED_KEY).first();
+  if (done) return;
+
+  const now = new Date().toISOString();
+  const batch = [];
+
+  const cat = db.prepare(
+    'INSERT OR IGNORE INTO categories (cat_key, label, sort) VALUES (?, ?, ?)');
+  CATEGORIES.forEach((c, i) => batch.push(cat.bind(c.key, c.label, i)));
+
+  const grp = db.prepare(
+    'INSERT OR IGNORE INTO groups (group_key, label, note, sort) VALUES (?, ?, ?, ?)');
+  GROUPS.forEach((g, i) => batch.push(grp.bind(g.key, g.label, g.note || '', i)));
+
+  const tile = db.prepare(
+    'INSERT OR IGNORE INTO tiles (tile_key, name, blurb, url, icon, category, groups, '
+    + 'status, sort, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  TILES.forEach((t, i) => batch.push(tile.bind(
+    t.key, t.name, t.blurb, t.url || '', t.icon || 'link', t.category,
+    (t.groups || []).join(','), t.status, i, now, 'seed')));
+
+  const per = db.prepare(
+    'INSERT OR IGNORE INTO people (email, name, groups, updated_at, updated_by) '
+    + 'VALUES (?, ?, ?, ?, ?)');
+  for (const email of Object.keys(PEOPLE)) {
+    per.bind; // keep the shape obvious
+    batch.push(per.bind(email.toLowerCase(), '', (PEOPLE[email] || []).join(','), now, 'seed'));
+  }
+
+  const BATCH = 100;
+  for (let i = 0; i < batch.length; i += BATCH) await db.batch(batch.slice(i, i + BATCH));
+
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(SEED_KEY, String(batch.length), now).run();
+}
+
+// ── reading ────────────────────────────────────────────────────────────────
+
+const splitList = (s) => String(s || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+
+export async function readCatalogue(db) {
+  const [tiles, cats, grps] = await Promise.all([
+    db.prepare('SELECT * FROM tiles ORDER BY sort, name').all(),
+    db.prepare('SELECT * FROM categories ORDER BY sort, label').all(),
+    db.prepare('SELECT * FROM groups ORDER BY sort, label').all(),
+  ]);
+  return {
+    tiles: (tiles.results || []).map((r) => ({
+      key: r.tile_key, name: r.name, blurb: r.blurb, url: r.url, icon: r.icon,
+      category: r.category, groups: splitList(r.groups), status: r.status, sort: r.sort,
+    })),
+    categories: (cats.results || []).map((r) => ({ key: r.cat_key, label: r.label, sort: r.sort })),
+    groups: (grps.results || []).map((r) => ({
+      key: r.group_key, label: r.label, note: r.note, sort: r.sort,
+    })),
+  };
+}
+
+// Returns the groups for a verified address, or [] for somebody nobody has
+// placed yet -- which is different from the null the caller uses for "we could
+// not establish who this is at all".
+export async function groupsFor(db, email) {
+  const key = String(email || '').trim().toLowerCase();
+  if (!key) return null;
+  const row = await db.prepare('SELECT groups FROM people WHERE email = ?').bind(key).first();
+  if (!row) return [];
+  return splitList(row.groups);
+}
+
+export async function readPeople(db) {
+  const res = await db.prepare('SELECT * FROM people ORDER BY email').all();
+  return (res.results || []).map((r) => ({
+    email: r.email, name: r.name, groups: splitList(r.groups),
+    updated_at: r.updated_at, updated_by: r.updated_by,
+  }));
+}
+
+// ── writing ────────────────────────────────────────────────────────────────
+
+export async function saveTile(db, row, who) {
+  const now = new Date().toISOString();
+  await db.prepare(
+    'INSERT INTO tiles (tile_key, name, blurb, url, icon, category, groups, status, sort, '
+    + 'updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+    + 'ON CONFLICT(tile_key) DO UPDATE SET name = excluded.name, blurb = excluded.blurb, '
+    + 'url = excluded.url, icon = excluded.icon, category = excluded.category, '
+    + 'groups = excluded.groups, status = excluded.status, sort = excluded.sort, '
+    + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
+    .bind(row.key, row.name, row.blurb, row.url, row.icon, row.category, row.groups,
+          row.status, row.sort, now, who).run();
+}
+
+export async function deleteTile(db, key) {
+  await db.prepare('DELETE FROM tiles WHERE tile_key = ?').bind(cleanKey(key)).run();
+}
+
+export async function savePerson(db, row, who) {
+  const now = new Date().toISOString();
+  await db.prepare(
+    'INSERT INTO people (email, name, groups, updated_at, updated_by) VALUES (?, ?, ?, ?, ?) '
+    + 'ON CONFLICT(email) DO UPDATE SET name = excluded.name, groups = excluded.groups, '
+    + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
+    .bind(row.email, row.name, row.groups, now, who).run();
+}
+
+export async function deletePerson(db, email) {
+  await db.prepare('DELETE FROM people WHERE email = ?')
+    .bind(String(email || '').trim().toLowerCase()).run();
+}
+
+export async function saveCategory(db, input) {
+  const key = cleanKey(input && input.key);
+  const label = text(input && input.label, 60);
+  if (!key || !label) return { errors: ['A category needs a key and a label.'] };
+  await db.prepare(
+    'INSERT INTO categories (cat_key, label, sort) VALUES (?, ?, ?) '
+    + 'ON CONFLICT(cat_key) DO UPDATE SET label = excluded.label, sort = excluded.sort')
+    .bind(key, label, Number(input.sort) || 0).run();
+  return { ok: true };
+}
+
+export async function saveGroup(db, input) {
+  const key = cleanKey(input && input.key);
+  const label = text(input && input.label, 60);
+  if (!key || !label) return { errors: ['A group needs a key and a label.'] };
+  if (key === EVERYONE) return { errors: ['"everyone" is reserved: it means anybody Access let in.'] };
+  await db.prepare(
+    'INSERT INTO groups (group_key, label, note, sort) VALUES (?, ?, ?, ?) '
+    + 'ON CONFLICT(group_key) DO UPDATE SET label = excluded.label, note = excluded.note, '
+    + 'sort = excluded.sort')
+    .bind(key, label, text(input && input.note, 200), Number(input.sort) || 0).run();
+  return { ok: true };
+}
+
+// Deleting a group would otherwise leave its key on tiles and people, where it
+// would quietly match nothing forever. Taken off both in the same breath.
+export async function deleteGroup(db, key) {
+  const k = cleanKey(key);
+  if (!k) return;
+  const strip = (val) => splitList(val).filter((g) => g !== k).join(',');
+
+  const tiles = await db.prepare('SELECT tile_key, groups FROM tiles WHERE groups LIKE ?')
+    .bind('%' + k + '%').all();
+  const people = await db.prepare('SELECT email, groups FROM people WHERE groups LIKE ?')
+    .bind('%' + k + '%').all();
+
+  const batch = [db.prepare('DELETE FROM groups WHERE group_key = ?').bind(k)];
+  const tStmt = db.prepare('UPDATE tiles SET groups = ? WHERE tile_key = ?');
+  for (const r of tiles.results || []) batch.push(tStmt.bind(strip(r.groups), r.tile_key));
+  const pStmt = db.prepare('UPDATE people SET groups = ? WHERE email = ?');
+  for (const r of people.results || []) batch.push(pStmt.bind(strip(r.groups), r.email));
+
+  await db.batch(batch);
+}

@@ -6,8 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { visibleTiles, tileSections, greeting, GROUPS } from '../worker/tiles.js';
-import { groupsFor } from '../worker/people.js';
+import { visibleTiles, tileSections, greeting, GROUPS, TILES, CATEGORIES } from '../worker/tiles.js';
+import { groupsFor, PEOPLE } from '../worker/people.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
 // globally here, not as a dependency of this directory.
@@ -28,7 +28,7 @@ const me = (email) => {
   const groups = groupsFor(email);
   return {
     email, verified: true, accessConfigured: true, reason: '',
-    groups, knownGroups: GROUPS, greeting: greeting(email),
+    groups, knownGroups: GROUPS, greeting: greeting(email), isAdmin: email.startsWith('jeremy@'),
     tiles: visibleTiles(groups), sections: tileSections(groups),
   };
 };
@@ -39,7 +39,21 @@ const CASES = [
   { file: 'dash-amy-dark', scheme: 'dark', who: me('amy@jettylife.com') },
   { file: 'dash-wholesale-dark', scheme: 'dark', who: me('wholesale@jettylife.com') },
   { file: 'dash-nogroups-dark', scheme: 'dark', who: me('bill@jettylife.com') },
+  { file: 'dash-admin-dark', scheme: 'dark', who: me('jeremy@jettylife.com'),
+    path: 'admin.html', wait: '.tile-form' },
+  { file: 'dash-admin-light', scheme: 'light', who: me('jeremy@jettylife.com'),
+    path: 'admin.html', wait: '.tile-form' },
 ];
+
+// What /api/admin/all answers, built from the same seed the store uses.
+const ADMIN = {
+  tiles: TILES.map((t) => ({ ...t, groups: t.groups || [] })),
+  categories: CATEGORIES,
+  groups: GROUPS,
+  people: Object.keys(PEOPLE).sort().map((e) => ({ email: e, name: '', groups: PEOPLE[e] })),
+  admins: ['jeremy@jettylife.com'],
+  you: 'jeremy@jettylife.com',
+};
 
 const browser = await chromium.launch();
 for (const c of CASES) {
@@ -49,14 +63,15 @@ for (const c of CASES) {
   await page.route('**/*', async (route) => {
     const p = new URL(route.request().url()).pathname;
     if (p === '/api/me') return route.fulfill({ json: c.who });
+    if (p === '/api/admin/all') return route.fulfill({ json: ADMIN });
     const file = path.join(ROOT, p === '/' ? '/index.html' : p);
     if (!fs.existsSync(file)) return route.fulfill({ status: 404, body: '' });
     return route.fulfill({
       body: fs.readFileSync(file), contentType: MIME[path.extname(file)] || 'text/plain',
     });
   });
-  await page.goto('http://local.test/');
-  await page.waitForSelector('.tile, .tiles-empty');
+  await page.goto('http://local.test/' + (c.path || ''));
+  await page.waitForSelector(c.wait || '.tile, .tiles-empty');
   await page.waitForTimeout(350);
   await page.screenshot({ path: path.join(OUT, c.file + '.png') });
 
@@ -107,7 +122,7 @@ for (const c of CASES) {
     });
     return [...new Set(bad)];
   });
-  console.log(c.file + '  ' + (await page.locator('.tile').count()) + ' tiles'
+  console.log(c.file + '  ' + (await page.locator('.tile, .card').count()) + ' items'
     + (dim.length ? '  LOW CONTRAST: ' + dim.join(', ') : '  contrast ok'));
   await page.close();
 }

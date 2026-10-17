@@ -1,16 +1,21 @@
 // The Jetty Dash: one door, and behind it every tool a person is entitled to.
 //
-// Deliberately small. It holds no data of its own -- no database, no writes,
-// no uploads -- because everything it points at already holds its own. What it
-// does is answer one question per visitor: who are you, and what are you in?
-// Everything else on the page follows from the answer.
+// It answers one question per visitor -- who are you, and what are you in --
+// and draws the answer. Everything it points at keeps its own data and its own
+// Access policy; the only thing the dash stores is the four lists somebody has
+// to maintain: what tools exist, what kinds of work there are, what the
+// permissions are called, and who holds them.
 //
 // It is not the lock. Each tool behind it keeps its own Access policy, and a
 // tile hidden here is a door not shown rather than a door shut. See tiles.js.
 
 import { identify } from './access.js';
-import { groupsFor } from './people.js';
-import { visibleTiles, tileSections, greeting, GROUPS } from './tiles.js';
+import { visibleTiles, tileSections, greeting } from './tiles.js';
+import {
+  ensureSchema, readCatalogue, readPeople, groupsFor,
+  cleanTile, cleanPerson, saveTile, deleteTile, savePerson, deletePerson,
+  saveCategory, saveGroup, deleteGroup,
+} from './store.js';
 
 const json = (body, status) => new Response(JSON.stringify(body), {
   status: status || 200,
@@ -23,49 +28,129 @@ const json = (body, status) => new Response(JSON.stringify(body), {
   },
 });
 
+function adminList(env) {
+  return String(env.DASH_ADMINS || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+// Editing the lists is a different permission from reading the page, and it
+// is deliberately NOT one of the groups: the groups are data this list
+// governs, so letting them govern it back would mean anybody who could edit
+// the roster could grant themselves the right to edit the roster.
+function isAdmin(env, who) {
+  const admins = adminList(env);
+  return Boolean(who.email) && who.verified && admins.includes(who.email.toLowerCase());
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname === '/api/me') {
-      if (request.method !== 'GET' && request.method !== 'HEAD') {
-        return json({ error: 'Read only.' }, 405);
-      }
+    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+
+    if (!env.DB) {
+      return json({ error: 'The dash has no database bound, so it cannot read its lists.' }, 503);
+    }
+
+    try {
+      await ensureSchema(env.DB);
       const who = await identify(request, env);
-      // Groups come from the repo's own list, not from Access -- see
-      // people.js for why, and what that costs. Only a verified address is
-      // looked up: null here means "we could not establish who this is",
-      // which shows strictly less than "known, and in no groups".
-      const groups = who.verified ? groupsFor(who.email) : null;
-      const tiles = visibleTiles(groups);
-      const sections = tileSections(groups);
-      const body = {
-        email: who.email,
-        verified: who.verified,
-        accessConfigured: who.accessConfigured,
-        // Surfaced rather than swallowed: a sign-in that cannot be verified
-        // looks exactly like a portal somebody has been taken off, and the
-        // two need different responses.
-        reason: who.reason || '',
-        groups,
-        knownGroups: GROUPS,
-        greeting: greeting(who.email),
-        tiles,
-        sections,
-      };
-      if (request.method === 'HEAD') {
-        return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });
-      }
-      return json(body);
-    }
-
-    // The dash has no other API. Anything under /api that is not /api/me is a
-    // mistake somewhere, and should say so rather than fall through to the
-    // page and return HTML to something expecting JSON.
-    if (url.pathname.startsWith('/api/')) {
+      if (url.pathname === '/api/me') return await me(request, env, who);
+      if (url.pathname.startsWith('/api/admin/')) return await admin(request, env, url, who);
       return json({ error: 'No such endpoint.' }, 404);
+    } catch (err) {
+      return json({ error: 'Dash request failed: '
+        + (err && err.message ? err.message : String(err)) }, 500);
     }
-
-    return env.ASSETS.fetch(request);
   },
 };
+
+async function me(request, env, who) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return json({ error: 'Read only.' }, 405);
+  }
+  const cat = await readCatalogue(env.DB);
+  // null means "we could not establish who this is", which shows strictly
+  // less than "known, and in no groups". Only a verified address is looked up.
+  const groups = who.verified ? await groupsFor(env.DB, who.email) : null;
+
+  if (request.method === 'HEAD') {
+    return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });
+  }
+  return json({
+    email: who.email,
+    verified: who.verified,
+    accessConfigured: who.accessConfigured,
+    // Surfaced rather than swallowed: a sign-in that cannot be verified looks
+    // exactly like a portal somebody has been taken off, and the two need
+    // different responses.
+    reason: who.reason || '',
+    isAdmin: isAdmin(env, who),
+    groups,
+    greeting: greeting(who.email),
+    tiles: visibleTiles(groups, cat.tiles),
+    sections: tileSections(groups, cat.tiles, cat.categories),
+  });
+}
+
+async function admin(request, env, url, who) {
+  if (!isAdmin(env, who)) {
+    // 404 rather than 403: somebody who is not an admin has no business
+    // learning that these endpoints exist, and the page never links to them.
+    return json({ error: 'No such endpoint.' }, 404);
+  }
+
+  const what = url.pathname.slice('/api/admin/'.length);
+  const cat = await readCatalogue(env.DB);
+
+  if (request.method === 'GET' && what === 'all') {
+    return json({
+      tiles: cat.tiles,
+      categories: cat.categories,
+      groups: cat.groups,
+      people: await readPeople(env.DB),
+      admins: adminList(env),
+      you: who.email,
+    });
+  }
+
+  if (request.method !== 'POST') return json({ error: 'No such endpoint.' }, 404);
+  const body = await request.json().catch(() => null);
+  if (!body) return json({ error: 'That was not JSON.' }, 400);
+
+  if (what === 'tile') {
+    const out = cleanTile(body, cat.categories, cat.groups);
+    if (out.errors) return json({ errors: out.errors }, 400);
+    await saveTile(env.DB, out.row, who.email);
+    return json({ ok: true, tile: out.row });
+  }
+  if (what === 'tile/delete') {
+    await deleteTile(env.DB, body.key);
+    return json({ ok: true });
+  }
+  if (what === 'person') {
+    const out = cleanPerson(body, cat.groups);
+    if (out.errors) return json({ errors: out.errors }, 400);
+    await savePerson(env.DB, out.row, who.email);
+    return json({ ok: true, person: out.row });
+  }
+  if (what === 'person/delete') {
+    // Taking somebody off the roster does not take away their sign-in -- that
+    // is the Access policy's job -- so they keep whatever is open to everyone.
+    await deletePerson(env.DB, body.email);
+    return json({ ok: true });
+  }
+  if (what === 'category') {
+    const out = await saveCategory(env.DB, body);
+    return out.errors ? json(out, 400) : json(out);
+  }
+  if (what === 'group') {
+    const out = await saveGroup(env.DB, body);
+    return out.errors ? json(out, 400) : json(out);
+  }
+  if (what === 'group/delete') {
+    await deleteGroup(env.DB, body.key);
+    return json({ ok: true });
+  }
+  return json({ error: 'No such endpoint.' }, 404);
+}

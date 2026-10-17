@@ -17,6 +17,20 @@ compatibility_date = "2024-09-23"
 
 workers_dev = false
 
+# The Worker reads its table definitions out of worker/schema.sql at startup.
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+fallthrough = true
+
+# The four lists the dash maintains: tiles, categories, groups and people.
+# provision_d1.py looks the database up by name on every deploy and writes its
+# id in here, so no id is ever committed.
+[[d1_databases]]
+binding = "DB"
+database_name = "jetty_dash"
+database_id = "__D1_DATABASE_ID__"
+
 [assets]
 directory = "./public"
 binding = "ASSETS"
@@ -36,3 +50,11 @@ run_worker_first = true
 # than pretending the sign-in is sound.
 ACCESS_TEAM_DOMAIN = "wild-pine-bbc7.cloudflareaccess.com"
 ACCESS_AUD = ""
+
+# Who may edit the tiles, categories, groups and roster.
+#
+# Deliberately not one of the groups. The groups are data this list governs,
+# so letting a group govern it back would mean anybody who could edit the
+# roster could put themselves on the list that decides who edits the roster.
+# This one lives in the config, where changing it is a push with a diff.
+DASH_ADMINS = "jeremy@jettylife.com"

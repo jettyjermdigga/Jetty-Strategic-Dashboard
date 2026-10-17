@@ -1,0 +1,111 @@
+/* Setup. Shares the dash's theme tokens -- see dash.css, which declares them
+   once per theme so a rule appended here cannot quietly undo a theme. */
+
+/* --watch is a warm red that reads at 4.5:1 on a light surface and 2.82:1 on
+   a dark one. The lighter step is what the calendar settled on for the same
+   problem. */
+:root{ --danger-ink:var(--watch) }
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){ --danger-ink:#E0A566 } }
+:root[data-theme="dark"]{ --danger-ink:#E0A566 }
+:root[data-theme="light"]{ --danger-ink:var(--watch) }
+
+.back{color:rgba(255,255,255,.86);text-decoration:none;border-bottom:1px solid rgba(255,255,255,.4)}
+.back:hover{color:#fff;border-bottom-color:#fff}
+
+/* .setup-tabs, not .tabs: rc_system.css already owns .tabs and paints it
+   var(--ink), which is near-white in dark mode -- so the nav came out as a
+   white bar with near-white labels on it. Reusing a design-system class name
+   for something else is how that happens. */
+.setup-tabs{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 20px}
+.setup-tab{
+  font-family:var(--body);font-size:13.5px;line-height:1;
+  background:transparent;color:inherit;border:1px solid var(--edge);
+  border-radius:999px;padding:8px 15px;cursor:pointer;
+  transition:border-color .12s,background .12s;
+}
+.setup-tab:hover{border-color:var(--primary-alt)}
+.setup-tab.on{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600}
+
+.pane-note{
+  font-family:var(--body);font-size:14px;line-height:1.65;opacity:.8;
+  margin:0 0 16px;max-width:70ch;
+}
+.add-h{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;
+  opacity:.72;margin:30px 0 11px;font-weight:600;
+}
+
+.card{
+  background:var(--card);border:1px solid var(--edge);border-radius:10px;
+  padding:17px 18px;margin:0 0 13px;display:flex;flex-direction:column;gap:12px;
+  max-width:720px;
+}
+
+.card label{
+  display:flex;flex-direction:column;gap:5px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  opacity:.9;
+}
+.card .opt{text-transform:none;letter-spacing:0;opacity:.6;font-size:10px}
+.card input[type=text],.card input:not([type]),.card select,.card textarea{
+  font-family:var(--body);font-size:14px;text-transform:none;letter-spacing:normal;
+  color:inherit;background:var(--field);border:1px solid var(--field-line);
+  border-radius:6px;padding:8px 10px;width:100%;
+}
+.card textarea{min-height:58px;resize:vertical;line-height:1.5;font-size:13.5px}
+.card input[readonly]{opacity:.6;cursor:not-allowed}
+.card input:focus,.card select:focus,.card textarea:focus{
+  outline:2px solid var(--primary-alt);outline-offset:-1px;
+}
+.hint{
+  font-family:var(--body);font-size:12px;line-height:1.5;text-transform:none;
+  letter-spacing:normal;opacity:.72;
+}
+
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+fieldset{border:1px solid var(--edge);border-radius:8px;padding:11px 13px 13px;margin:0}
+legend{
+  font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  opacity:.75;padding:0 5px;
+}
+.cbs{display:flex;flex-wrap:wrap;gap:9px 16px}
+.cb{
+  flex-direction:row !important;align-items:center;gap:7px !important;
+  font-family:var(--body) !important;font-size:13.5px !important;
+  text-transform:none !important;letter-spacing:normal !important;cursor:pointer;
+}
+.cb.big{align-items:flex-start;flex-wrap:wrap}
+.cb.big .hint{flex-basis:100%;margin-left:23px}
+.cb input{width:auto}
+
+.acts{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.btn{
+  font-family:var(--body);font-size:13.5px;line-height:1;
+  background:transparent;color:inherit;border:1px solid var(--edge);
+  border-radius:6px;padding:8px 14px;cursor:pointer;
+  transition:border-color .12s,background .12s;
+}
+.btn:hover{border-color:var(--primary-alt);background:var(--wash)}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600}
+.btn.primary:hover{background:var(--primary-alt);border-color:var(--primary-alt)}
+.btn.danger{color:var(--danger-ink);border-color:color-mix(in srgb,var(--watch) 45%,transparent)}
+.btn.danger:hover{background:color-mix(in srgb,var(--watch) 14%,transparent);border-color:var(--watch)}
+.used{font-family:var(--mono);font-size:11px;opacity:.72;margin-left:auto}
+
+.errs:empty{display:none}
+.err{
+  font-family:var(--body);font-size:13px;line-height:1.55;
+  color:var(--danger-ink);padding:2px 0;
+}
+
+.notice.good{
+  background:color-mix(in srgb,var(--good) 12%,transparent);
+  border-color:color-mix(in srgb,var(--good) 36%,transparent);
+  border-left-color:var(--good);
+}
+
+@media (max-width:700px){
+  .row2{grid-template-columns:minmax(0,1fr)}
+  .card{padding:15px 15px}
+}

@@ -7,6 +7,7 @@
   --card:#fff; --card-hover:#f1f3f4;
   --wash:rgba(67,87,94,.07);
   --edge:var(--surface-alt);
+  --field:#fff; --field-line:var(--surface-alt);
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){
@@ -14,6 +15,7 @@
     --card:#22262e; --card-hover:#2b3038;
     --wash:rgba(255,255,255,.08);
     --edge:#333843;
+    --field:#1b1e24; --field-line:#3a3f4a;
     color-scheme:dark;
   }
 }
@@ -21,12 +23,14 @@
   --card:#22262e; --card-hover:#2b3038;
   --wash:rgba(255,255,255,.08);
   --edge:#333843;
+  --field:#1b1e24; --field-line:#3a3f4a;
   color-scheme:dark;
 }
 :root[data-theme="light"]{
   --card:#fff; --card-hover:#f1f3f4;
   --wash:rgba(67,87,94,.07);
   --edge:var(--surface-alt);
+  --field:#fff; --field-line:var(--surface-alt);
   color-scheme:light;
 }
 
@@ -49,6 +53,8 @@
   font-family:var(--mono);font-size:11px;letter-spacing:.04em;
   color:rgba(255,255,255,.76);white-space:nowrap;
 }
+.site-who .setup{color:#fff;text-decoration:none;border-bottom:1px solid rgba(255,255,255,.45)}
+.site-who .setup:hover{border-bottom-color:#fff}
 
 button,select,input{font-family:inherit;color:inherit}
 

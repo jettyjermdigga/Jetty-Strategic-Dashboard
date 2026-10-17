@@ -96,7 +96,11 @@
   }
 
   function render(me) {
-    $('#who').textContent = me.email ? me.email : 'not signed in';
+    // The Setup link only appears for somebody who can actually use it; the
+    // endpoints behind it answer 404 to everybody else, so this is tidiness
+    // rather than the control.
+    $('#who').innerHTML = (me.isAdmin ? '<a class="setup" href="/admin.html">Setup</a> \u00b7 ' : '')
+      + esc(me.email ? me.email : 'not signed in');
     $('#greeting').textContent = me.greeting;
     $('#sub').textContent = subLine(me);
     $('#notice').innerHTML = noticeHtml(me);
