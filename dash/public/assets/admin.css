@@ -109,3 +109,40 @@ legend{
   .row2{grid-template-columns:minmax(0,1fr)}
   .card{padding:15px 15px}
 }
+
+/* ── Rows ────────────────────────────────────────────────────────────────
+   Tiles and categories are lists, not stacks of cards: the whole catalogue
+   should be readable top to bottom without scrolling past a form for each
+   entry. Each row is still its own form, so one row saves on its own. */
+.rows{
+  border:1px solid var(--edge);border-radius:10px;overflow:hidden;background:var(--card);
+}
+.row{
+  display:grid;align-items:center;gap:10px;
+  grid-template-columns:minmax(120px,1.1fr) minmax(160px,2fr) minmax(150px,1.6fr)
+                        minmax(130px,1fr) 118px 96px;
+  padding:9px 12px;border-top:1px solid var(--edge);
+}
+.rows .row:first-child{border-top:0}
+.rows.cats .row{grid-template-columns:minmax(140px,1.4fr) 118px minmax(120px,1fr) 96px}
+.row.head{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  opacity:.72;background:var(--wash);padding:8px 12px;
+}
+.row.new{background:var(--wash)}
+.row input,.row select{
+  font-family:var(--body);font-size:13.5px;color:inherit;
+  background:var(--field);border:1px solid var(--field-line);
+  border-radius:6px;padding:6px 8px;width:100%;min-width:0;
+}
+.row input:focus,.row select:focus{outline:2px solid var(--primary-alt);outline-offset:-1px}
+.row-acts{display:flex;gap:6px;justify-content:flex-end}
+.btn.small{font-size:12px;padding:6px 9px}
+.row .used{font-family:var(--mono);font-size:10.5px;opacity:.7;white-space:nowrap}
+.row .errs{grid-column:1 / -1}
+.row .errs:empty{display:none}
+
+@media (max-width:900px){
+  .row,.rows.cats .row{grid-template-columns:minmax(0,1fr);gap:7px}
+  .row.head{display:none}
+}

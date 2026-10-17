@@ -26,9 +26,24 @@ const MERGE_KEY = 'groups-merged-into-departments-2026-10';
 
 let ready = false;
 
+// Columns added after the first deploy. CREATE TABLE IF NOT EXISTS does not
+// revisit a table that already exists, so a new column has to be added by
+// hand -- and the "duplicate column" error is the expected answer on every
+// run after the first.
+const ADDED_COLUMNS = [
+  ['categories', 'icon TEXT NOT NULL DEFAULT \'link\''],
+];
+
 export async function ensureSchema(db) {
   if (ready) return;
   for (const stmt of sqlStatements(schema)) await db.prepare(stmt).run();
+  for (const [table, col] of ADDED_COLUMNS) {
+    try {
+      await db.prepare('ALTER TABLE ' + table + ' ADD COLUMN ' + col).run();
+    } catch (err) {
+      if (!/duplicate column/i.test(String(err && err.message))) throw err;
+    }
+  }
   await seed(db);
   await syncCategories(db);
   await mergeGroups(db);
@@ -92,9 +107,10 @@ async function syncCategories(db) {
 
   const batch = [];
   const put = db.prepare(
-    'INSERT INTO categories (cat_key, label, sort) VALUES (?, ?, ?) '
-    + 'ON CONFLICT(cat_key) DO UPDATE SET label = excluded.label, sort = excluded.sort');
-  CATEGORIES.forEach((c, i) => batch.push(put.bind(c.key, c.label, i)));
+    'INSERT INTO categories (cat_key, label, icon, sort) VALUES (?, ?, ?, ?) '
+    + 'ON CONFLICT(cat_key) DO UPDATE SET label = excluded.label, '
+    + 'icon = excluded.icon, sort = excluded.sort');
+  CATEGORIES.forEach((c, i) => batch.push(put.bind(c.key, c.label, c.icon || 'link', i)));
 
   // Tiles move before the old categories go, so none is left pointing at a
   // heading that no longer exists -- which would drop it off the page while
@@ -125,8 +141,8 @@ async function seed(db) {
   const batch = [];
 
   const cat = db.prepare(
-    'INSERT OR IGNORE INTO categories (cat_key, label, sort) VALUES (?, ?, ?)');
-  CATEGORIES.forEach((c, i) => batch.push(cat.bind(c.key, c.label, i)));
+    'INSERT OR IGNORE INTO categories (cat_key, label, icon, sort) VALUES (?, ?, ?, ?)');
+  CATEGORIES.forEach((c, i) => batch.push(cat.bind(c.key, c.label, c.icon || 'link', i)));
 
   const grp = db.prepare(
     'INSERT OR IGNORE INTO groups (group_key, label, note, sort) VALUES (?, ?, ?, ?)');
@@ -169,7 +185,9 @@ export async function readCatalogue(db) {
       key: r.tile_key, name: r.name, blurb: r.blurb, url: r.url, icon: r.icon,
       category: r.category, groups: splitList(r.groups), status: r.status, sort: r.sort,
     })),
-    categories: (cats.results || []).map((r) => ({ key: r.cat_key, label: r.label, sort: r.sort })),
+    categories: (cats.results || []).map((r) => ({
+      key: r.cat_key, label: r.label, icon: r.icon || 'link', sort: r.sort,
+    })),
     groups: (grps.results || []).map((r) => ({
       key: r.group_key, label: r.label, note: r.note, sort: r.sort,
     })),
@@ -229,13 +247,16 @@ export async function deletePerson(db, email) {
 }
 
 export async function saveCategory(db, input) {
-  const key = cleanKey(input && input.key);
-  const label = text(input && input.label, 60);
-  if (!key || !label) return { errors: ['A category needs a key and a label.'] };
+  const key = cleanKey(input && input.key) || cleanKey(input && input.label);
+  const label = String(input && input.label || '').trim().slice(0, 60);
+  if (!key || !label) return { errors: ['A category needs a name.'] };
+  const icon = cleanKey(input && input.icon) || 'link';
+  const sort = Number.isFinite(Number(input && input.sort)) ? Number(input.sort) : 0;
   await db.prepare(
-    'INSERT INTO categories (cat_key, label, sort) VALUES (?, ?, ?) '
-    + 'ON CONFLICT(cat_key) DO UPDATE SET label = excluded.label, sort = excluded.sort')
-    .bind(key, label, Number(input.sort) || 0).run();
+    'INSERT INTO categories (cat_key, label, icon, sort) VALUES (?, ?, ?, ?) '
+    + 'ON CONFLICT(cat_key) DO UPDATE SET label = excluded.label, '
+    + 'icon = excluded.icon, sort = excluded.sort')
+    .bind(key, label, icon, sort).run();
   return { ok: true };
 }
 

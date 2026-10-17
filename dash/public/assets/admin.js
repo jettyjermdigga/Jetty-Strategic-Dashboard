@@ -22,7 +22,11 @@
         // An errors array is the server saying what is wrong with what was
         // typed. It is shown next to the form rather than thrown, because it
         // is the person's answer that needs changing, not the request.
-        if (!r.ok && !j.errors) throw new Error(j.error || ('The server answered ' + r.status));
+        if (!r.ok && !j.errors) {
+          var err = new Error(j.error || ('The server answered ' + r.status));
+          err.status = r.status;
+          throw err;
+        }
         return j;
       });
     });
@@ -35,84 +39,69 @@
     if (!bad) setTimeout(function () { if (n.textContent === msg) n.innerHTML = ''; }, 2600);
   }
 
-  // ── tiles ───────────────────────────────────────────────────────────────
-
-  function groupBoxes(selected, withEveryone) {
+  // The sections somebody is in. Drawn from the same list as the categories,
+  // because they are the same list.
+  function groupBoxes(selected) {
     var sel = selected || [];
-    var all = (withEveryone ? [{ key: 'everyone', label: 'Everyone (all staff)' }] : [])
-      .concat(D.groups);
-    return all.map(function (g) {
+    return D.groups.map(function (g) {
       return '<label class="cb"><input type="checkbox" class="g" value="' + esc(g.key) + '"'
         + (sel.indexOf(g.key) >= 0 ? ' checked' : '') + '> ' + esc(g.label) + '</label>';
     }).join('');
   }
 
-  function tileForm(t) {
-    var it = t || { key: '', name: '', blurb: '', url: '', icon: 'link',
-                    category: (D.categories[0] || {}).key, groups: [], status: 'soon' };
-    var isNew = !t;
-    return '<form class="card tile-form" data-key="' + esc(it.key) + '">'
-      + '<div class="row2">'
-        + '<label>Name<input class="f-name" value="' + esc(it.name) + '" maxlength="80" '
-          + 'placeholder="Wholesale Hub"></label>'
-        + '<label>Key<input class="f-key" value="' + esc(it.key) + '" maxlength="38" '
-          + 'placeholder="wholesale"' + (isNew ? '' : ' readonly') + '>'
-          + '<span class="hint">' + (isNew ? 'Lower case, no spaces. Cannot be changed later.'
-              : 'Fixed once set, so renaming is safe.') + '</span></label>'
-      + '</div>'
-      + '<label>What it is<textarea class="f-blurb" maxlength="300" '
-        + 'placeholder="One line. This is what people read before clicking.">' + esc(it.blurb) + '</textarea></label>'
-      + '<label>Address<input class="f-url" value="' + esc(it.url) + '" placeholder="https://"></label>'
-      + '<div class="row2">'
-        + '<label>Category<select class="f-cat">'
-          + D.categories.map(function (c) {
-              return '<option value="' + esc(c.key) + '"'
-                + (c.key === it.category ? ' selected' : '') + '>' + esc(c.label) + '</option>';
-            }).join('')
-        + '</select></label>'
-        + '<label>Icon<select class="f-icon">'
-          + ['calendar', 'chart', 'box', 'people', 'link'].map(function (i) {
-              return '<option value="' + i + '"' + (i === it.icon ? ' selected' : '') + '>' + i + '</option>';
-            }).join('')
-        + '</select></label>'
-      + '</div>'
-      + '<fieldset><legend>Who sees it</legend><div class="cbs">'
-        + groupBoxes(it.groups, true) + '</div></fieldset>'
-      + '<label class="cb big"><input type="checkbox" class="f-live"'
-        + (it.status === 'live' ? ' checked' : '') + '> '
-        + 'Show it on the dash<span class="hint">Needs an address. Leave off while it is '
-        + 'still being built — an unfinished tile appears on nobody’s page.</span></label>'
-      + '<div class="errs"></div>'
-      + '<div class="acts">'
-        + '<button type="submit" class="btn primary">' + (isNew ? 'Add tile' : 'Save') + '</button>'
-        + (isNew ? '' : '<button type="button" class="btn danger del">Remove</button>')
-      + '</div>'
-      + '</form>';
+  var ICONS = ['link', 'calendar', 'chart', 'box', 'people', 'truck', 'store',
+               'wave', 'ink', 'megaphone', 'route', 'board', 'tag'];
+
+  function iconSelect(cls, chosen) {
+    return '<select class="' + cls + '">' + ICONS.map(function (i) {
+      return '<option value="' + i + '"' + (i === chosen ? ' selected' : '') + '>' + i + '</option>';
+    }).join('') + '</select>';
   }
 
-  function readTileForm(f) {
-    return {
-      key: $('.f-key', f).value,
-      name: $('.f-name', f).value,
-      blurb: $('.f-blurb', f).value,
-      url: $('.f-url', f).value,
-      category: $('.f-cat', f).value,
-      icon: $('.f-icon', f).value,
-      groups: $$('.g:checked', f).map(function (b) { return b.value; }),
-      status: $('.f-live', f).checked ? 'live' : 'soon',
-    };
+  // ── tiles ───────────────────────────────────────────────────────────────
+
+  // Five answers: name, description, address, category, icon. One row each,
+  // top to bottom, so the whole catalogue is readable at a glance instead of
+  // being a column of cards to scroll.
+  function tileRow(t) {
+    var isNew = !t;
+    var it = t || { key: '', name: '', blurb: '', url: '',
+                    category: (D.categories[0] || {}).key, icon: 'link' };
+    return '<form class="row tile-row' + (isNew ? ' new' : '') + '" data-key="' + esc(it.key) + '">'
+      + '<input class="f-name" value="' + esc(it.name) + '" maxlength="80" placeholder="Name">'
+      + '<input class="f-blurb" value="' + esc(it.blurb) + '" maxlength="300" placeholder="Description">'
+      + '<input class="f-url" value="' + esc(it.url) + '" placeholder="https://">'
+      + '<select class="f-cat">' + D.categories.map(function (c) {
+          return '<option value="' + esc(c.key) + '"'
+            + (c.key === it.category ? ' selected' : '') + '>' + esc(c.label) + '</option>';
+        }).join('') + '</select>'
+      + iconSelect('f-icon', it.icon)
+      + '<div class="row-acts">'
+        + '<button type="submit" class="btn small primary">' + (isNew ? 'Add' : 'Save') + '</button>'
+        + (isNew ? '' : '<button type="button" class="btn small danger del">&times;</button>')
+      + '</div>'
+      + '<div class="errs"></div></form>';
   }
 
   function paintTiles() {
-    var live = D.tiles.filter(function (t) { return t.status === 'live'; }).length;
+    var live = D.tiles.filter(function (t) { return t.url; }).length;
     $('#pane-tiles').innerHTML =
-      '<p class="pane-note">' + D.tiles.length + ' tiles, ' + live + ' of them on the dash.</p>'
-      + D.tiles.map(tileForm).join('')
-      + '<h3 class="add-h">Add a tile</h3>' + tileForm(null);
+      '<p class="pane-note">' + D.tiles.length + ' tiles, ' + live + ' of them on the dash. '
+      + 'A tile shows once it has an address, to the people in its category.</p>'
+      + '<div class="rows"><div class="row head">'
+        + '<span>Name</span><span>Description</span><span>Address</span>'
+        + '<span>Category</span><span>Icon</span><span></span></div>'
+      + D.tiles.map(tileRow).join('')
+      + tileRow(null) + '</div>';
   }
+
+  // ── groups and categories ───────────────────────────────────────────────
 
   // ── people ──────────────────────────────────────────────────────────────
 
+  // A person is an address and the sections they see. Kept as a card rather
+  // than a row: eleven checkboxes do not fit in a table cell, and this is the
+  // tab where somebody is reading rather than scanning.
   function personRow(p) {
     var isNew = !p;
     var it = p || { email: '', name: '', groups: [] };
@@ -123,7 +112,8 @@
         + '<label>Name <span class="opt">optional</span>'
           + '<input class="f-pname" value="' + esc(it.name) + '" maxlength="80"></label>'
       + '</div>'
-      + '<fieldset><legend>In</legend><div class="cbs">' + groupBoxes(it.groups, false) + '</div></fieldset>'
+      + '<fieldset><legend>Sections they see</legend><div class="cbs">'
+        + groupBoxes(it.groups) + '</div></fieldset>'
       + '<div class="errs"></div>'
       + '<div class="acts">'
         + '<button type="submit" class="btn primary">' + (isNew ? 'Add' : 'Save') + '</button>'
@@ -135,58 +125,42 @@
     var none = D.people.filter(function (p) { return !p.groups.length; }).length;
     $('#pane-people').innerHTML =
       '<p class="pane-note">' + D.people.length + ' people'
-      + (none ? ', ' + none + ' of them in no groups yet — they still sign in and still '
-          + 'see whatever is open to everyone.' : '.') + '</p>'
+      + (none ? ', ' + none + ' of them in no section yet \u2014 they still sign in and '
+          + 'still see everything under General.' : '.') + '</p>'
       + D.people.map(personRow).join('')
       + '<h3 class="add-h">Add somebody</h3>' + personRow(null);
   }
 
-  // ── groups and categories ───────────────────────────────────────────────
-
-  function simpleRow(kind, it) {
-    var isNew = !it;
-    var x = it || { key: '', label: '', note: '' };
-    var used = kind === 'group'
-      ? D.people.filter(function (p) { return p.groups.indexOf(x.key) >= 0; }).length
-      : D.tiles.filter(function (t) { return t.category === x.key; }).length;
-    return '<form class="card simple" data-kind="' + kind + '" data-key="' + esc(x.key) + '">'
-      + '<div class="row2">'
-        + '<label>Name<input class="f-label" value="' + esc(x.label) + '" maxlength="60"></label>'
-        + '<label>Key<input class="f-skey" value="' + esc(x.key) + '" maxlength="38"'
-          + (isNew ? '' : ' readonly') + '></label>'
+  // Categories are the one list now -- the sections of the dash, and the
+  // thing a person is in. Name and icon, nothing else.
+  function catRow(c) {
+    var isNew = !c;
+    var it = c || { key: '', label: '', icon: 'link' };
+    var tiles = D.tiles.filter(function (t) { return t.category === it.key; }).length;
+    var people = D.people.filter(function (p) { return p.groups.indexOf(it.key) >= 0; }).length;
+    return '<form class="row cat-row' + (isNew ? ' new' : '') + '" data-key="' + esc(it.key) + '">'
+      + '<input class="f-label" value="' + esc(it.label) + '" maxlength="60" placeholder="Name">'
+      + iconSelect('f-icon', it.icon)
+      + '<span class="used">' + (isNew ? '' : tiles + (tiles === 1 ? ' tile' : ' tiles')
+          + ' \u00b7 ' + people + (people === 1 ? ' person' : ' people')) + '</span>'
+      + '<div class="row-acts">'
+        + '<button type="submit" class="btn small primary">' + (isNew ? 'Add' : 'Save') + '</button>'
+        + (isNew ? '' : '<button type="button" class="btn small danger del">&times;</button>')
       + '</div>'
-      + (kind === 'group'
-          ? '<label>Note <span class="opt">optional</span><input class="f-note" value="'
-            + esc(x.note || '') + '" maxlength="200" placeholder="What this unlocks"></label>'
-          : '')
-      + '<div class="errs"></div>'
-      + '<div class="acts">'
-        + '<button type="submit" class="btn primary">' + (isNew ? 'Add' : 'Save') + '</button>'
-        + (isNew || kind !== 'group' ? ''
-            : '<button type="button" class="btn danger del">Remove</button>')
-        + (isNew ? '' : '<span class="used">' + used
-            + (kind === 'group' ? (used === 1 ? ' person' : ' people')
-                                : (used === 1 ? ' tile' : ' tiles')) + '</span>')
-      + '</div></form>';
-  }
-
-  function paintGroups() {
-    $('#pane-groups').innerHTML =
-      '<p class="pane-note">A group is named for the door it opens, not the job somebody '
-      + 'holds. Removing one takes it off every tile and person that had it.</p>'
-      + D.groups.map(function (g) { return simpleRow('group', g); }).join('')
-      + '<h3 class="add-h">Add a group</h3>' + simpleRow('group', null);
+      + '<div class="errs"></div></form>';
   }
 
   function paintCats() {
     $('#pane-cats').innerHTML =
-      '<p class="pane-note">Headings on the dash, in this order. A category is not a '
-      + 'permission — two tools in the same one can be open to completely different people.</p>'
-      + D.categories.map(function (c) { return simpleRow('category', c); }).join('')
-      + '<h3 class="add-h">Add a category</h3>' + simpleRow('category', null);
+      '<p class="pane-note">The sections of the dash, in this order. A person '
+      + 'in a section sees its tiles. General / Staff / Culture is everybody.</p>'
+      + '<div class="rows cats"><div class="row head">'
+        + '<span>Name</span><span>Icon</span><span></span><span></span></div>'
+      + D.categories.map(catRow).join('')
+      + catRow(null) + '</div>';
   }
 
-  function paintAll() { paintTiles(); paintPeople(); paintGroups(); paintCats(); }
+  function paintAll() { paintTiles(); paintPeople(); paintCats(); }
 
   // ── wiring ──────────────────────────────────────────────────────────────
 
@@ -206,19 +180,22 @@
     showErrors(f, []);
 
     var send, body;
-    if (f.classList.contains('tile-form')) { send = 'tile'; body = readTileForm(f); }
+    if (f.classList.contains('tile-row')) {
+      send = 'tile';
+      body = {
+        key: f.dataset.key, name: $('.f-name', f).value, blurb: $('.f-blurb', f).value,
+        url: $('.f-url', f).value, category: $('.f-cat', f).value, icon: $('.f-icon', f).value,
+      };
+    }
     else if (f.classList.contains('person')) {
       send = 'person';
       body = {
         email: $('.f-email', f).value, name: $('.f-pname', f).value,
         groups: $$('.g:checked', f).map(function (b) { return b.value; }),
       };
-    } else if (f.classList.contains('simple')) {
-      send = f.dataset.kind === 'group' ? 'group' : 'category';
-      body = {
-        key: $('.f-skey', f).value, label: $('.f-label', f).value,
-        note: $('.f-note', f) ? $('.f-note', f).value : '',
-      };
+    } else if (f.classList.contains('cat-row')) {
+      send = 'category';
+      body = { key: f.dataset.key, label: $('.f-label', f).value, icon: $('.f-icon', f).value };
     } else return;
 
     api(send, body).then(function (r) {
@@ -233,7 +210,7 @@
     if (del) {
       var f = del.closest('form');
       var what = f.classList.contains('person') ? 'person'
-        : f.classList.contains('simple') ? 'group' : 'tile';
+        : f.classList.contains('cat-row') ? 'group' : 'tile';
       var label = what === 'person' ? f.dataset.email : f.dataset.key;
       if (!confirm('Remove ' + label + '?')) return;
       var body = what === 'person' ? { email: f.dataset.email } : { key: f.dataset.key };
@@ -249,12 +226,18 @@
   });
 
   reload().catch(function (err) {
-    // The admin endpoints answer 404 to anybody who is not an admin, so this
-    // is what somebody who guessed the address sees.
-    $('#notice').innerHTML = '<div class="notice"><strong>This page is not for you.</strong> '
-      + 'Setup is limited to the people named in the dash’s configuration. '
-      + '<a href="/">Back to the dash</a>.</div>';
-    $$('.pane').forEach(function (p) { p.innerHTML = ''; });
-    $('#tabs').hidden = true;
+    // Only a 404 means "not an admin" -- that is what the endpoints answer
+    // everybody else. Anything else is this page being broken, and telling
+    // somebody "not for you" about a rendering bug sends them off to ask for
+    // permissions they already have.
+    if (err.status === 404) {
+      $('#notice').innerHTML = '<div class="notice"><strong>This page is not for you.</strong> '
+        + 'Setup is limited to the people named in the dash’s configuration. '
+        + '<a href="/">Back to the dash</a>.</div>';
+      $$('.pane').forEach(function (p) { p.innerHTML = ''; });
+      $('#tabs').hidden = true;
+      return;
+    }
+    say('Setup could not load: ' + err.message, true);
   });
 })();

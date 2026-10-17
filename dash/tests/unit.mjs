@@ -49,17 +49,26 @@ describe('visibleTiles', () => {
     eq(keys(['FINANCE']), keys(['finance']));
     eq(keys(['  Finance  ']), keys(['finance']));
   });
-  // Against a fixture, because hiding every unbuilt tile leaves no live tile
-  // owned by two groups -- and this rule should not go untested until the day
-  // somebody relies on it.
-  it('shows a tile to any one of the groups that own it', () => {
-    const shared = [{
-      key: 'shared', name: 'Shared', blurb: '-', url: 'https://example.test',
-      icon: 'link', category: 'company', groups: ['wholesale', 'retail'], status: 'live',
+  // A tile's section is now the only thing that decides who sees it: the
+  // department answers the question, so there is no second list to disagree
+  // with it. The fixture is here because the real catalogue has one tile per
+  // live section.
+  it('shows a tile to the department it sits in, and nobody else', () => {
+    const fx = [{
+      key: 'wh', name: 'Wholesale thing', blurb: '-', url: 'https://example.test',
+      icon: 'link', category: 'wholesale',
     }];
-    eq(visibleTiles(['wholesale'], shared).map((t) => t.key), ['shared']);
-    eq(visibleTiles(['retail'], shared).map((t) => t.key), ['shared']);
-    eq(visibleTiles(['marketing'], shared).map((t) => t.key), []);
+    eq(visibleTiles(['wholesale'], fx).map((t) => t.key), ['wh']);
+    eq(visibleTiles(['marketing'], fx).map((t) => t.key), []);
+    eq(visibleTiles([], fx).map((t) => t.key), []);
+  });
+  it('shows a General tile to everybody, placed or not', () => {
+    const fx = [{
+      key: 'g', name: 'Handbook', blurb: '-', url: 'https://example.test',
+      icon: 'link', category: 'general',
+    }];
+    eq(visibleTiles([], fx).map((t) => t.key), ['g']);
+    eq(visibleTiles(null, fx).map((t) => t.key), ['g'], 'even an unknown visitor');
   });
 
   // The failure mode that matters.
@@ -220,45 +229,52 @@ describe('the roster itself', () => {
 // through the same cleaning the seeded rows went through, so a row keyed in
 // cannot be shaped differently from a row that came from the file.
 describe('cleanTile', () => {
-  const cats = [{ key: 'finance' }, { key: 'company' }];
-  const grps = [{ key: 'financials' }, { key: 'wholesale' }];
+  const cats = [{ key: 'finance' }, { key: 'general' }];
   const good = {
-    key: 'hub', name: 'Hub', blurb: 'A hub.', url: 'https://hub.test/',
-    category: 'finance', icon: 'box', groups: ['financials'], status: 'live',
+    name: 'Hub', blurb: 'A hub.', url: 'https://hub.test/',
+    category: 'finance', icon: 'box',
   };
 
-  it('accepts a complete tile', () => {
-    const out = cleanTile(good, cats, grps);
+  it('accepts the five answers the form asks for', () => {
+    const out = cleanTile(good, cats, [], []);
     ok(!out.errors, JSON.stringify(out.errors));
-    eq(out.row.key, 'hub');
+    eq([out.row.name, out.row.category, out.row.icon], ['Hub', 'finance', 'box']);
   });
 
-  // The rule the whole page rests on: nothing is drawn that cannot be opened.
-  // A tile cannot be marked live without somewhere to go, or the dash would
-  // put an empty link in front of somebody.
-  it('refuses to call a tile live without an address', () => {
-    const out = cleanTile({ ...good, url: '' }, cats, grps);
-    ok(out.errors && out.errors.some((e) => /address/i.test(e)));
+  // An address is what makes a tile real, so there is no separate "show it"
+  // to disagree with. One without an address is kept and never drawn.
+  it('derives whether it is shown from whether it has an address', () => {
+    eq(cleanTile(good, cats, [], []).row.status, 'live');
+    eq(cleanTile({ ...good, url: '' }, cats, [], []).row.status, 'soon');
   });
   it('keeps an unfinished tile rather than refusing it', () => {
-    const out = cleanTile({ ...good, url: '', status: 'soon' }, cats, grps);
-    ok(!out.errors, 'an unbuilt tile is allowed, it is just never drawn');
-    eq(out.row.status, 'soon');
+    ok(!cleanTile({ ...good, url: '' }, cats, [], []).errors);
   });
-  it('refuses a tile nobody is given', () => {
-    const out = cleanTile({ ...good, groups: [] }, cats, grps);
-    ok(out.errors && out.errors.some((e) => /nobody/i.test(e)));
+  it('says so when an address was typed and is not one', () => {
+    const out = cleanTile({ ...good, url: 'wholesale hub' }, cats, [], []);
+    ok(out.errors && out.errors.some((e) => /web address/i.test(e)));
   });
-  it('refuses a group or category that does not exist', () => {
-    ok(cleanTile({ ...good, groups: ['made-up'] }, cats, grps).errors);
-    ok(cleanTile({ ...good, category: 'made-up' }, cats, grps).errors);
+
+  // The category is who sees it, so it is the one answer that must be real.
+  it('refuses a category that does not exist', () => {
+    ok(cleanTile({ ...good, category: 'made-up' }, cats, [], []).errors);
   });
-  it('allows everyone, which is not a group but is a valid answer', () => {
-    ok(!cleanTile({ ...good, groups: ['everyone'] }, cats, grps).errors);
+  it('files who-sees-it under the category, with nothing else to disagree', () => {
+    eq(cleanTile(good, cats, [], []).row.groups, 'finance');
   });
-  it('refuses a tile with no key or no name', () => {
-    ok(cleanTile({ ...good, key: '' }, cats, grps).errors);
-    ok(cleanTile({ ...good, name: '  ' }, cats, grps).errors);
+
+  it('makes a key out of the name', () => {
+    eq(cleanTile({ ...good, name: 'Wholesale Hub' }, cats, [], []).row.key, 'wholesale-hub');
+  });
+  it('does not collide with a key already taken', () => {
+    eq(cleanTile({ ...good, name: 'Hub' }, cats, [], ['hub']).row.key, 'hub-2');
+    eq(cleanTile({ ...good, name: 'Hub' }, cats, [], ['hub', 'hub-2']).row.key, 'hub-3');
+  });
+  it('keeps the key an existing tile already has, so renaming is safe', () => {
+    eq(cleanTile({ ...good, key: 'original', name: 'Renamed' }, cats, [], []).row.key, 'original');
+  });
+  it('refuses a tile with no name', () => {
+    ok(cleanTile({ ...good, name: '  ' }, cats, [], []).errors);
   });
 });
 

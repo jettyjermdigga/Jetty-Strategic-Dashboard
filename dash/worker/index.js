@@ -119,7 +119,8 @@ async function admin(request, env, url, who) {
   if (!body) return json({ error: 'That was not JSON.' }, 400);
 
   if (what === 'tile') {
-    const out = cleanTile(body, cat.categories, cat.groups);
+    const out = cleanTile(body, cat.categories, cat.groups,
+                          cat.tiles.map((t) => t.key));
     if (out.errors) return json({ errors: out.errors }, 400);
     await saveTile(env.DB, out.row, who.email);
     return json({ ok: true, tile: out.row });

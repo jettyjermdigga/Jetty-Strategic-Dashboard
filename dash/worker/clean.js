@@ -36,41 +36,57 @@ export function cleanUrl(s) {
   return u.href;
 }
 
-// Returns { row } or { errors }. Validated against the live categories and
-// groups, so a tile cannot be filed under a category that does not exist or
-// handed to a group nobody is in.
-export function cleanTile(input, cat, grp) {
+// Returns { row } or { errors }.
+//
+// Five answers, which is all the Setup form asks for: name, description,
+// address, category, icon.
+//
+// What it no longer asks:
+//
+//   Who sees it -- the category already says. A tile under Wholesale is for
+//   the people in Wholesale, and a second list beside it could only ever
+//   disagree with the first.
+//
+//   Whether to show it -- having an address is what makes a tile real. One
+//   without an address is kept and never drawn, so "not finished" and "not
+//   shown" are the same fact rather than two that can drift apart.
+//
+//   Its key -- derived from the name on the way in, and then fixed, so
+//   renaming a tile is safe.
+export function cleanTile(input, cat, grp, existingKeys) {
   const errors = [];
-  const key = cleanKey(input && input.key);
-  if (!key) errors.push('A tile needs a key: lower case letters, numbers and dashes.');
 
   const name = text(input && input.name, 80);
   if (!name) errors.push('A tile needs a name.');
 
+  // An existing tile keeps the key it was created with; a new one takes one
+  // from its name, with a number on the end if that name is already taken.
+  let key = cleanKey(input && input.key);
+  if (!key) {
+    const base = cleanKey(name);
+    const taken = new Set(existingKeys || []);
+    key = base;
+    for (let n = 2; key && taken.has(key); n++) key = base + '-' + n;
+  }
+  if (!key) errors.push('That name has no letters or numbers in it to make a key from.');
+
   const category = cleanKey(input && input.category);
   if (!cat.some((c) => c.key === category)) errors.push('Pick a category that exists.');
 
-  const want = Array.isArray(input && input.groups) ? input.groups : splitList(input && input.groups);
-  const groups = want.map((g) => String(g).trim().toLowerCase()).filter(Boolean);
-  for (const g of groups) {
-    if (g !== EVERYONE && !grp.some((x) => x.key === g)) errors.push('No such group: ' + g);
-  }
-  if (!groups.length) errors.push('A tile nobody is given is a tile nobody sees.');
-
   const url = cleanUrl(input && input.url);
-  const status = (input && input.status) === 'live' ? 'live' : 'soon';
-  // Saying "live" without somewhere to go would put an empty link on the page.
-  if (status === 'live' && !url) {
-    errors.push('A live tile needs a web address starting https://.');
+  if (input && String(input.url || '').trim() && !url) {
+    errors.push('That address is not a web address. It needs to start https://.');
   }
 
   if (errors.length) return { errors };
   return {
     row: {
-      key, name, url, status, category,
+      key, name, url, category,
       blurb: text(input && input.blurb, 300),
       icon: cleanKey(input && input.icon) || 'link',
-      groups: groups.join(','),
+      // Derived, not asked for: an address is what makes it real.
+      status: url ? 'live' : 'soon',
+      groups: category,
       sort: Number.isFinite(Number(input && input.sort)) ? Number(input.sort) : 0,
     },
   };

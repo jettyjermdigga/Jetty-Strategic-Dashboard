@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS tiles (
 CREATE TABLE IF NOT EXISTS categories (
   cat_key   TEXT PRIMARY KEY,
   label     TEXT NOT NULL,
+  icon      TEXT NOT NULL DEFAULT 'link',
   sort      INTEGER NOT NULL DEFAULT 0
 );
 

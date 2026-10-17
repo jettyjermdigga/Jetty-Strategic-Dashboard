@@ -71,14 +71,15 @@ const CASES = [
   { file: 'dash-wholesale-dark', scheme: 'dark', who: me('wholesale@jettylife.com') },
   { file: 'dash-nogroups-dark', scheme: 'dark', who: me('bill@jettylife.com') },
   { file: 'dash-admin-dark', scheme: 'dark', who: me('jeremy@jettylife.com'),
-    path: 'admin.html', wait: '.tile-form' },
-  { file: 'dash-admin-light', scheme: 'light', who: me('jeremy@jettylife.com'),
-    path: 'admin.html', wait: '.tile-form' },
+    path: 'admin.html', wait: '.tile-row' },
+  { file: 'dash-admin-cats', scheme: 'dark', who: me('jeremy@jettylife.com'),
+    path: 'admin.html', wait: '.tile-row', click: '.setup-tab[data-pane="cats"]',
+    after: '.cat-row' },
 ];
 
 // What /api/admin/all answers, built from the same seed the store uses.
 const ADMIN = {
-  tiles: TILES.map((t) => ({ ...t, groups: t.groups || [] })),
+  tiles: FULL.map((t) => ({ ...t, groups: [t.category] })),
   categories: CATEGORIES,
   groups: GROUPS,
   people: Object.keys(PEOPLE).sort().map((e) => ({ email: e, name: '', groups: PEOPLE[e] })),
@@ -103,7 +104,10 @@ for (const c of CASES) {
   });
   await page.goto('http://local.test/' + (c.path || ''));
   await page.waitForSelector(c.wait || '.tile, .tiles-empty');
-  if (c.click) { await page.locator(c.click).first().click(); await page.waitForSelector('.side-row'); }
+  if (c.click) {
+    await page.locator(c.click).first().click();
+    await page.waitForSelector(c.after || '.side-row');
+  }
   await page.waitForTimeout(350);
   await page.screenshot({ path: path.join(OUT, c.file + '.png') });
 

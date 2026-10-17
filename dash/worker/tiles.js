@@ -52,22 +52,27 @@ export const EVERYONE = 'everyone';
 // people; `groups` decides who sees a tile and nothing else does. The
 // categories only decide where it sits on the page.
 export const CATEGORIES = [
-  { key: 'general',   label: 'General / Staff / Culture' },
-  { key: 'box-truck', label: 'Box Truck' },
-  { key: 'long-branch', label: 'Long Branch' },
-  { key: 'jrf',       label: 'Jetty Rock Foundation' },
-  { key: 'jetty-ink', label: 'Jetty INK' },
-  { key: 'wholesale', label: 'Wholesale' },
-  { key: 'marketing', label: 'Marketing' },
-  { key: 'logistics', label: 'Logistics' },
-  { key: 'prodev',    label: 'ProDev' },
-  { key: 'womens',    label: "Women's" },
-  { key: 'finance',   label: 'Finance' },
+  { key: 'general',     label: 'General / Staff / Culture', icon: 'people' },
+  { key: 'box-truck',   label: 'Box Truck',                 icon: 'truck' },
+  { key: 'long-branch', label: 'Long Branch',               icon: 'store' },
+  { key: 'jrf',         label: 'Jetty Rock Foundation',     icon: 'wave' },
+  { key: 'jetty-ink',   label: 'Jetty INK',                 icon: 'ink' },
+  { key: 'wholesale',   label: 'Wholesale',                 icon: 'box' },
+  { key: 'marketing',   label: 'Marketing',                 icon: 'megaphone' },
+  { key: 'logistics',   label: 'Logistics',                 icon: 'route' },
+  { key: 'prodev',      label: 'ProDev',                    icon: 'board' },
+  { key: 'womens',      label: "Women's",                   icon: 'tag' },
+  { key: 'finance',     label: 'Finance',                   icon: 'chart' },
 ];
+
+// The one department everybody is in. A tile filed under it is company-wide,
+// which is what the name says -- and it is what an unplaced new starter sees,
+// so somebody Access let in is never shown an empty page.
+export const EVERYONE_CAT = 'general';
 
 // Who sees what is drawn from the same list as where things sit, so Setup
 // offers one set of names in both places.
-export const GROUPS = CATEGORIES.map((c) => ({ key: c.key, label: c.label }));
+export const GROUPS = CATEGORIES.map((c) => ({ key: c.key, label: c.label, icon: c.icon }));
 
 
 
@@ -176,11 +181,14 @@ export function visibleTiles(groups, list) {
 
   return (list || TILES).filter((t) => {
     // Rule one: if it cannot be opened, it is not drawn. For anybody.
-    if (t.status !== 'live' || !t.url) return false;
-    const want = (t.groups || []).map(norm);
-    if (want.includes(EVERYONE)) return true;
+    if (!t.url) return false;
+    const cat = norm(t.category);
+    // Rule two: the section a tile sits in is the section you have to be in
+    // to see it. There is no separate list of who-can-see, because the
+    // department already answers that -- see the note above GROUPS.
+    if (cat === EVERYONE_CAT) return true;
     if (!known) return false;
-    return want.some((g) => mine.includes(g));
+    return mine.includes(cat);
   }).map((t) => ({
     key: t.key,
     name: t.name,
