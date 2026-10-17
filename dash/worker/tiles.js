@@ -72,7 +72,7 @@ export const CATEGORIES = [
   { key: 'marketing',   label: 'Marketing',                 icon: 'megaphone' },
   { key: 'logistics',   label: 'Logistics',                 icon: 'route' },
   { key: 'prodev',      label: 'ProDev',                    icon: 'tape' },
-  { key: 'womens',      label: "Women's",                   icon: 'hanger' },
+  { key: 'flagship-store', label: 'Flagship Store',         icon: 'flag' },
   { key: 'finance',     label: 'Finance',                   icon: 'chart' },
 ];
 

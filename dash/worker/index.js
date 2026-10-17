@@ -16,7 +16,7 @@ import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
   readLinks, cleanLink, saveLink, deleteLink,
   cleanTile, cleanPerson, cleanKey, saveTile, deleteTile, savePerson, deletePerson,
-  saveCategory, saveGroup, deleteGroup,
+  saveCategory, deleteCategory, saveGroup, deleteGroup,
 } from './store.js';
 
 const json = (body, status) => new Response(JSON.stringify(body), {
@@ -197,6 +197,10 @@ async function admin(request, env, url, who) {
   }
   if (what === 'category') {
     const out = await saveCategory(env.DB, body);
+    return out.errors ? json(out, 400) : json(out);
+  }
+  if (what === 'category/delete') {
+    const out = await deleteCategory(env.DB, body.key);
     return out.errors ? json(out, 400) : json(out);
   }
   if (what === 'group') {

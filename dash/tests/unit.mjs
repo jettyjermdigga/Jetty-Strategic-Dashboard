@@ -616,6 +616,20 @@ describe('cleanTile keeps icons that Setup no longer asks for', () => {
   });
 });
 
+// Deleting a section. The Categories tab was wired to group/delete -- the
+// retired table -- so it quietly deleted nothing at all for weeks.
+describe('deleting a category', () => {
+  it('has an endpoint, and Setup asks for that one', () => {
+    const idx = fs.readFileSync(path.join(
+      path.dirname(fileURLToPath(import.meta.url)), '..', 'worker', 'index.js'), 'utf8');
+    const adm = fs.readFileSync(path.join(
+      path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'assets', 'admin.js'), 'utf8');
+    ok(/what === 'category\/delete'/.test(idx), 'the Worker has no category/delete');
+    ok(/'category' : 'tile'/.test(adm), 'the Categories tab is not asking for category/delete');
+    ok(!/cat-row'\) \? 'group'/.test(adm), 'the Categories tab still deletes from groups');
+  });
+});
+
 describe('canonicalTarget', () => {
   const HOST = 'www.jettydash.com';
 

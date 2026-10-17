@@ -34,6 +34,9 @@
     squeegee: '<path d="M4.5 3.8h15v5.4h-15z"/><path d="M12 9.2v7.4"/><path d="M6.5 20.2h11"/><path d="M8.8 16.6h6.4v3.6H8.8z"/>',
     tape: '<path d="M3 7.5h18v9H3z"/><path d="M6.5 7.5v3M9.5 7.5v4.5M12.5 7.5v3M15.5 7.5v4.5M18.5 7.5v3"/>',
     hanger: '<path d="M12 7.6a2.2 2.2 0 1 1 2.2-2.2"/><path d="M12 7.6v2.2L3.4 16a1.3 1.3 0 0 0 .8 2.4h15.6a1.3 1.3 0 0 0 .8-2.4L12 9.8"/>',
+    // The flagship, literally. Long Branch already has the storefront, and
+    // two shops drawn the same way defeats the point of drawing them.
+    flag: '<path d="M5.5 21V3.2"/><path d="M5.5 4.3h12.2l-2.4 3.9 2.4 3.9H5.5z"/>',
   };
 
   function iconHtml(key) {

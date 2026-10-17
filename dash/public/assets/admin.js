@@ -319,7 +319,7 @@
       var f = del.closest('form');
       var what = f.classList.contains('person') ? 'person'
         : f.classList.contains('link-row') ? 'link'
-        : f.classList.contains('cat-row') ? 'group' : 'tile';
+        : f.classList.contains('cat-row') ? 'category' : 'tile';
       var label = what === 'person' ? f.dataset.email : f.dataset.key;
       if (!confirm('Remove ' + label + '?')) return;
       var body = what === 'person' ? { email: f.dataset.email } : { key: f.dataset.key };

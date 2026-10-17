@@ -27,7 +27,9 @@ const MERGE_KEY = 'groups-merged-into-departments-2026-10';
 const ASSIGN_KEY = 'tiles-assigned-to-people-2026-10';
 const LABEL_KEY = 'category-labels-2026-10b';
 const HUBS_KEY = 'airtable-hubs-2026-10';
-const ICONS_KEY = 'category-icons-2026-10';
+// Bumped when a category gains an icon, so backfillIcons runs again. It
+// only ever touches rows still holding the default, so re-running is safe.
+const ICONS_KEY = 'category-icons-2026-10b';
 
 let ready = false;
 
@@ -487,6 +489,43 @@ export async function saveCategory(db, input) {
       + 'ON CONFLICT(cat_key) DO UPDATE SET label = excluded.label, sort = excluded.sort')
       .bind(key, label, 'link', sort).run();
   }
+  return { ok: true };
+}
+
+// Deleting a section.
+//
+// It refuses while tiles still sit in it. Allowing it would not lose them --
+// dashCategories gathers anything orphaned into an Other bucket -- but
+// "Other" is where things go to be forgotten, and silently moving somebody's
+// tools there is not what anybody means by deleting an empty section. The
+// count comes back so the message can say what is in the way.
+//
+// Links are different: a link can sit in several categories, so the key is
+// simply taken off them. One left with none falls into Other, which for a
+// bookmark is the honest answer rather than a loss.
+export async function deleteCategory(db, key) {
+  const k = cleanKey(key);
+  if (!k) return { errors: ['No such section.'] };
+
+  const used = await db.prepare('SELECT COUNT(*) AS n FROM tiles WHERE category = ?')
+    .bind(k).first();
+  const n = (used && used.n) || 0;
+  if (n) {
+    return { errors: [n + (n === 1 ? ' tile is' : ' tiles are') + ' still in this section.'
+      + ' Move them to another one first, then delete it.'] };
+  }
+
+  const rows = await db.prepare('SELECT link_key, category FROM links').all();
+  const edits = [];
+  const fix = db.prepare('UPDATE links SET category = ? WHERE link_key = ?');
+  for (const r of rows.results || []) {
+    const had = linkCats(r);
+    const keep = had.filter((c) => c !== k);
+    if (keep.length !== had.length) edits.push(fix.bind(keep.join(','), r.link_key));
+  }
+  if (edits.length) await db.batch(edits);
+
+  await db.prepare('DELETE FROM categories WHERE cat_key = ?').bind(k).run();
   return { ok: true };
 }
 

@@ -37,7 +37,7 @@ export const PEOPLE = {
   // is the whole reason this is a list of sections rather than of ranks.
   'jeremy@jettylife.com':        ['general', 'finance', 'marketing', 'wholesale',
                                   'long-branch', 'jrf', 'box-truck', 'jetty-ink',
-                                  'logistics', 'prodev', 'womens'],
+                                  'logistics', 'prodev'],
   'cory@jettylife.com':          ['general', 'finance', 'wholesale'],
   'john@jettylife.com':          ['general', 'finance'],
   'amy@jettylife.com':           ['general', 'finance'],
