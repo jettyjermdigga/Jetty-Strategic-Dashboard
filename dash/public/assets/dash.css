@@ -80,6 +80,11 @@ button,select,input{font-family:inherit;color:inherit}
   background:var(--card);border:1px solid var(--edge);border-radius:10px;
   padding:19px 20px 18px;text-decoration:none;color:inherit;
   transition:border-color .12s,background .12s,transform .12s;
+  /* Every tile the same size, whatever the description. A row of tiles that
+     step up and down with the length of somebody's prose reads as untidy
+     rather than as information. The height fits three lines of blurb, which
+     is what the clamp below allows. */
+  min-height:148px;
 }
 a.tile:hover{
   border-color:var(--primary-alt);background:var(--card-hover);transform:translateY(-1px);
@@ -94,7 +99,14 @@ a.tile:focus-visible{outline:2px solid var(--primary-alt);outline-offset:2px}
 }
 .tile-ico svg{width:17px;height:17px;display:block}
 .tile-name{font-family:var(--display);font-weight:700;font-size:16px}
-.tile-blurb{font-family:var(--body);font-size:13.5px;line-height:1.55;opacity:.78;margin:0}
+/* Three lines, then an ellipsis. A tile is a signpost, not the documentation:
+   whatever is longer than this belongs on the far side of the click, and
+   clamping is what keeps the tiles the same size no matter who writes them. */
+.tile-blurb{
+  font-family:var(--body);font-size:13.5px;line-height:1.55;opacity:.78;margin:0;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;
+  overflow:hidden;
+}
 
 /* Category headings. Drawn only when there is more than one, so a single
    kind of work does not get a label it does not need. */

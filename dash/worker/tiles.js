@@ -73,7 +73,7 @@ export const TILES = [
   {
     key: 'calendar',
     name: 'Company Calendar',
-    blurb: 'Events, marketing, social, meetings and deadlines. Everything the company has on, in one month view.',
+    blurb: 'Events, Marketing, Meetings, & Deadlines across every department within the company.',
     url: 'https://jetty-calendar.jeremy-85e.workers.dev',
     icon: 'calendar',
     category: 'company',
