@@ -146,3 +146,41 @@ legend{
   .row,.rows.cats .row{grid-template-columns:minmax(0,1fr);gap:7px}
   .row.head{display:none}
 }
+
+/* People rows: name, email, and the sections they see as a box of chips.
+   Eleven checkboxes per person made the row taller than everything else on
+   the page, and what you read down this list is who is in what. */
+.rows.people .row{
+  grid-template-columns:minmax(120px,1fr) minmax(170px,1.3fr) minmax(240px,2.2fr) 96px;
+  align-items:start;
+}
+.rows.people .row.head{align-items:center}
+.rows.people input{margin-top:1px}
+
+.secbox{
+  display:flex;flex-wrap:wrap;gap:5px;align-items:center;
+  border:1px solid var(--field-line);background:var(--field);
+  border-radius:6px;padding:4px 5px;min-height:32px;
+}
+.secbox .chip{
+  display:inline-flex;align-items:center;gap:3px;
+  font-family:var(--body);font-size:12px;line-height:1;
+  background:color-mix(in srgb,var(--primary) 26%,transparent);
+  border:1px solid color-mix(in srgb,var(--primary) 45%,transparent);
+  border-radius:999px;padding:4px 5px 4px 9px;
+}
+.secbox .chip-x{
+  background:transparent;border:0;color:inherit;cursor:pointer;
+  font-size:14px;line-height:1;padding:0 2px;opacity:.7;
+}
+.secbox .chip-x:hover{opacity:1}
+.secbox .sec-add{
+  font-family:var(--mono);font-size:11px;
+  border:1px dashed var(--field-line);background:transparent;
+  border-radius:999px;padding:4px 6px;width:auto;min-width:0;cursor:pointer;
+}
+.secbox .sec-add:hover{border-color:var(--primary-alt)}
+
+@media (max-width:900px){
+  .rows.people .row{grid-template-columns:minmax(0,1fr)}
+}

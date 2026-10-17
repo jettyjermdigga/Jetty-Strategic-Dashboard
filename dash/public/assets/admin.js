@@ -99,36 +99,55 @@
 
   // ── people ──────────────────────────────────────────────────────────────
 
-  // A person is an address and the sections they see. Kept as a card rather
-  // than a row: eleven checkboxes do not fit in a table cell, and this is the
-  // tab where somebody is reading rather than scanning.
+  // The sections somebody is in, as a box of chips rather than eleven
+  // checkboxes. With eleven departments the checkbox grid was taller than the
+  // rest of the row put together, and what you want to read down the list is
+  // "who is in what", not "which of eleven boxes is ticked".
+  function secBox(selected) {
+    var sel = selected || [];
+    var chips = sel.map(function (k) {
+      var g = D.groups.filter(function (x) { return x.key === k; })[0];
+      return '<span class="chip" data-key="' + esc(k) + '">' + esc(g ? g.label : k)
+        + '<button type="button" class="chip-x" aria-label="Remove">\u00d7</button></span>';
+    }).join('');
+    var rest = D.groups.filter(function (g) { return sel.indexOf(g.key) < 0; });
+    var add = rest.length
+      ? '<select class="sec-add"><option value="">+ Section</option>'
+        + rest.map(function (g) {
+            return '<option value="' + esc(g.key) + '">' + esc(g.label) + '</option>';
+          }).join('') + '</select>'
+      : '';
+    return '<div class="secbox">' + chips + add + '</div>';
+  }
+
   function personRow(p) {
     var isNew = !p;
     var it = p || { email: '', name: '', groups: [] };
-    return '<form class="card person" data-email="' + esc(it.email) + '">'
-      + '<div class="row2">'
-        + '<label>Email<input class="f-email" value="' + esc(it.email) + '" '
-          + (isNew ? 'placeholder="name@jettylife.com"' : 'readonly') + '></label>'
-        + '<label>Name <span class="opt">optional</span>'
-          + '<input class="f-pname" value="' + esc(it.name) + '" maxlength="80"></label>'
+    return '<form class="row person" data-email="' + esc(it.email) + '">'
+      + '<input class="f-pname" value="' + esc(it.name) + '" maxlength="80" placeholder="Name">'
+      + '<input class="f-email" value="' + esc(it.email) + '" '
+        + (isNew ? 'placeholder="name@jettylife.com"' : 'readonly') + '>'
+      + secBox(it.groups)
+      + '<div class="row-acts">'
+        + '<button type="submit" class="btn small primary">' + (isNew ? 'Add' : 'Save') + '</button>'
+        + (isNew ? '' : '<button type="button" class="btn small danger del">&times;</button>')
       + '</div>'
-      + '<fieldset><legend>Sections they see</legend><div class="cbs">'
-        + groupBoxes(it.groups) + '</div></fieldset>'
-      + '<div class="errs"></div>'
-      + '<div class="acts">'
-        + '<button type="submit" class="btn primary">' + (isNew ? 'Add' : 'Save') + '</button>'
-        + (isNew ? '' : '<button type="button" class="btn danger del">Remove</button>')
-      + '</div></form>';
+      + '<div class="errs"></div></form>';
   }
 
   function paintPeople() {
-    var none = D.people.filter(function (p) { return !p.groups.length; }).length;
+    var none = D.people.filter(function (p) {
+      return !p.groups.filter(function (g) { return g !== 'general'; }).length;
+    }).length;
     $('#pane-people').innerHTML =
       '<p class="pane-note">' + D.people.length + ' people'
-      + (none ? ', ' + none + ' of them in no section yet \u2014 they still sign in and '
-          + 'still see everything under General.' : '.') + '</p>'
+      + (none ? ', ' + none + ' of them in no section beyond General \u2014 they still '
+          + 'sign in, and still see everything under General.' : '.')
+      + ' A section here is a section of the dash, not a job title.</p>'
+      + '<div class="rows people"><div class="row head">'
+        + '<span>Name</span><span>Email</span><span>Sections they see</span><span></span></div>'
       + D.people.map(personRow).join('')
-      + '<h3 class="add-h">Add somebody</h3>' + personRow(null);
+      + personRow(null) + '</div>';
   }
 
   // Categories are the one list now -- the sections of the dash, and the
@@ -191,7 +210,7 @@
       send = 'person';
       body = {
         email: $('.f-email', f).value, name: $('.f-pname', f).value,
-        groups: $$('.g:checked', f).map(function (b) { return b.value; }),
+        groups: $$('.secbox .chip', f).map(function (c) { return c.dataset.key; }),
       };
     } else if (f.classList.contains('cat-row')) {
       send = 'category';
@@ -205,7 +224,40 @@
     }).catch(function (err) { say(err.message, true); });
   });
 
+  // Adding and removing a section edits the row in place. Nothing reaches
+  // the server until Save, so a mis-click is undone by not saving.
+  document.addEventListener('change', function (e) {
+    if (!e.target.classList.contains('sec-add')) return;
+    var key = e.target.value;
+    if (!key) return;
+    var box = e.target.closest('.secbox');
+    var g = D.groups.filter(function (x) { return x.key === key; })[0];
+    var chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.dataset.key = key;
+    chip.innerHTML = esc(g ? g.label : key)
+      + '<button type="button" class="chip-x" aria-label="Remove">\u00d7</button>';
+    box.insertBefore(chip, e.target);
+    e.target.querySelector('option[value="' + key + '"]').remove();
+    e.target.value = '';
+  });
+
   document.addEventListener('click', function (e) {
+    var x = e.target.closest('.chip-x');
+    if (x) {
+      e.preventDefault();
+      var chip = x.closest('.chip');
+      var sel = chip.closest('.secbox').querySelector('.sec-add');
+      var g = D.groups.filter(function (y) { return y.key === chip.dataset.key; })[0];
+      if (sel && g) {
+        var opt = document.createElement('option');
+        opt.value = g.key;
+        opt.textContent = g.label;
+        sel.appendChild(opt);
+      }
+      chip.remove();
+      return;
+    }
     var del = e.target.closest('.del');
     if (del) {
       var f = del.closest('form');
