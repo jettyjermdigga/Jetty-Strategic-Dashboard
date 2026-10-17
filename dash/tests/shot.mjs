@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { visibleTiles, dashCategories, greeting, TILES, CATEGORIES } from '../worker/tiles.js';
+import { visibleTiles, dashCategories, greeting, TILES, HUBS, CATEGORIES } from '../worker/tiles.js';
 import { PEOPLE } from '../worker/people.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
@@ -102,7 +102,23 @@ const SHUT_OUT = {
   tilesHeld: null, greeting: greeting(''), tiles: [], cats: [],
 };
 
+// What the dash looks like once the Airtable hubs are in and assigned: the
+// real catalogue, not a fixture. This is the case to look at before saying
+// anything about how it will feel to use.
+const HUBBED = (email) => {
+  const all = [...TILES.filter((t) => t.url), ...HUBS];
+  const held = all.map((t) => t.key);
+  const vis = visibleTiles(held, all);
+  return {
+    email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
+    tilesHeld: held, greeting: greeting(email),
+    tiles: vis, cats: dashCategories(vis, [], CATEGORIES),
+  };
+};
+
 const CASES = [
+  { file: 'dash-hubs-dark', scheme: 'dark', who: HUBBED('jeremy@jettylife.com'), wait: '.catbar' },
+  { file: 'dash-hubs-light', scheme: 'light', who: HUBBED('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-bare-light', scheme: 'light', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-bare-dark', scheme: 'dark', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-full-dark', scheme: 'dark', who: full('jeremy@jettylife.com'), wait: '.catbar' },

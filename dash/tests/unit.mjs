@@ -4,7 +4,7 @@
 // never more. A portal that falls open when an endpoint times out is a worse
 // failure than one that goes quiet.
 
-import { visibleTiles, tileSections, linkSections, dashCategories, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
+import { visibleTiles, tileSections, linkSections, dashCategories, greeting, TILES, HUBS, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker/clean.js';
 import { canonicalTarget } from '../worker/canon.js';
@@ -425,6 +425,44 @@ describe('dashCategories', () => {
 
 // Renaming a category after it is already in a database. The seed alone
 // never reaches one that exists, because syncCategories is guarded.
+// The Airtable hubs seeded as tiles. These came out of the estate itself, so
+// the thing worth guarding is that they still agree with the rest of the
+// dash -- a hub filed under a category that does not exist would land in the
+// Other bucket on everybody's page.
+describe('HUBS', () => {
+  it('files every hub under a category that exists', () => {
+    const known = new Set(CATEGORIES.map((c) => c.key));
+    for (const h of HUBS) ok(known.has(h.category), h.key + ' is filed under ' + h.category);
+  });
+  it('gives every hub a real address', () => {
+    for (const h of HUBS) {
+      ok(/^https:\/\/airtable\.com\/app[A-Za-z0-9]{14}$/.test(h.url),
+         h.key + ' has a bad address: ' + h.url);
+    }
+  });
+  it('has no duplicate keys, and none clashing with the original seed', () => {
+    const keys = HUBS.map((h) => h.key);
+    eq(keys.length, new Set(keys).size, 'duplicate key among the hubs');
+    for (const t of TILES) ok(!keys.includes(t.key), t.key + ' is in both lists');
+  });
+  it('points each hub at a different base', () => {
+    const urls = HUBS.map((h) => h.url);
+    eq(urls.length, new Set(urls).size, 'two hubs point at the same base');
+  });
+  // An Airtable base is a door most of the company cannot open. A tile
+  // nobody can use is the thing this dash was built not to show.
+  it('opens none of them to everyone', () => {
+    for (const h of HUBS) eq(h.everyone, false, h.key + ' is open to everyone');
+  });
+  it('retires only placeholders the seed actually shipped', () => {
+    // Mirrors RETIRED in store.js, which cannot be imported here.
+    for (const k of ['wholesale', 'ambassadors']) {
+      ok(TILES.some((t) => t.key === k), k + ' is retired but was never seeded');
+      eq(TILES.find((t) => t.key === k).url, '', k + ' is retired but has an address');
+    }
+  });
+});
+
 describe('the category rename', () => {
   it('renames away from a label no category still uses', () => {
     const live = new Set(CATEGORIES.map((c) => c.label));

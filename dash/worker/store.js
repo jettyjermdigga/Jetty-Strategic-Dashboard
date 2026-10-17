@@ -12,7 +12,7 @@
 
 import schema from './schema.sql';
 import { sqlStatements } from './sql.js';
-import { TILES, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES } from './tiles.js';
+import { TILES, HUBS, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES } from './tiles.js';
 import { cleanKey, cleanUrl, cleanTile, cleanPerson, cleanLink } from './clean.js';
 import { PEOPLE } from './people.js';
 
@@ -26,6 +26,7 @@ const CATS_KEY = 'categories-by-department-2026-10';
 const MERGE_KEY = 'groups-merged-into-departments-2026-10';
 const ASSIGN_KEY = 'tiles-assigned-to-people-2026-10';
 const LABEL_KEY = 'category-labels-2026-10b';
+const HUBS_KEY = 'airtable-hubs-2026-10';
 
 let ready = false;
 
@@ -54,7 +55,64 @@ export async function ensureSchema(db) {
   await mergeGroups(db);
   await assignTiles(db);
   await renameCategories(db);
+  await seedHubs(db);
   ready = true;
+}
+
+// The hubs that already exist in Airtable, added as tiles.
+//
+// INSERT OR IGNORE, so a hub somebody has already created by hand keeps their
+// wording and this adds only what is missing. Run once and never again.
+//
+// The two placeholders the repo shipped with -- Wholesale Hub and Ambassador
+// Hub, both with no address -- are retired here, because the real thing now
+// exists under its own key. They go only if they are STILL empty: an address
+// typed into one since means somebody built it, and that wins.
+//
+// Retiring a tile means taking its key off everybody who holds it, in the
+// same breath. A key left behind in a person's row matches no tile, and
+// cleanPerson refuses to save a row that names one -- so leaving it would
+// quietly break the People tab for whoever had it. That is the same bug the
+// groups merge shipped once already.
+const RETIRED = ['wholesale', 'ambassadors'];
+
+async function seedHubs(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?').bind(HUBS_KEY).first();
+  if (done) return;
+
+  const now = new Date().toISOString();
+  const batch = [];
+
+  const tile = db.prepare(
+    'INSERT OR IGNORE INTO tiles (tile_key, name, blurb, url, icon, category, everyone, '
+    + 'status, sort, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  HUBS.forEach((t, i) => batch.push(tile.bind(
+    t.key, t.name, t.blurb, t.url, t.icon, t.category, 0, t.status, 100 + i, now, 'hubs')));
+
+  const drop = db.prepare("DELETE FROM tiles WHERE tile_key = ? AND url = ''");
+  for (const k of RETIRED) batch.push(drop.bind(k));
+
+  if (batch.length) await db.batch(batch);
+
+  // Only the ones that actually went. A placeholder somebody filled in is
+  // still a live tile and must stay on the people holding it.
+  const left = await db.prepare('SELECT tile_key FROM tiles').all();
+  const live = new Set((left.results || []).map((r) => r.tile_key));
+  const gone = RETIRED.filter((k) => !live.has(k));
+  if (gone.length) {
+    const rows = await db.prepare('SELECT email, tiles FROM people').all();
+    const fix = db.prepare('UPDATE people SET tiles = ? WHERE email = ?');
+    const edits = [];
+    for (const r of rows.results || []) {
+      const had = String(r.tiles || '').split(',').map((x) => x.trim()).filter(Boolean);
+      const keep = had.filter((k) => !gone.includes(k));
+      if (keep.length !== had.length) edits.push(fix.bind(keep.join(','), r.email));
+    }
+    if (edits.length) await db.batch(edits);
+  }
+
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(HUBS_KEY, String(HUBS.length), now).run();
 }
 
 // Renaming a category after it has been seeded.

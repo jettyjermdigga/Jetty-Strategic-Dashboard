@@ -156,7 +156,7 @@ button,select,input{font-family:inherit;color:inherit}
    scrolling sideways: eleven of these do not fit on a laptop in one line,
    and a row you have to drag hides exactly the ones at the end. */
 .catbar{
-  display:flex;flex-wrap:nowrap;gap:5px;
+  display:flex;flex-wrap:nowrap;gap:4px;
   margin:0 0 22px;padding:0 0 18px;border-bottom:1px solid var(--edge);
   /* One line. Eleven of these fit across a laptop only because the chip is
      tight -- see the sizes below. Narrower than that and the row scrolls
@@ -167,10 +167,10 @@ button,select,input{font-family:inherit;color:inherit}
 .catbar::-webkit-scrollbar{height:6px}
 .catbar::-webkit-scrollbar-thumb{background:var(--edge);border-radius:3px}
 .cb{
-  display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;white-space:nowrap;
-  font-family:var(--mono);font-size:9.5px;letter-spacing:.055em;text-transform:uppercase;
+  display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;white-space:nowrap;
+  font-family:var(--mono);font-size:9px;letter-spacing:.03em;text-transform:uppercase;
   font-weight:600;line-height:1;
-  padding:8px 10px;border-radius:999px;
+  padding:8px 9px;border-radius:999px;
   border:1px solid var(--edge);background:var(--card);color:var(--ink);
   cursor:pointer;transition:background .12s,border-color .12s;
 }
@@ -183,8 +183,8 @@ button,select,input{font-family:inherit;color:inherit}
 .cb.on{background:var(--ink);color:var(--surface);border-color:var(--ink)}
 .cb.on .cb-n{border-color:var(--surface);opacity:.85}
 .cb-n{
-  font-size:8.5px;border:1px solid var(--edge);border-radius:999px;
-  padding:2px 5px;opacity:.72;
+  font-size:8px;border:1px solid var(--edge);border-radius:999px;
+  padding:2px 4px;opacity:.72;
 }
 /* Nothing in it for you. Not a button, no count, no hover: it is there so
    the row is the same shape for everybody, and that is all. */
