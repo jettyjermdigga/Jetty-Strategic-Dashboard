@@ -31,6 +31,14 @@ binding = "DB"
 database_name = "jetty_dash"
 database_id = "__D1_DATABASE_ID__"
 
+# Music Monday artwork. Filled by .github/workflows/music-photos.yml, which
+# pulls what Airtable holds, resizes it and pushes it here. Created by
+# provision_r2.py on deploy; if that fails the binding is stripped and the
+# archive simply shows no pictures.
+[[r2_buckets]]
+binding = "MUSIC"
+bucket_name = "jetty-dash-music"
+
 [assets]
 directory = "./public"
 binding = "ASSETS"

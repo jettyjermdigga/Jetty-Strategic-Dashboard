@@ -99,6 +99,15 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: python provision_d1.py
 
+      # Same idea as the database: create it if it is not there, and strip
+      # the binding rather than failing the deploy if the token cannot.
+      - name: Provision the artwork bucket
+        working-directory: dash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python provision_r2.py
+
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:

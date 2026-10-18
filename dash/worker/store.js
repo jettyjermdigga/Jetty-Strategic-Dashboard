@@ -33,6 +33,7 @@ const HUBS_KEY = 'airtable-hubs-2026-10';
 const ICONS_KEY = 'category-icons-2026-10b';
 const MUSIC_KEY = 'music-monday-import-2026-10';
 const OFFERED_KEY = 'tiles-ever-offered';
+const PHOTOKEY_KEY = 'music-photo-keys-2026-10';
 
 let ready = false;
 
@@ -64,8 +65,36 @@ export async function ensureSchema(db) {
   await seedHubs(db);
   await backfillIcons(db);
   await seedMusic(db);
+  await setPhotoKeys(db);
   await offerNewTiles(db);
   ready = true;
+}
+
+// Which weeks have artwork.
+//
+// The key is derived from the date, not stored per upload: a week has one
+// pick, so `2026-10-12.webp` is the only name its picture can have. That
+// means the import never has to write to the database -- it only has to put
+// the object where the key says.
+//
+// seedMusic is a one-shot and already ran, so the keys need setting here
+// rather than there. Rows that have since been edited by hand keep whatever
+// key they hold; only empty ones are filled.
+async function setPhotoKeys(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?')
+    .bind(PHOTOKEY_KEY).first();
+  if (done) return;
+
+  const withArt = PICKS.filter((p) => p.p);
+  const put = db.prepare(
+    "UPDATE music SET photo_key = ? WHERE pick_date = ? AND photo_key = ''");
+  const batch = withArt.map((p) => put.bind(p.d + '.webp', p.d));
+
+  const BATCH = 100;
+  for (let i = 0; i < batch.length; i += BATCH) await db.batch(batch.slice(i, i + BATCH));
+
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(PHOTOKEY_KEY, String(batch.length), new Date().toISOString()).run();
 }
 
 // Tiles added to the repo after the first deploy.

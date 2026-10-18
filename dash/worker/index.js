@@ -70,6 +70,9 @@ export default {
       const who = await identify(request, env);
       if (url.pathname === '/api/me') return await me(request, env, who);
       if (url.pathname === '/api/music') return await music(request, env, who);
+      if (url.pathname.startsWith('/music/photo/')) {
+        return await photo(request, env, who, url);
+      }
       if (url.pathname.startsWith('/api/admin/')) return await admin(request, env, url, who);
       return json({ error: 'No such endpoint.' }, 404);
     } catch (err) {
@@ -146,6 +149,36 @@ async function music(request, env, who) {
     return json({ picks: [], reason: who.reason || '' });
   }
   return json({ picks: await readMusic(env.DB) });
+}
+
+// Music Monday artwork out of R2.
+//
+// Served through the Worker rather than from a public bucket, so the same
+// Access that guards the rest of the portal guards the pictures. A bucket
+// opened to the internet would be the one unauthenticated hole in it.
+async function photo(request, env, who, url) {
+  if (who.accessConfigured && !who.verified) return new Response(null, { status: 404 });
+  if (!env.MUSIC) return new Response(null, { status: 404 });
+
+  const key = decodeURIComponent(url.pathname.slice('/music/photo/'.length));
+  // One pick a week, so a key is a date and an extension and nothing else.
+  // Anything with a slash or a dot-dot in it is not asking for artwork.
+  if (!/^\d{4}-\d{2}-\d{2}\.(webp|jpg|jpeg|png)$/.test(key)) {
+    return new Response(null, { status: 404 });
+  }
+
+  const obj = await env.MUSIC.get(key);
+  if (!obj) return new Response(null, { status: 404 });
+
+  return new Response(obj.body, {
+    headers: {
+      'content-type': obj.httpMetadata?.contentType || 'image/webp',
+      // Immutable in practice: the key is the week, and a week's picture
+      // does not change. Private, because it is behind Access.
+      'cache-control': 'private, max-age=86400',
+      'etag': obj.httpEtag,
+    },
+  });
 }
 
 async function admin(request, env, url, who) {

@@ -1,0 +1,87 @@
+name: Import Music Monday photos
+
+# By hand, never on a schedule.
+#
+# A scheduled sync would make Airtable load-bearing again, which is the
+# opposite of the direction this is going. The point is to carry thirteen
+# years across once and then upload each week's picture on the dash itself.
+#
+# Safe to re-run: keys are derived from the date, so a second run overwrites
+# each object with the same thing rather than making duplicates.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "import" to run'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: music-photos
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "import" ]; then
+            echo "::error::Type \"import\" in the confirm box to run this."
+            exit 1
+          fi
+
+      - name: Refuse without an Airtable token
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+        run: |
+          if [ -z "$AIRTABLE_TOKEN" ]; then
+            echo "::error::AIRTABLE_TOKEN is not set."
+            echo "Create a read-only Airtable personal access token scoped to the"
+            echo "JETTY HUB base, then add it under Settings -> Secrets -> Actions."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Pillow
+        run: pip install --quiet Pillow
+
+      - name: Pull from Airtable and resize
+        working-directory: dash
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+        run: python import_photos.py
+
+      # The bucket normally exists already, because the deploy makes it. This
+      # is here so the import can be the very first thing that runs.
+      - name: Make sure the bucket exists
+        working-directory: dash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python provision_r2.py
+
+      - name: Upload to R2
+        working-directory: dash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          n=0
+          for f in photos/*.webp; do
+            key=$(basename "$f")
+            npx --yes wrangler@4 r2 object put "jetty-dash-music/$key" \
+              --file "$f" --content-type image/webp --remote >/dev/null
+            n=$((n+1))
+            if [ $((n % 25)) -eq 0 ]; then echo "  uploaded $n…"; fi
+          done
+          echo "Uploaded $n objects to jetty-dash-music."

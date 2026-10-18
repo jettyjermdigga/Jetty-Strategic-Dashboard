@@ -173,7 +173,8 @@ const ADMIN = {
 
 // The real thirteen years, newest first, exactly as the Worker sends them.
 const MUSIC = [...PICKS].reverse().map((p) => ({
-  date: p.d, artist: p.a, song: p.s, by: p.by, yt: p.y, url: p.v, photo: '',
+  date: p.d, artist: p.a, song: p.s, by: p.by, yt: p.y, url: p.v,
+  photo: p.p ? p.d + '.webp' : '',
 }));
 
 const browser = await chromium.launch();
@@ -186,6 +187,14 @@ for (const c of CASES) {
     if (p === '/api/me') return route.fulfill({ json: c.who });
     if (p === '/api/admin/all') return route.fulfill({ json: ADMIN });
     if (p === '/api/music') return route.fulfill({ json: { picks: MUSIC } });
+    // A stand-in for the artwork: the real files live in R2, which the
+    // harness has no access to. Solid grey at the right aspect, so the
+    // layout being checked is the layout that ships.
+    if (p.startsWith('/music/photo/')) {
+      return route.fulfill({ contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">'
+          + '<rect width="300" height="300" fill="#7d8a92"/></svg>' });
+    }
     const file = path.join(ROOT, p === '/' ? '/index.html' : p);
     if (!fs.existsSync(file)) return route.fulfill({ status: 404, body: '' });
     return route.fulfill({

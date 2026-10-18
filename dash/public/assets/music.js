@@ -31,10 +31,22 @@
     return p.url || '';
   }
 
+  // onerror rather than a check: the key is derived from the date, so the
+  // page believes a picture exists before R2 confirms it. A week whose
+  // upload failed collapses the thumbnail instead of showing a broken one.
+  var HIDE = ' onerror="this.style.display=&quot;none&quot;"';
+
+  function art(p, cls) {
+    if (!p.photo) return '';
+    return '<img class="' + cls + '" loading="lazy" alt=""' + HIDE
+      + ' src="/music/photo/' + esc(p.photo) + '">';
+  }
+
   function rowHtml(p) {
     var link = watchUrl(p);
-    return '<div class="mu-row">'
+    return '<div class="mu-row' + (p.photo ? ' has-art' : '') + '">'
       + '<span class="mu-d">' + esc(nice(p.date)) + '</span>'
+      + (p.photo ? art(p, 'mu-art') : '<span class="mu-art-gap"></span>')
       + '<span class="mu-a">' + esc(p.artist) + '</span>'
       + '<span class="mu-song">' + esc(p.song) + '</span>'
       + '<span class="mu-by">' + esc(p.by) + '</span>'
@@ -63,6 +75,9 @@
 
   function nowHtml(p) {
     if (!p) return '';
+    var cover = p.photo
+      ? '<div class="now-art">' + art(p, 'now-img') + '</div>'
+      : '';
     var vid = p.yt
       ? '<div class="now-vid"><iframe src="https://www.youtube-nocookie.com/embed/' + esc(p.yt)
         + '" title="' + esc(p.artist + ' — ' + p.song) + '" allowfullscreen '
@@ -71,7 +86,7 @@
       : '';
     var link = watchUrl(p);
     return '<div class="now-in' + (vid ? ' has-vid' : '') + '">'
-      + '<div class="now-txt">'
+      + '<div class="now-txt">' + cover
         + '<p class="now-k">This week &middot; ' + esc(nice(p.date)) + '</p>'
         + '<h1 class="now-a">' + esc(p.artist) + '</h1>'
         + (p.song ? '<p class="now-s">' + esc(p.song) + '</p>' : '')
