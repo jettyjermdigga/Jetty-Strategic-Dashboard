@@ -60,7 +60,12 @@ jobs:
       # without exposing the data on an unauthenticated GitHub Pages URL.
       - name: Prepare metadata-only publish dir
         if: steps.gate.outputs.rebuild == 'true'
-        run: mkdir -p meta_only && cp output/meta.json meta_only/meta.json
+        run: |
+          mkdir -p meta_only
+          cp output/meta.json meta_only/meta.json
+          # The week's figures, so the note can be written from the build
+          # rather than from the workbook. See write_facts().
+          cp output/facts.json meta_only/facts.json
       - name: Publish build metadata to gh-pages
         if: steps.gate.outputs.rebuild == 'true'
         uses: peaceiris/actions-gh-pages@v4

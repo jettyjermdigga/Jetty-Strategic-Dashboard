@@ -4455,6 +4455,84 @@ def build_html(d):
         '</script>\n</body>\n</html>'
     )
 
+# ── Facts for the weekly note ────────────────────────────────────────────────
+#
+# Everything needed to write the week's commentary is already computed up
+# there to draw the charts, and then thrown away. This writes the numbers out
+# so the note can be written FROM THE BUILD rather than from the spreadsheet.
+#
+# That distinction is the whole point. The one time figures on this dashboard
+# were wrong, it was because they had been read out of a tab nobody maintained
+# any more. Numbers taken from here are definitionally the numbers on the
+# page, because the page was drawn from them.
+#
+# Published to gh-pages beside meta.json, so it can be read without Drive
+# credentials and without guessing which workbook is current.
+
+# The series behind the charts are long and say nothing a sentence would. The
+# summaries are what a note is written from.
+FACT_KEYS = [
+    'week', 'year', 'net_inc_var', 'ytd_status', 'update_status',
+    'rev_lines', 'cogs_lines', 'opex_lines', 'opex_categories',
+    'cf', 'cf_ann_plan', 'cf_forecast',
+    'inv_latest_wk', 'inv_prev_wk', 'on_order', 'on_order_cats',
+    'bp_latest', 'bp_ytd', 'bp_year_start', 'bp_flags', 'bp_gap_watch',
+    'ar_latest', 'ap_cns', 'ap_key_vendors_open',
+    'labor_total', 'labor_brand', 'labor_ink', 'payroll_latest',
+    'whsl_act', 'loc_status', 'net_income_trend',
+]
+
+# Enough for any one of them to be useful, small enough that the whole file
+# stays readable in one go.
+FACT_MAX_BYTES = 12000
+
+
+def _jsonable(x):
+    """sets, tuples, dates and numpy scalars all turn up in here."""
+    if isinstance(x, (set, frozenset, tuple)):
+        return sorted(x) if isinstance(x, (set, frozenset)) else list(x)
+    if hasattr(x, 'isoformat'):
+        return x.isoformat()
+    if hasattr(x, 'item'):
+        try:
+            return x.item()
+        except Exception:                                     # noqa: BLE001
+            pass
+    return str(x)
+
+
+def write_facts(d):
+    out = {}
+    skipped = []
+    for k in FACT_KEYS:
+        if k not in d:
+            continue
+        try:
+            blob = json.dumps(d[k], default=_jsonable)
+        except Exception as err:                              # noqa: BLE001
+            skipped.append(k + ' (not serialisable: ' + type(err).__name__ + ')')
+            continue
+        if len(blob) > FACT_MAX_BYTES:
+            skipped.append(k + ' (' + str(len(blob)) + ' bytes, over the cap)')
+            continue
+        out[k] = json.loads(blob)
+
+    out['_note'] = ('Written by build_dashboard.py for the weekly note. These are '
+                    'the figures the dashboard was drawn from. Do not re-derive '
+                    'them from the workbook.')
+    if skipped:
+        out['_omitted'] = skipped
+
+    os.makedirs('output', exist_ok=True)
+    with open('output/facts.json', 'w') as fh:
+        json.dump(out, fh, indent=1, sort_keys=True)
+    size = os.path.getsize('output/facts.json') / 1024
+    print('Wrote output/facts.json (' + str(round(size, 1)) + ' KB, '
+          + str(len(out) - 1 - (1 if skipped else 0)) + ' of '
+          + str(len(FACT_KEYS)) + ' keys'
+          + ('; omitted ' + ', '.join(skipped) if skipped else '') + ')')
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -4470,6 +4548,8 @@ def main():
         f.write(html)
     size = os.path.getsize("output/index.html") / 1024
     print("Done — output/index.html written (" + str(round(size,1)) + " KB)")
+
+    write_facts(d)
 
     source_modified = os.environ.get("SOURCE_MODIFIED_TIME", "")
     jrf_modified = os.environ.get("JRF_MODIFIED_TIME", "")
