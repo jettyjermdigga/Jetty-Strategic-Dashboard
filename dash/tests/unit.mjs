@@ -4,7 +4,7 @@
 // never more. A portal that falls open when an endpoint times out is a worse
 // failure than one that goes quiet.
 
-import { visibleTiles, tileSections, linkSections, dashCategories, linkCats, greeting, TILES, HUBS, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
+import { visibleTiles, tileSections, linkSections, dashCategories, linkCats, greeting, TILES, GROUPS, CATEGORIES, CAT_MOVES, GROUP_MOVES, EVERYONE } from '../worker/tiles.js';
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker/clean.js';
 import { canonicalTarget } from '../worker/canon.js';
@@ -450,44 +450,6 @@ describe('dashCategories', () => {
 
 // Renaming a category after it is already in a database. The seed alone
 // never reaches one that exists, because syncCategories is guarded.
-// The Airtable hubs seeded as tiles. These came out of the estate itself, so
-// the thing worth guarding is that they still agree with the rest of the
-// dash -- a hub filed under a category that does not exist would land in the
-// Other bucket on everybody's page.
-describe('HUBS', () => {
-  it('files every hub under a category that exists', () => {
-    const known = new Set(CATEGORIES.map((c) => c.key));
-    for (const h of HUBS) ok(known.has(h.category), h.key + ' is filed under ' + h.category);
-  });
-  it('gives every hub a real address', () => {
-    for (const h of HUBS) {
-      ok(/^https:\/\/airtable\.com\/app[A-Za-z0-9]{14}$/.test(h.url),
-         h.key + ' has a bad address: ' + h.url);
-    }
-  });
-  it('has no duplicate keys, and none clashing with the original seed', () => {
-    const keys = HUBS.map((h) => h.key);
-    eq(keys.length, new Set(keys).size, 'duplicate key among the hubs');
-    for (const t of TILES) ok(!keys.includes(t.key), t.key + ' is in both lists');
-  });
-  it('points each hub at a different base', () => {
-    const urls = HUBS.map((h) => h.url);
-    eq(urls.length, new Set(urls).size, 'two hubs point at the same base');
-  });
-  // An Airtable base is a door most of the company cannot open. A tile
-  // nobody can use is the thing this dash was built not to show.
-  it('opens none of them to everyone', () => {
-    for (const h of HUBS) eq(h.everyone, false, h.key + ' is open to everyone');
-  });
-  it('retires only placeholders the seed actually shipped', () => {
-    // Mirrors RETIRED in store.js, which cannot be imported here.
-    for (const k of ['wholesale', 'ambassadors']) {
-      ok(TILES.some((t) => t.key === k), k + ' is retired but was never seeded');
-      eq(TILES.find((t) => t.key === k).url, '', k + ' is retired but has an address');
-    }
-  });
-});
-
 describe('the category rename', () => {
   it('renames away from a label no category still uses', () => {
     const live = new Set(CATEGORIES.map((c) => c.label));
@@ -578,7 +540,7 @@ describe('every icon named has a drawing behind it', () => {
     }
   });
   it('draws every icon a seeded tile asks for', () => {
-    for (const t of [...TILES, ...HUBS]) {
+    for (const t of TILES) {
       ok(drawn.has(t.icon), t.key + ' wants the "' + t.icon + '" icon, which is not drawn');
     }
   });
@@ -632,7 +594,7 @@ describe('a tile added to the repo can actually reach a live database', () => {
 
   it('has a step that offers repo tiles to an existing database', () => {
     ok(/async function offerNewTiles/.test(store), 'nothing carries new tiles across');
-    ok(/await offerNewTiles\(db\)/.test(store), 'offerNewTiles is never called');
+    ok(/^\s*await offerNewTiles\(db\);/m.test(store), 'offerNewTiles is never called');
   });
   it('runs that step on every boot, not behind a one-shot guard', () => {
     // The whole point: it must not sit behind `if (done) return`, which is
@@ -644,7 +606,7 @@ describe('a tile added to the repo can actually reach a live database', () => {
   });
   it('only offers tiles that have an address', () => {
     const fn = store.slice(store.indexOf('async function offerNewTiles'));
-    ok(/filter\(\(t\) => t\.url\)/.test(fn.slice(0, 1200)),
+    ok(/TILES\.filter\(\(t\) => t\.url\)/.test(fn.slice(0, 1200)),
        'a tile with no url would be inserted, and the retired placeholders would return');
   });
   // The specific tile that went missing and prompted all this.
@@ -652,6 +614,32 @@ describe('a tile added to the repo can actually reach a live database', () => {
     const m = TILES.find((t) => t.key === 'music-monday');
     ok(m, 'the Music Monday tile is not in TILES');
     eq([Boolean(m.url), m.everyone], [true, true]);
+  });
+});
+
+// Twenty-nine tiles pointing at Airtable bases were seeded unasked and
+// taken out again. Nothing links out of this dash unless somebody chose to
+// put it there, so the repo must not carry a list of them to re-offer.
+describe('no Airtable hubs are seeded from the repo', () => {
+  it('has no HUBS list to re-add them from', async () => {
+    const m = await import('../worker/tiles.js');
+    eq(m.HUBS, undefined, 'HUBS is back; tiles are added in Setup, not here');
+  });
+  it('seeds no tile pointing at an Airtable base', () => {
+    for (const t of TILES) {
+      ok(!/airtable\.com/.test(t.url || ''),
+         t.key + ' links to Airtable and was not asked for');
+    }
+  });
+  it('removes the ones already in the database', () => {
+    const store = fs.readFileSync(path.join(
+      path.dirname(fileURLToPath(import.meta.url)), '..', 'worker', 'store.js'), 'utf8');
+    ok(/async function removeHubs/.test(store), 'nothing takes the seeded hubs back out');
+    ok(/^\s*await removeHubs\(db\);/m.test(store), 'removeHubs is never called');
+    // It must also take the keys off the people holding them, or the People
+    // tab refuses to save those rows.
+    ok(/UPDATE people SET tiles/.test(store.slice(store.indexOf('async function removeHubs'))),
+       'removeHubs leaves dead keys on people');
   });
 });
 

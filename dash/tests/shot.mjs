@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { visibleTiles, dashCategories, linkCats, greeting, TILES, HUBS, CATEGORIES } from '../worker/tiles.js';
+import { visibleTiles, dashCategories, linkCats, greeting, TILES, CATEGORIES } from '../worker/tiles.js';
 import { PEOPLE } from '../worker/people.js';
 import { PICKS } from '../worker/music-seed.js';
 
@@ -111,6 +111,37 @@ const SHUT_OUT = {
   tilesHeld: null, greeting: greeting(''), tiles: [], cats: [],
 };
 
+// Exactly what is live today: the two seeded tiles, no links. Two of eleven
+// lit, which is the state that looked broken before.
+const BARE = (email) => {
+  const held = TILES.map((t) => t.key);
+  const vis = visibleTiles(held);
+  return {
+    email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
+    tilesHeld: held, greeting: greeting(email),
+    tiles: vis, cats: dashCategories(vis, [], CATEGORIES),
+  };
+};
+
+// Somebody who holds no tiles at all but can still reach the links. The
+// category lights on its links alone, and the pane says why it has no tools.
+const LINKS_ONLY = (email) => ({
+  email, verified: true, accessConfigured: true, reason: '', isAdmin: false,
+  tilesHeld: [], greeting: greeting(email),
+  tiles: [], cats: dashCategories([], LINKS, CATEGORIES),
+  links: flat(LINKS),
+});
+
+// What somebody sees on a hostname the Access application does not cover:
+// nothing, and the reason.
+const SHUT_OUT = {
+  email: '', verified: false, accessConfigured: true, isAdmin: false,
+  reason: 'No Cloudflare Access headers reached this Worker at all, which means'
+    + ' jettydash.com is not on the Access application -- add that exact'
+    + ' hostname to its destinations.',
+  tilesHeld: null, greeting: greeting(''), tiles: [], cats: [],
+};
+
 // What the dash looks like once the Airtable hubs are in and assigned: the
 // real catalogue, not a fixture. This is the case to look at before saying
 // anything about how it will feel to use.
@@ -126,8 +157,6 @@ const HUBBED = (email) => {
 };
 
 const CASES = [
-  { file: 'dash-hubs-dark', scheme: 'dark', who: HUBBED('jeremy@jettylife.com'), wait: '.catbar' },
-  { file: 'dash-hubs-light', scheme: 'light', who: HUBBED('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-bare-light', scheme: 'light', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-bare-dark', scheme: 'dark', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-full-dark', scheme: 'dark', who: full('jeremy@jettylife.com'), wait: '.catbar' },

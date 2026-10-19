@@ -336,68 +336,12 @@ export function dashCategories(visible, links, cats) {
     .map((c) => ({ ...c, open: c.tiles.length > 0 || c.links.length > 0 }));
 }
 
-// The hubs that already exist in Airtable.
+// There is deliberately no list of Airtable hubs here.
 //
-// The dash is a front door, and these are the rooms. They were keyed in by
-// hand nowhere: this list came out of the Airtable estate itself, so every
-// address points at a base that exists rather than one somebody hoped for.
+// Twenty-nine of them were seeded from the Airtable estate without being
+// asked for, and taken out again: nothing links out of this dash unless
+// somebody chose to put it there. Tiles are added by hand in Setup, which
+// is the only way the page stays a considered list rather than a dump of
+// everything that exists.
 //
-// All of them are tiles rather than links, because each is one of our tools
-// and gets handed to people on the People tab. None is open to everyone --
-// an Airtable base is a door most of the company cannot open, and a tile
-// nobody can use is exactly what this dash was built not to show.
-//
-// `everyone` stays off on all of them for the same reason. Assign them.
-export const HUBS = [
-  // General / staff
-  ['jetty-hub',        'Jetty Hub',                 'general',     'appJbKBr1gHkPtd8a', 'people',    'The company-wide hub.'],
-  ['culture',          'Culture',                   'general',     'appgNb2lJH41H5GKN', 'people',    'What we are doing together.'],
-  ['staff-directory',  'Staff',                     'general',     'app1G0g1yY9xddplm', 'people',    'The roster, the org chart and who reports to whom.'],
-  ['hr-tracker',       'HR Tracker',                'general',     'appBwxopsft7oEsTO', 'people',    'Hiring, reviews and everything HR keeps.'],
-  ['staff-resources',  'Staff Resource Center',     'general',     'app28sNlO0UV6YjeY', 'link',      'Policies, forms and where to find things.'],
-  ['special-events',   'Special Events',            'general',     'appk5E2ccOUb3Kg28', 'calendar',  'Events and initiatives across the company.'],
-  ['partner-resources','Partner Resources',         'general',     'appXd2luDe6AmIpfW', 'link',      'What we share with partners.'],
-
-  // Wholesale
-  ['wholesale-crm',    'Wholesale CRM',             'wholesale',   'appVIK4CawVEY8hBJ', 'box',       'Shops, contacts, reps, order logs and the order portal.'],
-  ['whsl-resources',   'WHSL Resource Center',      'wholesale',   'appHPbrOjbD4AfSlG', 'link',      'Line sheets, assets and what reps need in the field.'],
-  ['whsl-mkg',         'WHSL Marketing',            'wholesale',   'app99gxsU51JI9hnS', 'megaphone', 'Co-op, POP and retailer-facing marketing.'],
-  ['whsl-range',       '2027 WHSL Range',           'wholesale',   'appbUkkODoQccT1K5', 'board',     'The range as it is being built.'],
-
-  // Marketing
-  ['ambassador-hub',   'Ambassador Hub',            'marketing',   'appYtcCZBWHuM2YNJ', 'people',    'Roster, agreements and activity for the ambassador programme.'],
-  ['model-database',   'Model Database',            'marketing',   'appEh5lNqTDShAHdl', 'people',    'Models, past shoots and inbound inquiries.'],
-  ['campaign-manager', 'Campaign Manager',          'marketing',   'appcZk8czidqIxfhs', 'megaphone', 'Campaigns from brief through to launch.'],
-  ['photo-video',      'Photo & Video',             'marketing',   'app2WfiyUjmSeO7zi', 'link',      'Shoots, assets and the shot lists behind them.'],
-  ['social-media',     'Social Media',              'marketing',   'apptPriK0DJfmoC7J', 'megaphone', 'The social calendar and what is going out.'],
-
-  // Jetty INK
-  ['ink-hub',          'Jetty INK',                 'jetty-ink',   'appSn77VZY1zX8sM5', 'ink',       'The INK hub.'],
-  ['ink-operations',   'INK Operations',            'jetty-ink',   'appesjSYbGiGadrEL', 'route',     'Production scheduling and shop operations.'],
-
-  // Jetty Rock Foundation
-  ['jrf-hub',          'JRF Hub',                   'jrf',         'appzBRKFVfMG6bjwN', 'wave',      'The foundation hub.'],
-  ['watershed',        'Jetty Watershed',           'jrf',         'appaxLxkG1Ha6Me4R', 'wave',      'Watershed work and the data behind it.'],
-  ['oysters',          'Oysters & Initiatives',     'jrf',         'appFwg7sVdp00sdmm', 'wave',      'Shell recycling, oysters and standing initiatives.'],
-
-  // Long Branch
-  ['long-branch-shop', 'Long Branch Shop',          'long-branch', 'app449ot8w0oXCKEH', 'store',     'The shop: stock, staffing and the day to day.'],
-
-  // ProDev
-  ['brand-production', 'Brand Production',          'prodev',      'applvN4vFAPqnDwK2', 'board',     'Product through the production calendar.'],
-  ['product-mothership','Product Mothership',       'prodev',      'appPeXf4Bdttj2bq6', 'board',     'The product master.'],
-
-  // Logistics
-  ['supply-orders',    'Supply Orders',             'logistics',   'app7FqwVvMKjZipJT', 'box',       'What has been ordered and what has landed.'],
-  ['shipping',         'Shipping & Receiving',      'logistics',   'appGYiK3ipjtzylb5', 'truck',     'Inbound and outbound.'],
-  ['inventory-hub',    'Inventory Hub',             'logistics',   'appyegmmjb4mkTLhr', 'box',       'Counts, locations and what is where.'],
-  ['customer-service', 'Customer Service',          'logistics',   'appjF0MecgqM1pW4B', 'people',    'Tickets, returns and what customers are asking.'],
-
-  // Finance
-  ['ledger',           'Ledger',                    'finance',     'appW8jAfERj3iBzqt', 'chart',     'The ledger.'],
-].map(([key, name, category, base, icon, blurb]) => ({
-  key, name, category, icon, blurb,
-  url: 'https://airtable.com/' + base,
-  everyone: false,
-  status: 'live',
-}));
+// If a hub is wanted, add it in Setup. Do not put it back here.
