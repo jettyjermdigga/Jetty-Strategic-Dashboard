@@ -151,6 +151,20 @@ describe('merging the sub-types that said the same thing', () => {
     eq(mergeSubTypes(''), null);
     eq(mergeSubTypes(null), null);
   });
+  // Two lists that have to agree: SUB_TYPES says which sub-types are
+  // Marketing, and migrate.js keeps its own copy to decide whether a legacy
+  // row was a Marketing item. Adding one to the taxonomy and forgetting the
+  // other would file it as an Event instead -- silently, and only for old
+  // data, which is the kind of drift nobody notices for a year.
+  it('agrees with the migration about which sub-types are Marketing', () => {
+    const src = fs.readFileSync(path.join(
+      path.dirname(fileURLToPath(import.meta.url)), '..', 'worker', 'migrate.js'), 'utf8');
+    const m = src.match(/const MARKETING_SUBS = \[([\s\S]*?)\];/);
+    ok(m, 'MARKETING_SUBS not found in migrate.js');
+    const inMigration = (m[1].match(/'([a-z0-9-]+)'/g) || []).map((q) => q.slice(1, -1));
+    const inTaxonomy = SUB_TYPES.filter((s) => s.department === 'marketing').map((s) => s.key);
+    eq([...inMigration].sort(), [...inTaxonomy].sort());
+  });
   it('only ever produces keys the taxonomy knows', () => {
     const keys = SUB_TYPES.map((s) => s.key);
     for (const merged of Object.values(SUB_TYPE_MERGES)) {

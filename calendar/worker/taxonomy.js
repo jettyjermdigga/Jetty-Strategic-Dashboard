@@ -141,6 +141,12 @@ export const SUB_TYPES = [
   // scheduling, not a difference in what the item is about.
   { key: 'email-sms',   label: 'Email/SMS',   department: 'marketing',
     sheetValues: ['Email', 'SMS', 'Email/SMS', 'Email / SMS'] },
+  // Paid media, kept apart from Campaign/Promo because the question "what did
+  // we spend money placing?" is a different one from "what were we running".
+  // A campaign can be entirely organic and a paid push can carry no campaign.
+  { key: 'paid-advo',   label: 'Paid Advo',   department: 'marketing',
+    sheetValues: ['Paid', 'Paid Ads', 'Paid Advertising', 'Paid Advo',
+                  'Paid Media', 'Paid Social', 'Advo'] },
   { key: 'photo-video', label: 'Photo/Video', department: 'marketing' },
   { key: 'collab',      label: 'Collab',      department: 'marketing' },
   { key: 'ambassador',  label: 'Ambassador',  department: 'marketing' },

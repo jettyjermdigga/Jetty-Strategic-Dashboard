@@ -145,8 +145,8 @@ export function promoteSocial(row) {
 // Deadlines are not guessed at. Nothing stored says which meetings were really
 // deadlines, and inventing it from a title would be worse than leaving them
 // where they are for somebody to re-tag.
-const MARKETING_SUBS = ['campaign-promotion', 'email-sms', 'photo-video', 'collab',
-                        'ambassador', 'influencer', 'website'];
+const MARKETING_SUBS = ['campaign-promotion', 'email-sms', 'paid-advo', 'photo-video',
+                        'collab', 'ambassador', 'influencer', 'website'];
 
 export function splitKind(row) {
   const was = (row.event_type || '').trim();
