@@ -108,6 +108,21 @@
 
   function chipBox(src, sel) {
     var list = chipSrc(src);
+    // Tiles open to everyone are shown, locked. They are not assigned to
+    // anybody, so there is nothing to add or remove -- but leaving them out
+    // entirely made the picker look broken: the Company Calendar is on this
+    // person's dash and no amount of looking at their row said so.
+    //
+    // Deliberately NOT class "chip": the submit handler collects .chip to
+    // build the tiles list, and sending these would store an assignment the
+    // All flag already covers -- which would then survive All being turned
+    // off, quietly giving one person a tile nobody meant them to keep.
+    var locked = src !== 'tiles' ? '' : D.tiles
+      .filter(function (t) { return t.everyone; })
+      .map(function (t) {
+        return '<span class="chip-all" title="Open to everyone on staff">'
+          + esc(t.name) + '<span class="chip-tag">all</span></span>';
+      }).join('');
     var label = function (k) {
       var m = list.filter(function (x) { return x.key === k; })[0];
       return m ? m.label : k;
@@ -124,7 +139,8 @@
             return '<option value="' + esc(x.key) + '">' + esc(x.label) + '</option>';
           }).join('') + '</select>'
       : '';
-    return '<div class="secbox" data-src="' + esc(src) + '">' + chips + add + '</div>';
+    return '<div class="secbox" data-src="' + esc(src) + '">'
+      + locked + chips + add + '</div>';
   }
 
   function personRow(p) {

@@ -111,51 +111,6 @@ const SHUT_OUT = {
   tilesHeld: null, greeting: greeting(''), tiles: [], cats: [],
 };
 
-// Exactly what is live today: the two seeded tiles, no links. Two of eleven
-// lit, which is the state that looked broken before.
-const BARE = (email) => {
-  const held = TILES.map((t) => t.key);
-  const vis = visibleTiles(held);
-  return {
-    email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
-    tilesHeld: held, greeting: greeting(email),
-    tiles: vis, cats: dashCategories(vis, [], CATEGORIES),
-  };
-};
-
-// Somebody who holds no tiles at all but can still reach the links. The
-// category lights on its links alone, and the pane says why it has no tools.
-const LINKS_ONLY = (email) => ({
-  email, verified: true, accessConfigured: true, reason: '', isAdmin: false,
-  tilesHeld: [], greeting: greeting(email),
-  tiles: [], cats: dashCategories([], LINKS, CATEGORIES),
-  links: flat(LINKS),
-});
-
-// What somebody sees on a hostname the Access application does not cover:
-// nothing, and the reason.
-const SHUT_OUT = {
-  email: '', verified: false, accessConfigured: true, isAdmin: false,
-  reason: 'No Cloudflare Access headers reached this Worker at all, which means'
-    + ' jettydash.com is not on the Access application -- add that exact'
-    + ' hostname to its destinations.',
-  tilesHeld: null, greeting: greeting(''), tiles: [], cats: [],
-};
-
-// What the dash looks like once the Airtable hubs are in and assigned: the
-// real catalogue, not a fixture. This is the case to look at before saying
-// anything about how it will feel to use.
-const HUBBED = (email) => {
-  const all = [...TILES.filter((t) => t.url), ...HUBS];
-  const held = all.map((t) => t.key);
-  const vis = visibleTiles(held, all);
-  return {
-    email, verified: true, accessConfigured: true, reason: '', isAdmin: true,
-    tilesHeld: held, greeting: greeting(email),
-    tiles: vis, cats: dashCategories(vis, [], CATEGORIES),
-  };
-};
-
 const CASES = [
   { file: 'dash-bare-light', scheme: 'light', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-bare-dark', scheme: 'dark', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
@@ -290,6 +245,30 @@ for (const c of CASES) {
     });
     return [...new Set(bad)];
   });
+  // The People tab shows open-to-everyone tiles as locked chips. They must
+  // not be class "chip": the submit handler collects .chip to build the
+  // tiles list, so leaking one would store an assignment the All flag
+  // already covers -- and it would outlive All being switched off.
+  if (c.file === 'dash-admin-people') {
+    const bad = await page.evaluate(() => {
+      const all = [...document.querySelectorAll('.chip-all')];
+      return {
+        n: all.length,
+        asChip: all.filter((e) => e.matches('.chip')).length,
+        removable: all.filter((e) => e.querySelector('.chip-x')).length,
+        submitted: [...document.querySelectorAll('.secbox .chip')]
+          .filter((e) => e.classList.contains('chip-all')).length,
+      };
+    });
+    const faults = [];
+    if (!bad.n) faults.push('no locked chips rendered at all');
+    if (bad.asChip) faults.push(bad.asChip + ' locked chips match .chip');
+    if (bad.removable) faults.push(bad.removable + ' locked chips have a remove button');
+    if (bad.submitted) faults.push(bad.submitted + ' locked chips would be submitted');
+    console.log('  locked chips: ' + bad.n
+      + (faults.length ? '  FAULT: ' + faults.join('; ') : '  not submittable, not removable'));
+  }
+
   // Every tile and link leaves the dash, so every one of them opens beside
   // it -- and target=_blank without rel=noopener hands the opened page a
   // handle on this one. Checked rather than trusted, because it is one
