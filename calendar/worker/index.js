@@ -456,6 +456,13 @@ function normalise(input, existing) {
   const veh = multi('vehicles', VEHICLE_KEYS, 'vehicle');
   out.vehicles = veh.length ? veh.join(',') : null;
 
+  // Optional on everything else -- an Event may or may not need driving to.
+  // On a Vehicle Booking it is the whole of what is being booked, and one
+  // saved without it is an item nobody can act on.
+  if (out.event_type === 'vehicle' && !veh.length) {
+    errors.push('A vehicle booking has to say which vehicle.');
+  }
+
   out.status = clean(pick('status'), 20) || 'Booked';
   if (!STATUSES.includes(out.status)) {
     errors.push('Status must be one of ' + STATUSES.join(', ') + '.');

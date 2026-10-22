@@ -124,6 +124,33 @@ describe('planMigration', () => {
   });
 });
 
+// Booking a van is the shortest form on the calendar: which one, whose,
+// when. The vehicle is the point, so unlike everywhere else it is required.
+describe('vehicle bookings', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
+  const cal = fs.readFileSync(path.join(HERE, '..', 'public', 'assets', 'calendar.js'), 'utf8');
+
+  it('is an event type', () => {
+    ok(EVENT_TYPE_KEYS.includes('vehicle'), 'no vehicle event type');
+  });
+  it('is refused by the server with no vehicle on it', () => {
+    ok(/out\.event_type === 'vehicle' && !veh\.length/.test(idx),
+       'the server accepts a vehicle booking with no vehicle');
+  });
+  it('asks six questions, not an Event\'s ten', () => {
+    const m = cal.match(/if \(k === 'vehicle'\) return \[([^\]]+)\]/);
+    ok(m, 'no vehicle step list');
+    const steps = (m[1].match(/'([a-z]+)'/g) || []).map((q) => q.slice(1, -1));
+    eq(steps, ['kind', 'title', 'dept', 'vehicle', 'when', 'final']);
+  });
+  // Both flows share one set of checkboxes. Two would both sit in the DOM
+  // and both be collected on save.
+  it('renders the vehicle checkboxes exactly once', () => {
+    eq((cal.match(/class="f-veh"/g) || []).length, 1);
+  });
+});
+
 describe('merging the sub-types that said the same thing', () => {
   it('folds either half of a pair onto one key', () => {
     eq(mergeSubTypes('email'), 'email-sms');
@@ -577,9 +604,20 @@ describe('taxonomy', () => {
     // They were scoped once, and a Flagship event could not record one at all.
     for (const n of NEEDS) ok(!n.department, n.key + ' is scoped again');
   });
-  it('keeps the five Event Types the form branches on', () => {
-    eq([...EVENT_TYPE_KEYS].sort(),
-       ['deadline', 'event', 'marketing', 'meeting', 'social']);
+  // Was a list of five, which went stale the moment a sixth was added. The
+  // thing actually worth guarding is in the old test's name: the form has to
+  // branch on every type. One added here and not wired there gets the Event
+  // form by default -- ten questions, most of them wrong for it, and no
+  // error anywhere to say so.
+  it('gives every Event Type a branch in the form', () => {
+    const cal = fs.readFileSync(path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..', 'public', 'assets', 'calendar.js'), 'utf8');
+    for (const k of EVENT_TYPE_KEYS) {
+      if (k === 'event') continue;          // the fall-through every other one departs from
+      ok(cal.includes("k === '" + k + "'"),
+         k + ' has no branch in activeSteps, so it would get the Event form');
+    }
   });
   it('keeps Cancelled, which the ICS feed and the strikethrough rely on', () => {
     eq(STATUSES, ['Booked', 'Pending', 'Cancelled']);

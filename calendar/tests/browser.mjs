@@ -252,8 +252,11 @@ await t('starts every row of chips at the same x', async () => {
     .evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left)));
   return lefts.length === 4 && new Set(lefts).size === 1;
 });
+// Counted from the taxonomy, not written as a number: a literal here went
+// stale the moment a sixth kind was added, and the failure said nothing
+// about why.
 await t('leads with every kind, Events first', async () =>
-  (await page.locator('.fchip[data-axis="kinds"]').count()) === 5
+  (await page.locator('.fchip[data-axis="kinds"]').count()) === TAXONOMY.eventTypes.length
   && (await page.locator('.fchip[data-axis="kinds"]').first().textContent()).startsWith('Events'));
 await t('opens the list once something is picked', async () => {
   await chip('Wholesale').click();
@@ -466,6 +469,16 @@ await t('asks how many only once extra staff is ticked', async () => {
   return !before && await page.locator('#staffRow').isVisible();
 });
 await page.locator('#f-staff').fill('3');
+await page.locator('button[data-act="next"]').click();
+
+// Vehicles moved out of "what does it need" into their own step, so a
+// Vehicle Booking can ask this and nothing else from that screen. An Event
+// gets one more click for it, and it stays optional there.
+await t('asks an event what has to be driven there, on its own step', async () => {
+  const n = await page.locator('.f-veh').count();
+  const needsGone = !(await page.locator('.f-need').first().isVisible());
+  return n === 3 && needsGone;
+});
 await page.locator('button[data-act="next"]').click();
 
 await t('asks how the event did, after everything else', async () =>

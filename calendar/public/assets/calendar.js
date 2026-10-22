@@ -1212,8 +1212,14 @@
           + '<div class="fld" id="staffRow" hidden><label for="f-staff">How many extra staff?</label>'
           + '<input type="text" id="f-staff" value="' + esc(it.staff_count || '')
           + '" maxlength="20" inputmode="numeric" placeholder="e.g. 3"></div>'
-          + '<h4 class="step-q sub">Vehicles <span class="lbl-note">optional</span></h4>'
-          + '<div class="chk-grid">'
+          )
+
+      // Its own step rather than a heading inside "what does it need", because
+      // a Vehicle Booking asks this and nothing else from that screen. One set
+      // of checkboxes either way: two would both be in the DOM and both get
+      // collected on save.
+      + sect('vehicle', 'Which vehicle?', '',
+          '<div class="chk-grid">'
           + tax('vehicles').map(function (v) {
               return '<label class="fld-inline"><input type="checkbox" class="f-veh" value="'
                 + esc(v.key) + '"' + (vehiclesOf(it).indexOf(v.key) >= 0 ? ' checked' : '') + '>'
@@ -1320,6 +1326,10 @@
       var k = kind();
       if (k === 'meeting' || k === 'deadline') return ['kind', 'title', 'dept', 'when', 'final'];
 
+      // Six screens against an Event's ten. Department stays because a shared
+      // van calendar is only readable if it says whose booking each one is.
+      if (k === 'vehicle') return ['kind', 'title', 'dept', 'vehicle', 'when', 'final'];
+
       var out = ['kind', 'title', 'dept', 'extra'];
       if (subsAvailable().length) out.push('subs');
 
@@ -1340,7 +1350,7 @@
         return out;
       }
 
-      out.push('when', 'where', 'needs', 'results', 'final');
+      out.push('when', 'where', 'needs', 'vehicle', 'results', 'final');
       return out;
     }
 
@@ -1404,6 +1414,10 @@
       if (step === 'title' && !$('#f-title').value.trim()) return 'Give it a name first.';
       if (step === 'dept' && !primary()) return 'Pick the department that owns it.';
       if (step === 'when' && !$('#f-start').value) return 'Pick a start date.';
+      // Optional on an Event, which may or may not need driving to. Required
+      // on a Vehicle Booking, where it is the whole of what is being booked.
+      if (step === 'vehicle' && kind() === 'vehicle'
+          && !document.querySelector('.f-veh:checked')) return 'Pick a vehicle.';
       return '';
     }
 

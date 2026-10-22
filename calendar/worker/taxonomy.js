@@ -43,6 +43,11 @@ export const EVENT_TYPES = [
     note: 'Internal. Who and when, and nothing else.' },
   { key: 'deadline', label: 'Deadline',
     note: 'A date something is due. One date, no end.' },
+  // Deliberately the shortest form on here. Booking a van is not a project:
+  // which one, who has it, when, done. Everything an Event asks -- sub-types,
+  // venue, permits, how it did -- would be four screens of nothing to answer.
+  { key: 'vehicle', label: 'Vehicle Booking',
+    note: 'A van or the box truck, out. Which one, whose, and when.' },
 ];
 
 // Only ever one of these on a post.
