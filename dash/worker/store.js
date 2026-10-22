@@ -15,6 +15,7 @@ import { sqlStatements } from './sql.js';
 import { PICKS } from './music-seed.js';
 import { TILES, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES, linkCats } from './tiles.js';
 import { cleanKey, cleanUrl, cleanTile, cleanPerson, cleanLink } from './clean.js';
+import { cleanLine } from './budget.js';
 import { PEOPLE } from './people.js';
 
 // Re-exported so callers have one import for "the store", while the rules
@@ -666,4 +667,48 @@ export async function readMusic(db) {
     date: r.pick_date, artist: r.artist, song: r.song, by: r.chosen_by,
     yt: r.youtube, url: r.video_url, photo: r.photo_key,
   }));
+}
+
+// ── the budget ──────────────────────────────────────────────────────────
+
+/** Every decision made for a year, keyed by line. */
+export async function readBudget(db, year) {
+  const res = await db.prepare(
+    'SELECT line_key, amount, note, flagged, updated_at, updated_by '
+    + 'FROM budget WHERE year = ?').bind(year).all();
+  const out = {};
+  for (const r of res.results || []) {
+    out[r.line_key] = {
+      amount: r.amount, note: r.note || '',
+      flagged: Boolean(r.flagged), at: r.updated_at, by: r.updated_by,
+    };
+  }
+  return out;
+}
+
+/** Save one line. A cleared amount with no note removes the row entirely,
+ *  so "undecided" stays genuinely undecided rather than becoming a null
+ *  somebody has to interpret. What counts as a figure is decided in
+ *  budget.js, where Node can check it. */
+export async function saveBudgetLine(db, year, key, input, who) {
+  const k = cleanKey(key);
+  if (!k) return { errors: ['No such line.'] };
+
+  const out = cleanLine(input);
+  if (out.errors) return out;
+  const { amount, note, flagged, clear } = out.row;
+
+  if (clear) {
+    await db.prepare('DELETE FROM budget WHERE year = ? AND line_key = ?').bind(year, k).run();
+    return { ok: true, cleared: true };
+  }
+
+  await db.prepare(
+    'INSERT INTO budget (year, line_key, amount, note, flagged, updated_at, updated_by) '
+    + 'VALUES (?, ?, ?, ?, ?, ?, ?) '
+    + 'ON CONFLICT(year, line_key) DO UPDATE SET amount = excluded.amount, '
+    + 'note = excluded.note, flagged = excluded.flagged, '
+    + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
+    .bind(year, k, amount, note, flagged, new Date().toISOString(), who || '').run();
+  return { ok: true };
 }

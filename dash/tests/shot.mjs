@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { visibleTiles, dashCategories, linkCats, greeting, TILES, CATEGORIES } from '../worker/tiles.js';
 import { PEOPLE } from '../worker/people.js';
 import { PICKS } from '../worker/music-seed.js';
+import {
+  rows as budgetRows, calendar as budgetCalendar, WEEK_CURVE, CURVE_IS_PLACEHOLDER,
+  GROUPS as BUDGET_GROUPS, BASES, CADENCES, BASELINE_YEAR, FIRST_YEAR,
+} from '../worker/budget.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
 // globally here, not as a dependency of this directory.
@@ -138,6 +142,18 @@ const CASES = [
   { file: 'dash-admin-links', scheme: 'dark', who: me('jeremy@jettylife.com'),
     path: 'admin.html', wait: '.tile-row', click: '.setup-tab[data-pane="links"]',
     after: '.link-row' },
+  { file: 'budget-year-light', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'budget.html', wait: '.bd-in' },
+  { file: 'budget-year-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    path: 'budget.html', wait: '.bd-in' },
+  { file: 'budget-month-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    path: 'budget.html', wait: '.bd-in', click: '#seg button[data-v="month"]',
+    after: '.bd-t.ro' },
+  { file: 'budget-week-light', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'budget.html', wait: '.bd-in', click: '#seg button[data-v="week"]',
+    after: '.bd-t.ro' },
+  { file: 'budget-shut-out', scheme: 'dark', who: full('amy@jettylife.com'),
+    path: 'budget.html', wait: '.notice', noBudget: true },
   { file: 'dash-admin-cats', scheme: 'dark', who: me('jeremy@jettylife.com'),
     path: 'admin.html', wait: '.tile-row', click: '.setup-tab[data-pane="cats"]',
     after: '.cat-row' },
@@ -161,6 +177,26 @@ const MUSIC = [...PICKS].reverse().map((p) => ({
   photo: p.p ? p.d + '.webp' : '',
 }));
 
+// Exactly what /api/budget answers, built from the same modules the Worker
+// uses -- with six lines decided, which is what a budget half-built looks
+// like and is the only state where the three dot colours are all on screen.
+const DECIDED = {
+  'software-inventory-control': { amount: 104000, note: 'Dropping Asana + 2 unused seats; Shopify Plus renews Mar' },
+  advertising: { amount: 430000, note: 'Pulling back paid; $137K over plan in 2026' },
+  rent: { amount: 478000, note: '700 S Main escalator 2.5%' },
+  utilities: { amount: 238000, note: 'Ran 35% over plan \u2014 needs a look', flagged: true },
+  wholesale: { amount: 6100000, note: 'Recovery assumed; 2026 missed by $557K' },
+  'jettylife-com-dtc': { amount: 3400000, note: 'Only line ahead of plan \u2014 leaning in' },
+};
+const BUDGET = {
+  year: FIRST_YEAR, baselineYear: BASELINE_YEAR, first: FIRST_YEAR,
+  you: 'jeremy@jettylife.com',
+  groups: BUDGET_GROUPS, bases: BASES, cadences: CADENCES,
+  lines: budgetRows(DECIDED),
+  periods: budgetCalendar(FIRST_YEAR),
+  curve: WEEK_CURVE, curvePlaceholder: CURVE_IS_PLACEHOLDER,
+};
+
 const browser = await chromium.launch();
 for (const c of CASES) {
   const page = await browser.newPage({
@@ -171,6 +207,13 @@ for (const c of CASES) {
     if (p === '/api/me') return route.fulfill({ json: c.who });
     if (p === '/api/admin/all') return route.fulfill({ json: ADMIN });
     if (p === '/api/music') return route.fulfill({ json: { picks: MUSIC } });
+    // Not on the list: the endpoint 404s whatever the People tab says, and
+    // the page has to say so rather than render an empty sheet.
+    if (p === '/api/budget') {
+      return c.noBudget
+        ? route.fulfill({ status: 404, json: { error: 'No such endpoint.' } })
+        : route.fulfill({ json: BUDGET });
+    }
     // A stand-in for the artwork: the real files live in R2, which the
     // harness has no access to. Solid grey at the right aspect, so the
     // layout being checked is the layout that ships.
@@ -203,9 +246,18 @@ for (const c of CASES) {
   const dim = await page.evaluate(() => {
     const srgb = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
     const parse = (c) => {
-      const m = (c || '').match(/[\d.]+/g);
+      const s = c || '';
+      const m = s.match(/[\d.]+/g);
       if (!m) return null;
-      return { r: +m[0], g: +m[1], b: +m[2], a: m.length > 3 ? Number(m[3]) : 1 };
+      // Chromium serialises color-mix() as `color(srgb 0.95 0.89 0.88)` --
+      // components 0-1, not 0-255. Read as 0-255 those are all but black,
+      // so every color-mix background in here was being measured against
+      // the wrong colour: this check was passing and failing on numbers it
+      // had made up. The dash uses color-mix for the notice, the tile
+      // badge and the budget's flag button.
+      const k = /^color\(/.test(s) ? 255 : 1;
+      return { r: +m[0] * k, g: +m[1] * k, b: +m[2] * k,
+               a: m.length > 3 ? Number(m[3]) : 1 };
     };
     const over = (f, b) => ({
       r: f.r * f.a + b.r * (1 - f.a), g: f.g * f.a + b.g * (1 - f.a),

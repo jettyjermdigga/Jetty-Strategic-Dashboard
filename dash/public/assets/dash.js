@@ -37,6 +37,10 @@
     // The flagship, literally. Long Branch already has the storefront, and
     // two shops drawn the same way defeats the point of drawing them.
     flag: '<path d="M5.5 21V3.2"/><path d="M5.5 4.3h12.2l-2.4 3.9 2.4 3.9H5.5z"/>',
+    // A ledger, not a calculator: the budget is 77 lines down a page, which
+    // is what it looks like, and a calculator would say "arithmetic" when
+    // the hard part is the note beside each line.
+    calc: '<rect x="4" y="2.8" width="16" height="18.4" rx="2"/><path d="M8 7.5h8M8 11.5h8M8 15.5h4.5"/>',
     music: '<circle cx="6.2" cy="17.6" r="2.9"/><circle cx="17.8" cy="15.4" r="2.9"/><path d="M9.1 17.6V6.2l11.6-2.2v11.4"/><path d="M9.1 9.4 20.7 7.2"/>',
   };
 

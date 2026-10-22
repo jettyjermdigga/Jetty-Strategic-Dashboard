@@ -1,0 +1,187 @@
+/* The Budget Builder.
+   77 lines down a page and up to 52 columns across it, which is a spreadsheet
+   -- so it is built like one: a frozen first column, a sticky header, tabular
+   figures, and a P&L pinned to the bottom that moves while you type. The one
+   thing it is not is a grid of 4,004 editable cells; see the week view. */
+
+:root{
+  --bd-good:var(--good); --bd-watch:var(--watch);
+  --bd-pick:#2f6f8f;                 /* a decided line */
+  --bd-row:rgba(67,87,94,.045);      /* group bands */
+  --bd-ro:rgba(67,87,94,.05);        /* read-only wash */
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bd-good:#5bbf8e; --bd-watch:#e0836c; --bd-pick:#7fbcdb;
+    --bd-row:rgba(255,255,255,.055); --bd-ro:rgba(255,255,255,.04);
+  }
+}
+:root[data-theme="dark"]{
+  --bd-good:#5bbf8e; --bd-watch:#e0836c; --bd-pick:#7fbcdb;
+  --bd-row:rgba(255,255,255,.055); --bd-ro:rgba(255,255,255,.04);
+}
+:root[data-theme="light"]{
+  --bd-good:var(--good); --bd-watch:var(--watch); --bd-pick:#2f6f8f;
+  --bd-row:rgba(67,87,94,.045); --bd-ro:rgba(67,87,94,.05);
+}
+
+/* Wider than the rest of the dash, and room at the bottom for the pinned
+   P&L -- a footer that floats over the last three lines would hide exactly
+   the lines somebody is working on. */
+.bd-shell{max-width:1560px;padding-bottom:132px}
+
+/* ── The bar ─────────────────────────────────────────────────────────── */
+.bd-bar{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  background:var(--card);border:1px solid var(--edge);border-radius:10px;
+  padding:12px 15px;margin:0 0 14px;
+}
+.bd-bar[hidden]{display:none}
+.bd-grow{flex:1 1 auto}
+.bd-lbl{
+  font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;
+  opacity:.75;
+}
+.bd-sel{
+  font-family:var(--body);font-size:13.5px;padding:6px 9px;border-radius:7px;
+  border:1px solid var(--field-line);background:var(--field);color:var(--ink);
+}
+.bd-seg{display:inline-flex;border:1px solid var(--edge);border-radius:7px;overflow:hidden}
+.bd-seg button{
+  font-family:var(--mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;
+  padding:7px 13px;border:0;border-right:1px solid var(--edge);
+  background:var(--field);color:var(--ink);cursor:pointer;
+}
+.bd-seg button:last-child{border-right:0}
+.bd-seg button:hover{background:var(--card-hover)}
+.bd-seg button[aria-pressed="true"]{background:var(--primary);color:#fff}
+.bd-prog{font-family:var(--mono);font-size:11.5px;opacity:.8}
+.bd-prog b{opacity:1}
+.bd-dl{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:inherit;text-decoration:none;padding:7px 12px;border-radius:7px;
+  border:1px solid var(--edge);background:var(--field);
+}
+.bd-dl:hover{background:var(--card-hover)}
+
+/* ── What this view is ───────────────────────────────────────────────── */
+.bd-rc{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;
+  opacity:.75;margin:0 0 7px;
+}
+.bd-say{
+  font-family:var(--body);font-size:13.5px;line-height:1.6;
+  opacity:.82;margin:0 0 14px;max-width:96ch;
+}
+.bd-say b{opacity:1}
+
+/* ── The sheet ───────────────────────────────────────────────────────── */
+.bd-wrap{
+  background:var(--card);border:1px solid var(--edge);border-radius:10px;
+  overflow:auto;max-height:calc(100vh - 300px);
+}
+.bd-wrap[hidden]{display:none}
+.bd-t{border-collapse:separate;border-spacing:0;width:100%}
+.bd-t th,.bd-t td{
+  padding:7px 11px;text-align:right;white-space:nowrap;
+  border-bottom:1px solid var(--edge);
+}
+.bd-t th{
+  position:sticky;top:0;z-index:2;background:var(--card);
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;
+  font-weight:600;opacity:1;color:var(--ink);
+  box-shadow:inset 0 -1px 0 var(--edge);
+}
+.bd-t th span{
+  display:block;font-size:9px;letter-spacing:.02em;text-transform:none;
+  font-weight:400;opacity:.72;margin-top:2px;
+}
+/* The line name stays put: at 52 columns the figure under the cursor is
+   meaningless without it. */
+.bd-t th:first-child,.bd-t td:first-child{
+  text-align:left;position:sticky;left:0;z-index:1;background:var(--card);
+  min-width:258px;max-width:258px;overflow:hidden;text-overflow:ellipsis;
+}
+.bd-t th:first-child{z-index:3}
+.bd-t tbody tr:hover td{background:var(--card-hover)}
+.bd-t tbody tr:hover td:first-child{background:var(--card-hover)}
+
+.bd-grp td,.bd-grp:hover td{
+  background:var(--bd-row);
+  font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;
+  font-weight:700;text-align:left;
+}
+.bd-n{font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12px}
+/* A figure nobody has decided yet. Dimmed, but not so far that it stops
+   being readable -- it is still the number the budget currently totals. */
+.bd-base{opacity:.68}
+
+.bd-name{display:flex;align-items:center;gap:8px;min-width:0}
+.bd-name span{overflow:hidden;text-overflow:ellipsis}
+/* An empty ring is a line nobody has decided, a filled one is a decision,
+   amber is a decision somebody wants to look at again. The undecided state
+   was a pale fill to begin with, which at 7px on a white card is nothing at
+   all -- and "not decided" is the state this page exists to make visible. */
+.bd-dot{
+  flex:0 0 8px;width:8px;height:8px;border-radius:50%;
+  background:transparent;border:1.5px solid var(--ink);opacity:.38;
+}
+.bd-dot.set{background:var(--bd-pick);border-color:var(--bd-pick);opacity:1}
+.bd-dot.flag{background:var(--bd-watch);border-color:var(--bd-watch);opacity:1}
+
+.bd-in{
+  width:108px;text-align:right;
+  font-family:var(--mono);font-size:12px;padding:5px 7px;border-radius:6px;
+  border:1px solid var(--field-line);background:var(--field);color:var(--ink);
+}
+.bd-in.set{border-color:var(--bd-pick)}
+.bd-in:focus{outline:2px solid var(--bd-pick);outline-offset:1px}
+.bd-note{
+  width:100%;min-width:200px;text-align:left;
+  font-family:var(--body);font-size:13px;padding:5px 8px;border-radius:6px;
+  border:1px solid var(--field-line);background:var(--field);color:var(--ink);
+}
+.bd-note::placeholder{color:var(--ink);opacity:.55}
+.bd-flag{
+  cursor:pointer;font-size:14px;line-height:1;
+  padding:4px 8px;border-radius:6px;
+  border:1px solid var(--field-line);background:var(--field);color:var(--ink);
+}
+.bd-flag:hover{background:var(--card-hover)}
+.bd-flag[aria-pressed="true"]{
+  border-color:var(--bd-watch);
+  background:color-mix(in srgb,var(--watch) 14%,var(--field));
+}
+
+/* Up is bad on an expense and good on revenue, so the colour is decided per
+   row rather than per sign. */
+.bd-up{color:var(--bd-watch)} .bd-dn{color:var(--bd-good)}
+
+/* Week, quarter and month are a view of the annual figure, not another
+   place to type one. Washed so that is obvious before anybody tries. */
+.bd-t.ro tbody td{background:var(--bd-ro)}
+.bd-t.ro tbody td:first-child{background:var(--bd-ro)}
+
+/* ── The P&L ─────────────────────────────────────────────────────────── */
+.bd-pl{
+  position:fixed;left:0;right:0;bottom:0;z-index:9;
+  background:var(--card);border-top:2px solid var(--primary);
+  padding:11px 26px;display:flex;gap:30px;align-items:center;flex-wrap:wrap;
+  box-shadow:0 -4px 16px rgba(0,0,0,.09);
+}
+.bd-pl[hidden]{display:none}
+.bd-m{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.8}
+.bd-m b{
+  display:block;font-family:var(--mono);font-size:17px;letter-spacing:0;text-transform:none;
+  margin-top:3px;opacity:1;
+}
+.bd-m b.neg{color:var(--bd-watch)}
+.bd-m .pct{font-size:12px;opacity:.75}
+.bd-saved{margin-left:auto;font-family:var(--mono);font-size:11px;opacity:.75}
+
+@media (max-width:760px){
+  .bd-shell{padding-left:14px;padding-right:14px}
+  .bd-t th:first-child,.bd-t td:first-child{min-width:170px;max-width:170px}
+  .bd-pl{gap:18px;padding:10px 14px}
+  .bd-m b{font-size:14px}
+}

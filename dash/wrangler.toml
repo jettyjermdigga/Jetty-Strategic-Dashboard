@@ -78,3 +78,12 @@ CANONICAL_HOST = "www.jettydash.com"
 # roster could put themselves on the list that decides who edits the roster.
 # This one lives in the config, where changing it is a push with a diff.
 DASH_ADMINS = "jeremy@jettylife.com"
+
+# Who may open the Budget Builder.
+#
+# Its own list rather than the tile assignment, because a tile is a door not
+# shown and this is the one thing behind the portal that needs a door that is
+# actually shut -- next year's payroll, partner draws and margin, line by
+# line, before any of it is decided. Left empty it falls back to DASH_ADMINS,
+# so it can never be accidentally empty.
+BUDGET_USERS = "jeremy@jettylife.com"

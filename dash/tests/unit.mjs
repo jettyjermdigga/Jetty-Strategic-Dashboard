@@ -8,6 +8,12 @@ import { visibleTiles, tileSections, linkSections, dashCategories, linkCats, gre
 import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker/clean.js';
 import { canonicalTarget } from '../worker/canon.js';
+import {
+  rows as budgetRows, value, spread, summary, csv, cleanLine, cleanYear,
+  calendar, WEEK_CURVE, CURVE_IS_PLACEHOLDER, LINES as BUDGET_LINES,
+  BASELINE_YEAR, FIRST_YEAR, GROUPS as BUDGET_GROUPS, CADENCES,
+} from '../worker/budget.js';
+import { periods, weekCounts, weekStart } from '../worker/retail.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -702,6 +708,248 @@ describe('greeting', () => {
   it('says something sensible with no address at all', () => {
     eq(greeting(''), 'Welcome');
     eq(greeting(null), 'Welcome');
+  });
+});
+
+
+
+// ── The budget builder ──────────────────────────────────────────────────
+//
+// The whole thing is arithmetic over two inputs: a committed 2026 baseline
+// and a set of decisions. Neither has a UI worth trusting to catch a sign
+// error, and nobody re-adds 77 lines by hand to check a footer.
+
+describe('the 2026 baseline it all hangs on', () => {
+  it('has every line in exactly one group', () => {
+    const known = new Set(BUDGET_GROUPS.map((g) => g.key));
+    for (const l of BUDGET_LINES) ok(known.has(l.g), l.k + ' is in group "' + l.g + '"');
+  });
+  it('gives every line a key of its own', () => {
+    const seen = new Set();
+    for (const l of BUDGET_LINES) {
+      ok(l.k && !seen.has(l.k), 'duplicate or empty key: ' + l.k);
+      seen.add(l.k);
+    }
+  });
+  it('carries all three 2026 columns as numbers on every line', () => {
+    for (const l of BUDGET_LINES) {
+      for (const c of ['plan', 'act', 'proj']) {
+        ok(Number.isFinite(l[c]), l.k + ' has a non-numeric ' + c + ': ' + l[c]);
+      }
+    }
+  });
+  it('is a baseline, not a budget year', () => {
+    eq(cleanYear(BASELINE_YEAR), 0, 'budgeting the year you quote against is circular');
+    eq(cleanYear(FIRST_YEAR), FIRST_YEAR);
+    eq(cleanYear('2027'), 2027);
+    eq(cleanYear('nonsense'), 0);
+    eq(cleanYear(1999), 0);
+  });
+});
+
+// A curve summing to 0.98 would lose two percent of every line in every
+// view below annual, and every figure would still look perfectly plausible.
+describe('the seasonality curve', () => {
+  it('is 52 weeks long', () => eq(WEEK_CURVE.length, 52));
+  it('sums to exactly one', () => {
+    const total = WEEK_CURVE.reduce((a, b) => a + b, 0);
+    ok(Math.abs(total - 1) < 1e-9, 'sums to ' + total);
+  });
+  it('is nowhere negative', () => ok(WEEK_CURVE.every((c) => c > 0)));
+  // Not a style rule: the page says out loud that the shape is made up, and
+  // it reads that off this flag. Deriving a real curve means clearing it.
+  it('still declares itself a placeholder', () => eq(CURVE_IS_PLACEHOLDER, true));
+});
+
+describe('spreading an annual figure over the retail calendar', () => {
+  for (const c of CADENCES) {
+    it('loses nothing spreading ' + c, () => {
+      const out = spread(10000000, c);
+      ok(Math.abs(out.reduce((a, b) => a + b, 0) - 10000000) < 0.01,
+         c + ' totals ' + out.reduce((a, b) => a + b, 0));
+    });
+  }
+  it('gives each cadence as many periods as the calendar has', () => {
+    for (const c of CADENCES) eq(spread(1, c).length, periods(2027, c).length, c);
+  });
+  // The reason the retail calendar is in here at all. Twelve equal months
+  // would make every four-week month identical to every five-week one.
+  it('makes the five-week months longer than the four-week ones', () => {
+    const m = spread(1200000, 'month');
+    const w = weekCounts('month');
+    eq(w, [4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 4, 5], '4-4-5');
+    // March against February: both sit on the same part of the curve, so a
+    // difference between them can only come from the extra week.
+    ok(m[2] > m[1], 'March (5w) is not larger than February (4w)');
+    ok(m[5] > m[4], 'June (5w) is not larger than May (4w)');
+  });
+  it('rolls months up into exactly the quarters', () => {
+    const m = spread(9000000, 'month');
+    const q = spread(9000000, 'qtr');
+    for (let i = 0; i < 4; i++) {
+      const sum = m[i * 3] + m[i * 3 + 1] + m[i * 3 + 2];
+      ok(Math.abs(sum - q[i]) < 0.01, 'Q' + (i + 1) + ': months ' + sum + ' vs quarter ' + q[i]);
+    }
+  });
+  it('spreads a negative line without losing the sign', () => {
+    const out = spread(-52000, 'qtr');
+    ok(out.every((v) => v < 0), 'a negative line went positive somewhere');
+  });
+});
+
+describe('what a line is worth', () => {
+  const l = (over) => budgetRows(over)[0];
+  const key = BUDGET_LINES[0].k;
+
+  it('falls back to the chosen baseline when nobody has decided', () => {
+    const r = l({});
+    eq(r.amount, null);
+    eq(value(r, 'proj'), BUDGET_LINES[0].proj);
+    eq(value(r, 'plan'), BUDGET_LINES[0].plan);
+    eq(value(r, 'act'), BUDGET_LINES[0].act);
+  });
+  // The trap: `amount || baseline` budgets last year's figure for a line
+  // somebody deliberately zeroed, and the page would look right.
+  it('treats a decision of zero as a decision', () => {
+    const r = l({ [key]: { amount: 0 } });
+    eq(r.amount, 0);
+    eq(value(r, 'proj'), 0, 'a zeroed line fell back to 2026');
+  });
+  it('keeps the note and the flag beside the figure', () => {
+    const r = l({ [key]: { amount: 5, note: 'why', flagged: true } });
+    eq([r.note, r.flagged], ['why', true]);
+  });
+  it('ignores a decision whose key matches no line', () => {
+    eq(budgetRows({ 'no-such-line': { amount: 9 } }).filter((r) => r.amount != null).length, 0);
+  });
+});
+
+describe('the P&L under the sheet', () => {
+  const key = BUDGET_LINES[0].k;
+  it('counts only the lines somebody has actually set', () => {
+    const s = summary(budgetRows({ [key]: { amount: 1, note: '', flagged: true } }), 'proj');
+    eq([s.set, s.flagged, s.total], [1, 1, BUDGET_LINES.length]);
+  });
+  it('adds up to net income', () => {
+    const s = summary(budgetRows({}), 'proj');
+    eq(s.gross, s.rev - s.cogs);
+    eq(s.net, s.rev - s.cogs - s.opex);
+  });
+  // Clearing every revenue line is a thing somebody does on the way to
+  // typing the real ones in. NaN% reads as the page being broken.
+  it('does not divide by a revenue of zero', () => {
+    const zeroed = {};
+    for (const l of BUDGET_LINES) if (l.g === 'rev') zeroed[l.k] = { amount: 0 };
+    const s = summary(budgetRows(zeroed), 'proj');
+    eq(s.rev, 0);
+    ok(Number.isFinite(s.grossPct), 'grossPct is ' + s.grossPct);
+  });
+});
+
+describe('what somebody typed into a line', () => {
+  const amt = (v) => cleanLine({ amount: v });
+  it('takes a figure typed the way people type figures', () => {
+    eq(amt('1200').row.amount, 1200);
+    eq(amt('$1,200').row.amount, 1200);
+    eq(amt(' 1 200 ').row.amount, 1200);
+    eq(amt(1200).row.amount, 1200);
+  });
+  it('refuses what is not a figure, rather than storing NaN', () => {
+    ok(amt('abc').errors, 'letters were accepted');
+    ok(amt('12-34').errors, 'that is not a number');
+    ok(amt('1e9').errors, 'exponent notation is not a typed figure');
+  });
+  it('keeps zero and keeps negatives', () => {
+    eq(amt('0').row.amount, 0);
+    eq(amt('0').row.clear, false, 'a zero was mistaken for an empty cell');
+    eq(amt('-500').row.amount, -500);
+  });
+  it('calls an empty line with nothing on it undecided', () => {
+    eq(amt('').row.clear, true);
+    eq(cleanLine({ amount: '', note: 'still thinking' }).row.clear, false);
+    eq(cleanLine({ amount: '', flagged: true }).row.clear, false);
+  });
+  it('bounds the note rather than storing whatever arrives', () => {
+    eq(cleanLine({ amount: '1', note: 'x'.repeat(900) }).row.note.length, 500);
+  });
+});
+
+describe('the download', () => {
+  const key = BUDGET_LINES[0].k;
+  const out = csv(budgetRows({ [key]: { amount: 12, note: 'Shopify, Klaviyo and "the rest"' } }),
+                  'proj', 'qtr', 2027);
+  const lines = out.trim().split('\n');
+
+  it('has a row per line and a header', () => eq(lines.length, BUDGET_LINES.length + 1));
+  it('names the retail periods with their dates', () => {
+    ok(/Q1 \(2027-01-03–2027-04-03\)/.test(lines[0]), lines[0]);
+  });
+  // The figure is the part somebody could have got anywhere; the note is
+  // why it is that number. A quote or a comma in it must not shift columns.
+  it('carries a note containing commas and quotes without breaking the row', () => {
+    const cells = lines[1].match(/("([^"]|"")*"|[^,]*)/g).filter((x) => x !== '');
+    eq(cells[cells.length - 1], '"Shopify, Klaviyo and ""the rest"""');
+  });
+  it('says whether each figure was decided or is still the baseline', () => {
+    ok(/,baseline,/.test(lines[2]), 'an undecided line does not say so');
+  });
+});
+
+// Three of the dash's five repeated bugs were a thing that existed in the
+// repo and was never actually reachable. A tile pointing at a page of ours
+// that is not deployed is the same bug with a 404 on the end.
+describe('every tile that points at the dash itself points at a real page', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  it('has the file behind every local url', () => {
+    for (const t of TILES) {
+      if (!t.url || !t.url.startsWith('/')) continue;
+      const f = path.join(HERE, '..', 'public', t.url.replace(/^\//, '').split('?')[0]);
+      ok(fs.existsSync(f), t.key + ' points at ' + t.url + ', which is not in public/');
+    }
+  });
+});
+
+// The budget is the one thing behind this portal with a lock of its own.
+// A tile is a door not shown -- that is the doctrine the whole Worker is
+// built on -- so if the endpoint ever rides on the tile assignment instead,
+// next year's payroll is readable by everybody the tile was shown to.
+describe('the budget endpoint is gated on its own list', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
+
+  it('refuses before doing anything else', () => {
+    ok(/async function budget\([^)]*\)\s*\{\s*if \(!canBudget\(env, who\)\)/.test(idx),
+       'the budget handler does not begin by checking canBudget');
+  });
+  it('wants a verified Access identity, not just an address', () => {
+    ok(/function canBudget[\s\S]*?who\.verified/.test(idx), 'canBudget ignores verification');
+  });
+  it('falls back to the admins rather than to an empty list', () => {
+    ok(/function budgetList[\s\S]*?adminList\(env\)/.test(idx),
+       'an empty BUDGET_USERS would lock everybody out, or let everybody in');
+  });
+});
+
+describe('the retail year the budget is built on', () => {
+  it('starts 2027 on the Sunday Jeremy’s calendar starts it', () => {
+    eq(weekStart(2027, 1), '2027-01-03');
+  });
+  it('runs 52 weeks to the day before the next one starts', () => {
+    const y = periods(2027, 'year')[0];
+    eq([y.start, y.end, y.weeks], ['2027-01-03', '2028-01-01', 52]);
+    eq(weekStart(2028, 1), '2028-01-02');
+  });
+  it('leaves no gap and no overlap between periods', () => {
+    for (const c of CADENCES) {
+      const ps = periods(2027, c);
+      for (let i = 1; i < ps.length; i++) {
+        const next = new Date(ps[i - 1].end + 'T00:00:00Z').getTime() + 86400000;
+        eq(new Date(next).toISOString().slice(0, 10), ps[i].start, c + ' period ' + i);
+      }
+    }
+  });
+  it('gives the page every cadence at once', () => {
+    eq(Object.keys(calendar(2027)).sort(), [...CADENCES].sort());
   });
 });
 

@@ -13,8 +13,15 @@ import { identify } from './access.js';
 import { canonicalTarget } from './canon.js';
 import { visibleTiles, dashCategories, linkCats, greeting } from './tiles.js';
 import {
+  rows as budgetRows, calendar as budgetCalendar,
+  csv as budgetCsv, cleanYear, cleanCadence, cleanBase,
+  GROUPS as BUDGET_GROUPS, BASES, CADENCES, LINES as BUDGET_LINES,
+  BASELINE_YEAR, WEEK_CURVE, CURVE_IS_PLACEHOLDER, FIRST_YEAR,
+} from './budget.js';
+import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
   readLinks, cleanLink, saveLink, deleteLink, readMusic,
+  readBudget, saveBudgetLine,
   cleanTile, cleanPerson, cleanKey, saveTile, deleteTile, savePerson, deletePerson,
   saveCategory, deleteCategory, saveGroup, deleteGroup,
 } from './store.js';
@@ -33,6 +40,28 @@ const json = (body, status) => new Response(JSON.stringify(body), {
 function adminList(env) {
   return String(env.DASH_ADMINS || '')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+// Who may open the budget.
+//
+// Its own list, NOT the tile assignment. A tile is a door not shown -- the
+// doctrine this whole Worker is built on -- and the budget is the one thing
+// behind this portal that needs a door that is actually shut: next year's
+// payroll, partner draws and margin, line by line, before any of it is
+// decided. Anyone not on this list gets a 404 from the endpoint whatever
+// the People tab says.
+//
+// Left empty it falls back to the admins, so the list can never be
+// accidentally empty -- which would lock Jeremy out of his own budget.
+function budgetList(env) {
+  const own = String(env.BUDGET_USERS || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return own.length ? own : adminList(env);
+}
+
+function canBudget(env, who) {
+  return Boolean(who.email) && who.verified
+    && budgetList(env).includes(who.email.toLowerCase());
 }
 
 // Editing the lists is a different permission from reading the page, and it
@@ -73,6 +102,7 @@ export default {
       if (url.pathname.startsWith('/music/photo/')) {
         return await photo(request, env, who, url);
       }
+      if (url.pathname.startsWith('/api/budget')) return await budget(request, env, url, who);
       if (url.pathname.startsWith('/api/admin/')) return await admin(request, env, url, who);
       return json({ error: 'No such endpoint.' }, 404);
     } catch (err) {
@@ -179,6 +209,78 @@ async function photo(request, env, who, url) {
       'etag': obj.httpEtag,
     },
   });
+}
+
+// ── The budget builder ──────────────────────────────────────────────────
+//
+// Reads the 2026 baseline out of the repo and the decisions out of D1, and
+// answers with both plus the retail calendar it all hangs on. Writes one
+// line at a time: there is no "save the budget" button, because a budget
+// built over weeks must never depend on somebody remembering to press one.
+async function budget(request, env, url, who) {
+  if (!canBudget(env, who)) {
+    // 404 rather than 403, the same as Setup: somebody without the budget
+    // has no business learning it is here.
+    return json({ error: 'No such endpoint.' }, 404);
+  }
+
+  const what = url.pathname.slice('/api/budget'.length);
+  const year = cleanYear(url.searchParams.get('year')) || FIRST_YEAR;
+
+  if (what === '' && request.method === 'GET') {
+    return json({
+      year,
+      baselineYear: BASELINE_YEAR,
+      first: FIRST_YEAR,
+      you: who.email,
+      groups: BUDGET_GROUPS,
+      bases: BASES,
+      cadences: CADENCES,
+      lines: budgetRows(await readBudget(env.DB, year)),
+      // Every cadence at once. It is four small arrays, it never changes
+      // within a year, and sending it whole means switching view is
+      // instant rather than another round trip.
+      periods: budgetCalendar(year),
+      curve: WEEK_CURVE,
+      // Surfaced, not buried: the weekly shape is the one made-up number
+      // in here, and the page says so rather than letting a weekly figure
+      // look as settled as an annual one.
+      curvePlaceholder: CURVE_IS_PLACEHOLDER,
+    });
+  }
+
+  // The spreadsheet. A view the finance team can take into a meeting
+  // without anybody needing a sign-in.
+  if (what === '.csv' && request.method === 'GET') {
+    const base = cleanBase(url.searchParams.get('base'));
+    const cadence = cleanCadence(url.searchParams.get('view'));
+    const body = budgetCsv(budgetRows(await readBudget(env.DB, year)), base, cadence, year);
+    return new Response(body, {
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': 'attachment; filename="jetty-budget-'
+          + year + '-' + cadence + '.csv"',
+        'cache-control': 'no-store',
+      },
+    });
+  }
+
+  if (what === '/line' && request.method === 'POST') {
+    const body = await request.json().catch(() => null);
+    if (!body) return json({ error: 'That was not JSON.' }, 400);
+    if (!BUDGET_LINES.some((l) => l.k === body.key)) {
+      return json({ errors: ['No such line.'] }, 400);
+    }
+    const out = await saveBudgetLine(env.DB, year, body.key, body, who.email);
+    if (out.errors) return json(out, 400);
+    const lines = budgetRows(await readBudget(env.DB, year));
+    // The whole set back, not just the row saved: the footer is a P&L over
+    // all of them and the progress count is a count of all of them, so a
+    // reply that only described one line would leave both to be guessed at.
+    return json({ ok: true, lines });
+  }
+
+  return json({ error: 'No such endpoint.' }, 404);
 }
 
 async function admin(request, env, url, who) {

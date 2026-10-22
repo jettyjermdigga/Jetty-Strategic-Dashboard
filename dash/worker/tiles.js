@@ -144,6 +144,20 @@ export const TILES = [
   },
 
   {
+    key: 'budget',
+    name: 'Budget Builder',
+    blurb: 'Build next year\u2019s budget line by line, against 2026, on the retail calendar.',
+    url: '/budget.html',
+    icon: 'calc',
+    category: 'finance',
+    // Never. It is next year's payroll, partner draws and margin before any
+    // of it is decided, and unlike every other tile here it has a lock of
+    // its own behind the door: BUDGET_USERS in wrangler.toml.
+    everyone: false,
+    status: 'live',
+  },
+
+  {
     key: 'music-monday',
     name: 'Music Monday',
     blurb: 'Every pick since February 2013 \u2014 this week up top, thirteen years below.',

@@ -110,3 +110,27 @@ CREATE TABLE IF NOT EXISTS music (
   updated_at  TEXT,
   updated_by  TEXT
 );
+
+-- The 2027 budget, and the years after it.
+--
+-- Only what somebody DECIDED is stored: the figure they typed, why, and
+-- whether it needs another look. The 2026 baseline it was decided against
+-- lives in budget-seed.js, a committed snapshot -- so a dashboard rebuild
+-- cannot move the ground under a half-finished budget, and the note beside
+-- a line stays true to the number it was written about.
+--
+-- A row only exists once a line has been decided. An untouched line has no
+-- row, which is what makes "6 of 77 set" a real count rather than a guess.
+CREATE TABLE IF NOT EXISTS budget (
+  year        INTEGER NOT NULL,
+  line_key    TEXT NOT NULL,
+  -- The annual figure. Weeks, months and quarters are spread from it on the
+  -- seasonality curve; they are a view, not twelve more things to maintain.
+  amount      REAL,
+  -- The point of the whole exercise: what nobody else knows about this line.
+  note        TEXT NOT NULL DEFAULT '',
+  flagged     INTEGER NOT NULL DEFAULT 0,
+  updated_at  TEXT,
+  updated_by  TEXT,
+  PRIMARY KEY (year, line_key)
+);
