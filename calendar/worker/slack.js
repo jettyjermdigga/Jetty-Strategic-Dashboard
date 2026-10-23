@@ -54,6 +54,83 @@ export function commentMessage({ authorName, item, body, url }) {
     + (when ? ' (' + when + ')' : '') + ':\n\n' + quoted + link;
 }
 
+// ── Watching a sub-type ─────────────────────────────────────────────────
+//
+// Somebody outside the company needs to know when a particular kind of event
+// moves. Taylor at SunnySide buys the paid media, and a Paid Advo date that
+// changes after the placement is booked costs real money -- so the calendar
+// tells them rather than waiting for somebody here to remember to.
+//
+// A DM, like a mention, and for the same reason: a channel post notifies only
+// the people in that channel.
+
+/** Where an event is, in one line, or '' if nobody said. */
+export function eventWhere(item) {
+  if (!item) return '';
+  const parts = [item.venue, item.address,
+                 [item.city, item.state].filter(Boolean).join(', '), item.zip];
+  return parts.map((p) => String(p || '').trim()).filter(Boolean).join(' \u00b7 ');
+}
+
+/**
+ * The watcher's DM.
+ *
+ * Says what changed as well as that something did. "An event you watch was
+ * edited" is a notification somebody learns to ignore; the fields that moved
+ * are the whole reason to send it.
+ */
+export function watchMessage({ actorName, item, action, url, changed, label }) {
+  const what = label || 'Paid Advo';
+  const title = escapeSlack(item && item.title ? item.title : 'an event');
+  const when = escapeSlack(eventWhen(item));
+  const where = escapeSlack(eventWhere(item));
+
+  const verb = action === 'created' ? 'added'
+    : action === 'deleted' ? 'deleted'
+    : 'changed';
+  const head = escapeSlack(actorName) + ' ' + verb + ' a *' + escapeSlack(what)
+    + '* item: *' + title + '*';
+
+  const lines = [];
+  if (when) lines.push('When: ' + when);
+  if (where) lines.push('Where: ' + where);
+  if (item && item.status) lines.push('Status: ' + escapeSlack(item.status));
+  if (action === 'changed' && changed && changed.length) {
+    lines.push('Changed: ' + escapeSlack(changed.join(', ')));
+  }
+
+  const link = url && action !== 'deleted'
+    ? '\n\n<' + url + '|Open it on the Jetty calendar>' : '';
+  return head + (lines.length ? '\n' + lines.map((l) => '\u2022 ' + l).join('\n') : '') + link;
+}
+
+// Which of the fields a watcher would care about actually moved.
+//
+// Only the ones worth a message. updated_at always differs, and a notice that
+// fires on every save -- including opening an event and pressing save with no
+// edit -- is one nobody reads by the third week.
+export const WATCHED_FIELDS = [
+  ['title', 'name'], ['start_date', 'start date'], ['end_date', 'end date'],
+  ['start_time', 'start time'], ['end_time', 'end time'], ['all_day', 'all-day'],
+  ['status', 'status'], ['venue', 'venue'], ['address', 'address'],
+  ['city', 'city'], ['state', 'state'], ['zip', 'zip'],
+  ['sub_types', 'tags'], ['department', 'department'], ['departments', 'departments'],
+  ['notes', 'notes'], ['url', 'link'], ['event_fee', 'cost'],
+];
+
+export function changedFields(before, after) {
+  const out = [];
+  for (const [col, label] of WATCHED_FIELDS) {
+    const a = before == null ? null : before[col];
+    const b = after == null ? null : after[col];
+    // Loose on purpose: 1 and '1' are the same all_day, and null and '' are
+    // the same empty venue. Neither is a change anybody wants told about.
+    const norm = (v) => (v == null || v === '' ? '' : String(v));
+    if (norm(a) !== norm(b)) out.push(label);
+  }
+  return out;
+}
+
 // Deep link back to the event. The origin comes off the request rather than
 // config, so it is right on whichever hostname the person is actually using.
 export function eventUrl(origin, itemId) {

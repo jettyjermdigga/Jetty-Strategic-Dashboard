@@ -31,6 +31,7 @@
     comments: [],      // likewise
     people: [],        // the mention roster, fetched once
     slack: { configured: false, status: null },
+    places: [],
   };
 
   // ── remembered preferences ─────────────────────────────────────────────
@@ -494,6 +495,19 @@
   // anyone who has used the calendar. Fetched once per page rather than per
   // event -- it is the same list every time, and the picker has to feel
   // instant to be worth using.
+  // Everywhere the calendar has already been. Fetched once and kept, like the
+  // mention roster: it is the same list every time, and a picker that waits on
+  // the network is one people stop using.
+  var placesLoaded = null;
+  function loadPlaces() {
+    if (!placesLoaded) {
+      placesLoaded = api('/api/places')
+        .then(function (r) { state.places = r.places || []; return state.places; })
+        .catch(function () { state.places = []; return state.places; });
+    }
+    return placesLoaded;
+  }
+
   var peopleLoaded = null;
   function loadPeople() {
     if (!peopleLoaded) {
@@ -1192,7 +1206,13 @@
           + '</div>')
 
       + sect('where', 'Where is it?', 'optional',
-          '<div class="fld"><label for="f-venue">Venue</label>'
+          // An action, not a field: it fills the five below and goes back to
+          // its own label. A select that stayed on what you picked would be
+          // claiming to describe the address even after you edited it.
+          '<div class="fld"><label for="f-loc">Somewhere we have been</label>'
+          + '<select id="f-loc"><option value="">Use a saved location\u2026</option></select>'
+          + '</div>'
+          + '<div class="fld"><label for="f-venue">Venue</label>'
           + '<input type="text" id="f-venue" value="' + esc(it.venue || '') + '" maxlength="200"></div>'
           + '<div class="fld"><label for="f-address">Address</label>'
           + '<input type="text" id="f-address" value="' + esc(it.address || '') + '" maxlength="200"></div>'
@@ -1481,6 +1501,50 @@
       var active = activeSteps();
       return !interview || at === active.length - 1;
     };
+
+    // The list is derived from every event there has ever been, so it arrives
+    // after the form does. The five fields work perfectly well without it.
+    function paintPlaces() {
+      var sel = $('#f-loc');
+      if (!sel) return;
+      var ps = state.places || [];
+      sel.innerHTML = '<option value="">Use a saved location\u2026</option>'
+        + ps.map(function (p, i) {
+            return '<option value="' + i + '">' + esc(p.label)
+              + (p.n > 1 ? ' (' + p.n + ')' : '') + '</option>';
+          }).join('')
+        + '<option value="new">+ New location</option>';
+      if (!ps.length) sel.firstChild.textContent = 'No saved locations yet';
+    }
+    paintPlaces();
+    loadPlaces().then(paintPlaces);
+
+    var LOC_FIELDS = ['venue', 'address', 'city', 'state', 'zip'];
+    function fillPlace(p) {
+      LOC_FIELDS.forEach(function (f) {
+        var el = $('#f-' + f);
+        if (el) el.value = p ? (p[f] || '') : '';
+      });
+    }
+    // On the element, not on document: showForm runs again every time a form
+    // is opened, and a listener added to document each time would be added
+    // again each time. The select is new with the form, so this is one
+    // listener per select, and it goes when the form does.
+    var locSel = $('#f-loc');
+    if (locSel) {
+      locSel.addEventListener('change', function (e) {
+        var v = e.target.value;
+        if (v === 'new') {
+          fillPlace(null);
+          if ($('#f-venue')) $('#f-venue').focus();
+        } else if (v !== '') {
+          fillPlace((state.places || [])[Number(v)]);
+        }
+        // Back to its label. Whatever is in the five fields below is the
+        // answer now, and this control has no business implying otherwise.
+        e.target.value = '';
+      });
+    }
 
     paintDepts();
     paintExtras();

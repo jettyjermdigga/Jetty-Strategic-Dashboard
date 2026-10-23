@@ -118,6 +118,18 @@ await page.route('**/*', async (route) => {
       accessConfigured: true, editorsConfigured: true,
     } });
   }
+  // Everywhere the calendar has been, as the Worker derives it. Two of them
+  // so picking one and then picking another is a real change.
+  if (p === '/api/places') {
+    return route.fulfill({ json: { places: [
+      { key: 'a', label: 'Jetty Flagship \u2014 700 S Main St \u00b7 Manahawkin, NJ',
+        venue: 'Jetty Flagship', address: '700 S Main St', city: 'Manahawkin',
+        state: 'NJ', zip: '08050', n: 12, last: '2026-09-01' },
+      { key: 'b', label: 'Taylor Ave. Waterfront \u2014 Beach Haven, NJ',
+        venue: 'Taylor Ave. Waterfront', address: '', city: 'Beach Haven',
+        state: 'NJ', zip: '', n: 3, last: '2026-06-13' },
+    ] } });
+  }
   if (p === '/api/people') {
     return route.fulfill({ json: { slackConfigured: true, slackStatus: slackStatus, people: [
       { email: 'jeremy@jettylife.com', name: 'Jeremy', slack_id: 'U1' },
@@ -755,6 +767,61 @@ await t('reset issues a new link', async () => {
   await page.waitForFunction(() =>
     document.querySelector('#feedUrl').textContent.includes('bbbb'));
   return seen.resets === 1;
+});
+await page.locator('button[data-act="close"]').click();
+
+console.log('saved locations');
+await page.locator('.chip:has-text("LB Spring Sale")').click();
+await page.locator('button[data-act="edit"]').click();
+await page.waitForSelector('#f-venue');
+await page.waitForFunction(() => document.querySelectorAll('#f-loc option').length > 2);
+
+await t('offers every place we have been, plus a way to add one', async () => {
+  const opts = await page.locator('#f-loc option').allTextContents();
+  return opts.length === 4
+    && opts[0].startsWith('Use a saved location')
+    && opts[1].includes('Jetty Flagship')
+    && opts[3] === '+ New location';
+});
+// How often a place has been used is what makes the list scannable; the
+// Worker sorts by it, and the page says so.
+await t('says how many times a place has been used', async () =>
+  (await page.locator('#f-loc option').nth(1).textContent()).includes('(12)'));
+
+// Set through the DOM rather than by clicking: the Where step is one of
+// several the form shows at a time, and this is about what picking does.
+const pick = async (v) => await page.evaluate((val) => {
+  const el = document.querySelector('#f-loc');
+  el.value = val;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}, v);
+const addr = async () => await page.evaluate(() =>
+  ['venue', 'address', 'city', 'state', 'zip']
+    .map((f) => document.querySelector('#f-' + f).value));
+
+await t('fills all five fields from the one it was given', async () => {
+  await pick('0');
+  return JSON.stringify(await addr())
+    === JSON.stringify(['Jetty Flagship', '700 S Main St', 'Manahawkin', 'NJ', '08050']);
+});
+// It is an action, not a field. A select that stayed on what you picked
+// would be claiming to describe the address even after you edited it.
+await t('goes back to its own label once it has filled them', async () =>
+  (await page.locator('#f-loc').inputValue()) === '');
+await t('replaces the lot when a different place is picked', async () => {
+  await pick('1');
+  return JSON.stringify(await addr())
+    === JSON.stringify(['Taylor Ave. Waterfront', '', 'Beach Haven', 'NJ', '']);
+});
+await t('clears them for a new one', async () => {
+  await pick('new');
+  return (await addr()).every((v) => v === '')
+    && await page.evaluate(() => document.activeElement.id === 'f-venue');
+});
+await t('leaves the address alone when nothing is picked', async () => {
+  await page.evaluate(() => { document.querySelector('#f-venue').value = 'Typed by hand'; });
+  await pick('');
+  return (await page.locator('#f-venue').inputValue()) === 'Typed by hand';
 });
 await page.locator('button[data-act="close"]').click();
 

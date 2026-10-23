@@ -149,6 +149,9 @@ export const SUB_TYPES = [
   // Paid media, kept apart from Campaign/Promo because the question "what did
   // we spend money placing?" is a different one from "what were we running".
   // A campaign can be entirely organic and a paid push can carry no campaign.
+  // Named, because the Worker watches it: a Paid Advo item moving is the one
+  // change somebody outside the company is told about. A key spelled by hand
+  // at the watch site would go quietly dead the day this one was renamed.
   { key: 'paid-advo',   label: 'Paid Advo',   department: 'marketing',
     sheetValues: ['Paid', 'Paid Ads', 'Paid Advertising', 'Paid Advo',
                   'Paid Media', 'Paid Social', 'Advo'] },
@@ -232,3 +235,6 @@ export const TAXONOMY = {
   retailEpoch: RETAIL_EPOCH,
   retailEpochYear: RETAIL_EPOCH_YEAR,
 };
+
+// The sub-type SunnySide is pinged about. See PAID_ADVO_WATCHERS.
+export const PAID_ADVO = 'paid-advo';

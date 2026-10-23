@@ -74,3 +74,17 @@ FEED_ORIGIN = "https://jetty-calendar-feed.jeremy-85e.workers.dev"
 # first time they open Subscribe, stored in the feeds table -- so a link that
 # gets out is reset for that one person rather than for everybody. The token is
 # the credential; see calendar/feed/.
+
+# Who gets a Slack DM when a Paid Advo item is created, changed or deleted.
+#
+# Taylor at SunnySide buys the paid media, and a date that moves after the
+# placement is booked costs real money -- so the calendar tells them rather
+# than waiting for somebody here to remember to. Comma-separated; empty turns
+# it off entirely.
+#
+# Matched against the address on their SLACK profile, not the one Access
+# authenticates -- this is about delivering a message, not about letting
+# anybody in. They need to be in the Jetty Slack workspace for the roster to
+# find them; if they are not, the failure is reported on the event rather
+# than swallowed.
+PAID_ADVO_WATCHERS = ""

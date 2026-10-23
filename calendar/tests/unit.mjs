@@ -20,14 +20,17 @@ import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial, splitKin
 import { normaliseProducts, readProducts, MAX_PRODUCTS } from '../worker/products.js';
 import { applyBlanks } from '../worker/blanks.js';
 import { commentMessage, displayName, dmMentions, escapeSlack, eventUrl, eventWhen,
-         slackHint } from '../worker/slack.js';
+         slackHint, watchMessage, changedFields, eventWhere,
+         WATCHED_FIELDS } from '../worker/slack.js';
+import { rollPlaces, placeKey, placeLabel, hasPlace,
+         FIELDS as PLACE_FIELDS } from '../worker/places.js';
 import SOCIAL_BACKFILL from '../backfill/social.json' with { type: 'json' };
 import { buildIcs } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
 import {
   DEPARTMENTS, DEPARTMENT_KEYS, DIVISIONS, EVENT_TYPE_KEYS, SUB_TYPES, NEEDS, VEHICLES,
   STATUSES, PRIMACY, RETAIL_EPOCH, SOCIAL_TYPES, CHANNELS, PILLARS, PRODUCTION,
-  SUB_TYPE_KEYS, SOCIAL_TYPE_KEYS, CHANNEL_KEYS, PILLAR_KEYS, PRODUCTION_KEYS,
+  SUB_TYPE_KEYS, SOCIAL_TYPE_KEYS, CHANNEL_KEYS, PILLAR_KEYS, PRODUCTION_KEYS, PAID_ADVO,
 } from '../worker/taxonomy.js';
 
 let failed = 0;
@@ -822,6 +825,233 @@ describe('feed Worker', () => {
 
 // ── report ───────────────────────────────────────────────────────────────
 
+// ── Places ──────────────────────────────────────────────────────────────
+//
+// There is no locations table: the list on the Where step is derived from
+// every event there has ever been. That is what keeps it from going stale,
+// and it is also what makes the folding rules matter -- the same car park
+// typed three ways is three entries on a dropdown somebody has to scan.
+
+describe('places', () => {
+  const ev = (venue, city, date, over) => ({
+    venue, city, state: 'NJ', address: '', zip: '', start_date: date, ...over,
+  });
+
+  it('collapses spellings that differ only by case and punctuation', () => {
+    const out = rollPlaces([
+      ev('Taylor Ave. Waterfront', 'Beach Haven', '2026-06-13'),
+      ev('taylor ave waterfront', 'Beach Haven', '2025-06-14'),
+      ev('TAYLOR AVE  WATERFRONT', 'Beach Haven', '2024-06-15'),
+    ]);
+    eq(out.length, 1);
+    eq(out[0].n, 3);
+  });
+  // The latest spelling is the one somebody most recently thought was right.
+  it('shows the most recent spelling of a place, not the oldest', () => {
+    const out = rollPlaces([
+      ev('Taylor Ave. Waterfront', 'Beach Haven', '2026-06-13'),
+      ev('taylor ave waterfront', 'Beach Haven', '2025-06-14'),
+    ]);
+    eq(out[0].venue, 'Taylor Ave. Waterfront');
+  });
+  it('keeps genuinely different places apart', () => {
+    const out = rollPlaces([
+      ev('Jetty Flagship', 'Manahawkin', '2026-01-01'),
+      ev('Jetty Flagship', 'Long Branch', '2026-02-01'),
+    ]);
+    eq(out.length, 2);
+  });
+  it('drops an event with no location at all', () => {
+    eq(rollPlaces([{ venue: '', address: '', city: '', state: '', zip: '',
+                     start_date: '2026-01-01' }]).length, 0);
+    eq(hasPlace({ venue: '  ' }), false);
+    eq(hasPlace({ city: 'Ship Bottom' }), true);
+  });
+  it('puts the places we use most at the top', () => {
+    const out = rollPlaces([
+      ev('Once', 'Ship Bottom', '2026-09-01'),
+      ev('Often', 'Ship Bottom', '2026-08-01'),
+      ev('Often', 'Ship Bottom', '2026-07-01'),
+      ev('Often', 'Ship Bottom', '2026-06-01'),
+    ]);
+    eq(out.map((p) => p.venue), ['Often', 'Once']);
+  });
+  it('breaks a tie on how recently we were there', () => {
+    const out = rollPlaces([
+      ev('Older', 'Ship Bottom', '2024-01-01'),
+      ev('Newer', 'Ship Bottom', '2026-01-01'),
+    ]);
+    eq(out.map((p) => p.venue), ['Newer', 'Older']);
+  });
+  it('remembers the most recent date even when the rows are out of order', () => {
+    const out = rollPlaces([
+      ev('Same', 'Ship Bottom', '2024-01-01'),
+      ev('Same', 'Ship Bottom', '2026-05-05'),
+    ]);
+    eq(out[0].last, '2026-05-05');
+  });
+  it('tidies a state into the two letters the form wants', () => {
+    eq(rollPlaces([ev('X', 'Ship Bottom', '2026-01-01', { state: 'nj' })])[0].state, 'NJ');
+  });
+  it('labels a place the way somebody would say it', () => {
+    eq(placeLabel({ venue: 'Jetty Flagship', address: '700 S Main St',
+                    city: 'Manahawkin', state: 'NJ' }),
+       'Jetty Flagship — 700 S Main St · Manahawkin, NJ');
+    // Not "123 Main St -- 123 Main St".
+    eq(placeLabel({ address: '123 Main St', city: 'Ship Bottom', state: 'NJ' }),
+       '123 Main St — Ship Bottom, NJ');
+    eq(placeLabel({ venue: 'Somewhere' }), 'Somewhere');
+    eq(placeLabel({}), 'Untitled place');
+  });
+  it('gives every place a key that is the same for the same place', () => {
+    eq(placeKey({ venue: 'A B', city: 'C' }), placeKey({ venue: ' a  b ', city: 'c' }));
+    ok(placeKey({ venue: 'A' }) !== placeKey({ venue: 'B' }));
+  });
+  it('honours a limit, because the dropdown is for scanning', () => {
+    const many = Array.from({ length: 50 }, (_, i) => ev('V' + i, 'C', '2026-01-01'));
+    eq(rollPlaces(many, 10).length, 10);
+  });
+  it('copes with nothing at all', () => {
+    eq(rollPlaces(null), []);
+    eq(rollPlaces([]), []);
+  });
+  // The page fills five inputs from whatever a place carries. A field added
+  // to one side and not the other is an address that silently half-copies.
+  it('carries exactly the fields the form has', () => {
+    eq(PLACE_FIELDS, ['venue', 'address', 'city', 'state', 'zip']);
+    const page = fs.readFileSync(root('public/assets/calendar.js'), 'utf8');
+    const m = page.match(/var LOC_FIELDS = \[([^\]]+)\]/);
+    ok(m, 'the page has no LOC_FIELDS list');
+    eq(m[1].split(',').map((x) => x.trim().replace(/'/g, '')), PLACE_FIELDS);
+    for (const f of PLACE_FIELDS) {
+      ok(page.includes("id=\"f-" + f + "\""), 'the form has no f-' + f + ' input');
+    }
+  });
+});
+
+// ── Watching Paid Advo ──────────────────────────────────────────────────
+//
+// SunnySide buys the paid media. A date that moves after a placement is
+// booked costs real money, so the calendar tells them rather than waiting
+// for somebody here to remember to.
+
+describe('the Paid Advo watcher', () => {
+  const item = {
+    id: 'abc', title: 'Spring IG push', start_date: '2027-03-01',
+    end_date: '2027-03-14', all_day: 1, status: 'Booked',
+    venue: 'Jetty Flagship', city: 'Manahawkin', state: 'NJ',
+  };
+
+  it('watches a sub-type that exists', () => {
+    ok(SUB_TYPES.some((t) => t.key === PAID_ADVO),
+       PAID_ADVO + ' is not a sub-type, so nothing would ever match it');
+  });
+  it('says who did what, and to which event', () => {
+    const msg = watchMessage({ actorName: 'Arlynn', item, action: 'created',
+                               url: 'https://cal/?event=abc' });
+    ok(/Arlynn added a \*Paid Advo\* item: \*Spring IG push\*/.test(msg), msg);
+    ok(msg.includes('2027-03-01 – 2027-03-14'), msg);
+    ok(msg.includes('Jetty Flagship · Manahawkin, NJ'), msg);
+    ok(msg.includes('<https://cal/?event=abc|'), msg);
+  });
+  // "An event you watch was edited" is a notice people learn to ignore. The
+  // fields that moved are the entire reason to send it.
+  it('names what changed on an edit', () => {
+    const msg = watchMessage({
+      actorName: 'Arlynn', item, action: 'changed', url: 'https://cal/?event=abc',
+      changed: changedFields(item, { ...item, start_date: '2027-03-08', status: 'Hold' }),
+    });
+    ok(/Changed: start date, status/.test(msg), msg);
+  });
+  it('offers no link on a deletion, because there is nothing to open', () => {
+    const msg = watchMessage({ actorName: 'A', item, action: 'deleted',
+                               url: 'https://cal/?event=abc' });
+    ok(/deleted a \*Paid Advo\*/.test(msg), msg);
+    ok(!msg.includes('https://cal'), msg);
+  });
+  it('escapes what Slack would read as markup', () => {
+    const msg = watchMessage({ actorName: 'A', item: { ...item, title: 'A < B & C' },
+                               action: 'created' });
+    ok(msg.includes('A &lt; B &amp; C'), msg);
+  });
+
+  it('reads an address the way the form stores one', () => {
+    eq(eventWhere({ venue: 'V', address: 'A', city: 'C', state: 'NJ', zip: '08050' }),
+       'V · A · C, NJ · 08050');
+    eq(eventWhere({ city: 'C', state: 'NJ' }), 'C, NJ');
+    eq(eventWhere({}), '');
+    eq(eventWhere(null), '');
+  });
+});
+
+// Opening an event and pressing Save is not news. A notification that fires
+// on every save is one nobody reads by the third week.
+describe('what counts as a change worth telling somebody about', () => {
+  const base = { title: 'T', start_date: '2027-01-01', all_day: 1, venue: 'V', status: 'Booked' };
+
+  it('says nothing changed when nothing changed', () => {
+    eq(changedFields(base, { ...base }), []);
+  });
+  it('is not fooled by a number that came back as a string', () => {
+    eq(changedFields({ all_day: 1 }, { all_day: '1' }), []);
+  });
+  it('is not fooled by null against empty', () => {
+    eq(changedFields({ venue: null, notes: '' }, { venue: '', notes: null }), []);
+  });
+  it('ignores the columns that move on every save', () => {
+    const cols = WATCHED_FIELDS.map(([c]) => c);
+    for (const c of ['updated_at', 'updated_by', 'created_at', 'created_by']) {
+      ok(!cols.includes(c), c + ' is watched, so every save would notify');
+    }
+  });
+  it('catches the ones that cost money to get wrong', () => {
+    eq(changedFields(base, { ...base, start_date: '2027-02-02' }), ['start date']);
+    eq(changedFields(base, { ...base, status: 'Cancelled' }), ['status']);
+    eq(changedFields({ sub_types: 'paid-advo' }, { sub_types: 'collab' }), ['tags']);
+  });
+  it('reports several at once, in a readable order', () => {
+    eq(changedFields(base, { ...base, title: 'U', venue: 'W' }), ['name', 'venue']);
+  });
+});
+
+// The watch fires when the tag is on EITHER side of the edit. A Paid Advo
+// item that stops being one is exactly the change a media buyer needs, and
+// checking only the new row would make it invisible.
+describe('the watcher is wired the way it is meant to be', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+
+  it('fires on a tag removed as well as a tag added', () => {
+    ok(/if \(!isPaidAdvo\(before\) && !isPaidAdvo\(after\)\) return;/.test(idx),
+       'the watch only looks at one side of the edit');
+  });
+  it('is called on create, on edit and on delete', () => {
+    for (const a of ['created', 'changed', 'deleted']) {
+      ok(new RegExp("tellWatchers\\('" + a + "'").test(idx), 'nothing notifies on ' + a);
+    }
+  });
+  it('never makes the save wait on Slack', () => {
+    const fn = idx.slice(idx.indexOf('const tellWatchers'));
+    const body = fn.slice(0, fn.indexOf('\n  if (path ==='));
+    ok(body.length > 200 && body.length < 2000, 'the slice no longer covers tellWatchers alone');
+    ok(/ctx\.waitUntil\(notify\)/.test(body), 'the notification is not deferred');
+    ok(!/await dmMentions/.test(body.split('const notify')[0] || ''),
+       'something awaits Slack before responding');
+  });
+  it('does not ping the person who made the change', () => {
+    ok(/filter\(\(e\) => e !== String\(who\.email\)\.toLowerCase\(\)\)/.test(idx),
+       'the watcher would be told about their own edit');
+  });
+  it('takes the tag key from the taxonomy rather than spelling it again', () => {
+    ok(/PAID_ADVO/.test(idx), 'index.js does not use the named key');
+    ok(!/'paid-advo'/.test(idx), 'index.js spells the key by hand, which will go stale');
+  });
+  it('is off until somebody is named, rather than erroring', () => {
+    ok(/env\.PAID_ADVO_WATCHERS \|\| ''/.test(idx), 'an unset watcher list is not handled');
+    ok(/if \(!to\.length \|\| !env\.SLACK_BOT_TOKEN\) return;/.test(idx),
+       'it would try to notify with no token or nobody to notify');
+  });
+});
+
 for (const [name, build] of groups) {
   group = [];
   build();
@@ -837,5 +1067,6 @@ for (const [name, build] of groups) {
     }
   }
 }
+
 console.log('\n' + ran + ' checks, ' + (failed ? failed + ' FAILED' : 'all passed'));
 process.exit(failed ? 1 : 0);

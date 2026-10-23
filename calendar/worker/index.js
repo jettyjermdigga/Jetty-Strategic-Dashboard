@@ -13,7 +13,7 @@ import { buildIcs } from './ics.js';
 import { SOCIAL_TYPE_KEYS, CHANNEL_KEYS, PILLAR_KEYS, PRODUCTION_KEYS } from './taxonomy.js';
 import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, DEPARTMENTS, DEPARTMENT_KEYS,
          SUB_TYPES, SUB_TYPE_KEYS, NEEDS, NEED_KEYS, VEHICLES, VEHICLE_KEYS,
-         STATUSES, PRIMACY } from './taxonomy.js';
+         STATUSES, PRIMACY, PAID_ADVO } from './taxonomy.js';
 import { retailWeek, retailWeekStart } from './retail.js';
 import { sqlStatements } from './sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
@@ -21,7 +21,8 @@ import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
 import { applyBlanks } from './blanks.js';
 import { normaliseProducts } from './products.js';
 import { commentMessage, dmMentions, displayName, eventUrl,
-         fetchSlackPeople, slackHint } from './slack.js';
+         fetchSlackPeople, slackHint, watchMessage, changedFields } from './slack.js';
+import { rollPlaces, FIELDS as PLACE_FIELDS } from './places.js';
 import SCHEMA from './schema.sql';
 import SOCIAL_BACKFILL from '../backfill/social.json';
 
@@ -868,6 +869,71 @@ async function handleApi(request, env, url, who, ctx) {
     return json({ items: await listItems(db, from, to) });
   }
 
+  // Somebody outside the company who needs to hear about one kind of event.
+  // Config rather than a table: it is one or two addresses and changing it
+  // should be a push with a diff, the same as the editor list.
+  const watchers = () => String(env.PAID_ADVO_WATCHERS || '')
+    .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+
+  const isPaidAdvo = (row) => String((row && row.sub_types) || '')
+    .split(',').map((x) => x.trim()).includes(PAID_ADVO);
+
+  /**
+   * Tell the watchers that a Paid Advo item moved.
+   *
+   * Never blocks and never fails the save: the event is already stored by
+   * the time this runs, and a Slack outage must not look like a calendar
+   * that would not take the booking.
+   *
+   * Fires when the item carries the tag either side of the edit -- a Paid
+   * Advo item that stops being one is exactly the change a media buyer
+   * needs to hear about, and it would be invisible if only the new row
+   * were checked.
+   */
+  const tellWatchers = (action, before, after) => {
+    const to = watchers();
+    if (!to.length || !env.SLACK_BOT_TOKEN) return;
+    if (!isPaidAdvo(before) && !isPaidAdvo(after)) return;
+
+    const changed = action === 'changed' ? changedFields(before, after) : [];
+    // Opening an event and pressing save is not news.
+    if (action === 'changed' && !changed.length) return;
+
+    const item = after || before;
+    const notify = (async () => {
+      const roster = await listPeople(db);
+      const me = roster.find((p) => p.email === String(who.email).toLowerCase());
+      // An address with no Slack account still goes through: dmMentions
+      // reports it, and a watcher who is quietly not being told is worse
+      // than one who is not set up yet.
+      const targets = to
+        .filter((e) => e !== String(who.email).toLowerCase())
+        .map((e) => roster.find((p) => p.email === e) || { email: e, slack_id: '' });
+      if (!targets.length) return;
+      const result = await dmMentions(env.SLACK_BOT_TOKEN, targets, watchMessage({
+        actorName: displayName(who.email, me && me.name),
+        item, action, changed,
+        label: (SUB_TYPES.find((t) => t.key === PAID_ADVO) || {}).label || 'Paid Advo',
+        url: eventUrl(url.origin, item && item.id),
+      }));
+      await recordSlackResult(db, result);
+    })().catch((e) => recordSlackResult(db, {
+      sent: 0, errors: [{ email: '', error: String((e && e.message) || e) }],
+    }).catch(() => {}));
+    if (ctx && ctx.waitUntil) ctx.waitUntil(notify);
+  };
+
+  // Everywhere the calendar has already been, for the picker on the Where
+  // step. Derived from the events rather than kept in a table of its own --
+  // see places.js.
+  if (path === '/api/places' && method === 'GET') {
+    const res = await db.prepare(
+      'SELECT ' + PLACE_FIELDS.join(', ') + ', start_date FROM items '
+      + "WHERE COALESCE(venue,'') <> '' OR COALESCE(address,'') <> '' "
+      + "OR COALESCE(city,'') <> '' ORDER BY start_date DESC LIMIT 4000").all();
+    return json({ places: rollPlaces(res.results || [], 400) });
+  }
+
   const requireEditor = () => (who.canEdit
     ? null
     : json({ error: who.email
@@ -889,6 +955,7 @@ async function handleApi(request, env, url, who, ctx) {
       + 'VALUES (?' + ',?'.repeat(COLS.length + 4) + ')',
     ).bind(id, ...COLS.map((c) => row[c]), who.email, now, who.email, now).run();
 
+    tellWatchers('created', null, { id, ...row });
     return json({ item: withRetail({ id, ...row, created_by: who.email, created_at: now }) }, 201);
   }
 
@@ -1127,6 +1194,9 @@ async function handleApi(request, env, url, who, ctx) {
       await db.prepare('DELETE FROM attachments WHERE item_id = ?').bind(id).run();
       await db.prepare('DELETE FROM comments WHERE item_id = ?').bind(id).run();
       await db.prepare('DELETE FROM items WHERE id = ?').bind(id).run();
+      // A paid placement that is cancelled is the change most worth hearing
+      // about, and the one a watcher would otherwise never learn of.
+      tellWatchers('deleted', existing, null);
       return json({ deleted: id });
     }
 
@@ -1140,6 +1210,7 @@ async function handleApi(request, env, url, who, ctx) {
         'UPDATE items SET ' + COLS.map((c) => c + ' = ?').join(', ')
         + ', updated_by = ?, updated_at = ? WHERE id = ?',
       ).bind(...COLS.map((c) => row[c]), who.email, now, id).run();
+      tellWatchers('changed', existing, { id, ...row });
       return json({ item: withRetail({ id, ...row, updated_by: who.email, updated_at: now }) });
     }
 
