@@ -134,3 +134,37 @@ CREATE TABLE IF NOT EXISTS budget (
   updated_by  TEXT,
   PRIMARY KEY (year, line_key)
 );
+
+-- The labor plan: what next year's people cost, person by person.
+--
+-- Same rule as the budget above -- only what somebody DECIDED is stored.
+-- The roster it hangs on lives in labor-seed.js, and deliberately holds no
+-- pay at all: every figure in this table was typed into the page, and this
+-- is the only place any of it exists.
+--
+-- `added` marks a write-in: a post somebody keyed in rather than a person
+-- the roster already had. Those rows carry their own name and title,
+-- because nothing else knows about them.
+--
+-- `removed` strikes a seeded person off. It has to be stored rather than
+-- simply deleted, because the roster is re-read on every boot and would
+-- otherwise put them straight back -- which is the bug this codebase has
+-- now had six times.
+CREATE TABLE IF NOT EXISTS labor (
+  year        INTEGER NOT NULL,
+  person_key  TEXT NOT NULL,
+  name        TEXT NOT NULL DEFAULT '',
+  title       TEXT NOT NULL DEFAULT '',
+  dept        TEXT NOT NULL DEFAULT '',
+  division    TEXT NOT NULL DEFAULT '',
+  pay_type    TEXT NOT NULL DEFAULT '',
+  rate        REAL,
+  salary      REAL,
+  hours       REAL,
+  note        TEXT NOT NULL DEFAULT '',
+  added       INTEGER NOT NULL DEFAULT 0,
+  removed     INTEGER NOT NULL DEFAULT 0,
+  updated_at  TEXT,
+  updated_by  TEXT,
+  PRIMARY KEY (year, person_key)
+);

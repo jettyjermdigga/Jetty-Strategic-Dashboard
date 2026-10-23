@@ -19,9 +19,15 @@ import {
   BASELINE_YEAR, WEEK_CURVE, CURVE_IS_PLACEHOLDER, FIRST_YEAR,
 } from './budget.js';
 import {
+  rows as laborRows, summary as laborSummary, against as laborAgainst,
+  csv as laborCsv, cleanKey as laborKey,
+  PEOPLE as ROSTER, ROSTER_AS_OF, PAY_TYPES, ROLLUPS, FULL_TIME_HOURS,
+} from './labor.js';
+import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
   readLinks, cleanLink, saveLink, deleteLink, readMusic,
   readBudget, saveBudgetLine,
+  readLabor, saveLaborPerson, removeLaborPerson,
   cleanTile, cleanPerson, cleanKey, saveTile, deleteTile, savePerson, deletePerson,
   saveCategory, deleteCategory, saveGroup, deleteGroup,
 } from './store.js';
@@ -103,6 +109,7 @@ export default {
         return await photo(request, env, who, url);
       }
       if (url.pathname.startsWith('/api/budget')) return await budget(request, env, url, who);
+      if (url.pathname.startsWith('/api/labor')) return await labor(request, env, url, who);
       if (url.pathname.startsWith('/api/admin/')) return await admin(request, env, url, who);
       return json({ error: 'No such endpoint.' }, 404);
     } catch (err) {
@@ -278,6 +285,81 @@ async function budget(request, env, url, who) {
     // all of them and the progress count is a count of all of them, so a
     // reply that only described one line would leave both to be guessed at.
     return json({ ok: true, lines });
+  }
+
+  return json({ error: 'No such endpoint.' }, 404);
+}
+
+// ── Labor planning ──────────────────────────────────────────────────────
+//
+// Behind the same lock as the budget, and for a stronger reason: this is
+// every person's pay, by name. Nothing here is sent to a request that is
+// not on BUDGET_USERS, and no figure in it exists anywhere but D1.
+async function labor(request, env, url, who) {
+  if (!canBudget(env, who)) return json({ error: 'No such endpoint.' }, 404);
+
+  const what = url.pathname.slice('/api/labor'.length);
+  const year = cleanYear(url.searchParams.get('year')) || FIRST_YEAR;
+
+  if (what === '' && request.method === 'GET') {
+    const saved = await readLabor(env.DB, year);
+    const rs = laborRows(saved);
+    const sum = laborSummary(rs);
+    return json({
+      year, you: who.email,
+      rosterAsOf: ROSTER_AS_OF, rosterSize: ROSTER.length,
+      payTypes: PAY_TYPES, rollups: ROLLUPS, fullTimeHours: FULL_TIME_HOURS,
+      people: rs,
+      // What the budget tab currently says for the lines this rolls into.
+      // Shown beside the plan, never written into it: the two are built by
+      // the same person for the same year and should agree, but which one
+      // is wrong on a given day is a judgement rather than arithmetic.
+      against: laborAgainst(sum, await readBudget(env.DB, year), 'proj'),
+    });
+  }
+
+  if (what === '.csv' && request.method === 'GET') {
+    const body = laborCsv(laborRows(await readLabor(env.DB, year)), year);
+    return new Response(body, {
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': 'attachment; filename="jetty-labor-' + year + '.csv"',
+        'cache-control': 'no-store',
+      },
+    });
+  }
+
+  if ((what === '/person' || what === '/person/remove') && request.method === 'POST') {
+    const body = await request.json().catch(() => null);
+    if (!body) return json({ error: 'That was not JSON.' }, 400);
+
+    // A write-in gets its key from its name, with a number on the end if
+    // that name is taken -- the same rule tiles and links follow. A seeded
+    // person keeps the key the roster gave them.
+    let key = laborKey(body.key);
+    if (!key && body.added) {
+      const taken = new Set([...ROSTER.map((p) => p.k),
+                             ...Object.keys(await readLabor(env.DB, year))]);
+      const b = laborKey(body.name) || 'new-post';
+      key = b;
+      for (let n = 2; taken.has(key); n++) key = b + '-' + n;
+    }
+    if (!key) return json({ errors: ['That is not a person.'] }, 400);
+
+    const out = what === '/person/remove'
+      ? await removeLaborPerson(env.DB, year, key, Boolean(body.added), who.email)
+      : await saveLaborPerson(env.DB, year, key, body, who.email);
+    if (out.errors) return json(out, 400);
+
+    // The whole sheet back: the footer is a total over all of it and the
+    // count is a count of all of it, so a reply about one person would
+    // leave both to be guessed at.
+    const saved = await readLabor(env.DB, year);
+    const rs = laborRows(saved);
+    return json({
+      ok: true, key, people: rs,
+      against: laborAgainst(laborSummary(rs), await readBudget(env.DB, year), 'proj'),
+    });
   }
 
   return json({ error: 'No such endpoint.' }, 404);

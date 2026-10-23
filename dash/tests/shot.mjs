@@ -13,6 +13,10 @@ import {
   rows as budgetRows, calendar as budgetCalendar, WEEK_CURVE, CURVE_IS_PLACEHOLDER,
   GROUPS as BUDGET_GROUPS, BASES, CADENCES, BASELINE_YEAR, FIRST_YEAR,
 } from '../worker/budget.js';
+import {
+  rows as laborRows, summary as laborSummary, against as laborAgainst,
+  PEOPLE as ROSTER, ROSTER_AS_OF, PAY_TYPES, ROLLUPS, FULL_TIME_HOURS,
+} from '../worker/labor.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
 // globally here, not as a dependency of this directory.
@@ -152,6 +156,14 @@ const CASES = [
   { file: 'budget-week-light', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'budget.html', wait: '.bd-in', click: '#seg button[data-v="week"]',
     after: '.bd-t.ro' },
+  { file: 'labor-light', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'labor.html', wait: '.lb-sel' },
+  { file: 'labor-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    path: 'labor.html', wait: '.lb-sel' },
+  { file: 'labor-tbh', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    path: 'labor.html', wait: '.lb-sel', select: ['#filter', 'tbh'], after: '.lb-chip.tbh' },
+  { file: 'labor-shut-out', scheme: 'light', who: full('amy@jettylife.com'),
+    path: 'labor.html', wait: '.notice', noBudget: true },
   { file: 'budget-shut-out', scheme: 'dark', who: full('amy@jettylife.com'),
     path: 'budget.html', wait: '.notice', noBudget: true },
   { file: 'dash-admin-cats', scheme: 'dark', who: me('jeremy@jettylife.com'),
@@ -197,6 +209,42 @@ const BUDGET = {
   curve: WEEK_CURVE, curvePlaceholder: CURVE_IS_PLACEHOLDER,
 };
 
+// A labor plan part way through: a few people costed, one struck off, one
+// write-in. That is the only state where all of it is on screen at once --
+// a costed row, an undecided one, a to-be-hired chip and a write-in.
+const PLANNED = (() => {
+  const out = {};
+  const salaried = ROSTER.filter((p) => p.pay === 'salary').slice(0, 7);
+  const hourly = ROSTER.filter((p) => p.pay === 'hourly').slice(0, 9);
+  salaried.forEach((p, i) => {
+    out[p.k] = { pay: 'salary', salary: 62000 + i * 9500,
+                 note: i === 0 ? 'Merit review lands in Q2' : '' };
+  });
+  hourly.forEach((p, i) => {
+    out[p.k] = { pay: 'hourly', rate: 21 + i, hours: i % 3 === 0 ? 1560 : FULL_TIME_HOURS,
+                 note: i === 1 ? 'Part-time through the winter' : '' };
+  });
+  const gone = ROSTER.find((p) => p.type === 'outsourced');
+  if (gone) out[gone.k] = { removed: true };
+  out['ink-logistics-associate-2'] = {
+    added: true, name: 'INK Logistics Associate', title: 'INK Logistics Associate',
+    dept: 'Operations (INK)', division: 'INK', pay: 'hourly', rate: 23, hours: 2080,
+    note: 'Starts in March, so three quarters of a year',
+  };
+  return out;
+})();
+
+const LABOR = (() => {
+  const people = laborRows(PLANNED);
+  return {
+    year: FIRST_YEAR, you: 'jeremy@jettylife.com',
+    rosterAsOf: ROSTER_AS_OF, rosterSize: ROSTER.length,
+    payTypes: PAY_TYPES, rollups: ROLLUPS, fullTimeHours: FULL_TIME_HOURS,
+    people,
+    against: laborAgainst(laborSummary(people), {}, 'proj'),
+  };
+})();
+
 const browser = await chromium.launch();
 for (const c of CASES) {
   const page = await browser.newPage({
@@ -213,6 +261,11 @@ for (const c of CASES) {
       return c.noBudget
         ? route.fulfill({ status: 404, json: { error: 'No such endpoint.' } })
         : route.fulfill({ json: BUDGET });
+    }
+    if (p === '/api/labor') {
+      return c.noBudget
+        ? route.fulfill({ status: 404, json: { error: 'No such endpoint.' } })
+        : route.fulfill({ json: LABOR });
     }
     // A stand-in for the artwork: the real files live in R2, which the
     // harness has no access to. Solid grey at the right aspect, so the
@@ -233,6 +286,10 @@ for (const c of CASES) {
   if (c.type) {
     await page.fill(c.type[0], c.type[1]);
     await page.waitForTimeout(150);
+  }
+  if (c.select) {
+    await page.selectOption(c.select[0], c.select[1]);
+    await page.waitForSelector(c.after || 'tbody tr');
   }
   if (c.click) {
     await page.locator(c.click).first().click();

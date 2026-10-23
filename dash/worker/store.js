@@ -16,6 +16,7 @@ import { PICKS } from './music-seed.js';
 import { TILES, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES, linkCats } from './tiles.js';
 import { cleanKey, cleanUrl, cleanTile, cleanPerson, cleanLink } from './clean.js';
 import { cleanLine } from './budget.js';
+import { cleanPerson as cleanLaborPerson, cleanKey as cleanLaborKey } from './labor.js';
 import { PEOPLE } from './people.js';
 
 // Re-exported so callers have one import for "the store", while the rules
@@ -710,5 +711,81 @@ export async function saveBudgetLine(db, year, key, input, who) {
     + 'note = excluded.note, flagged = excluded.flagged, '
     + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
     .bind(year, k, amount, note, flagged, new Date().toISOString(), who || '').run();
+  return { ok: true };
+}
+
+// ── the labor plan ──────────────────────────────────────────────────────
+
+/** Every decision made about a person for a year, keyed by person. */
+export async function readLabor(db, year) {
+  const res = await db.prepare(
+    'SELECT person_key, name, title, dept, division, pay_type, rate, salary, hours, '
+    + 'note, added, removed, updated_at, updated_by FROM labor WHERE year = ?')
+    .bind(year).all();
+  const out = {};
+  for (const r of res.results || []) {
+    out[r.person_key] = {
+      name: r.name || '', title: r.title || '', dept: r.dept || '',
+      division: r.division || '', pay: r.pay_type || '',
+      rate: r.rate, salary: r.salary, hours: r.hours,
+      note: r.note || '', added: Boolean(r.added), removed: Boolean(r.removed),
+      at: r.updated_at, by: r.updated_by,
+    };
+  }
+  return out;
+}
+
+/** Save one person's line. */
+export async function saveLaborPerson(db, year, key, input, who) {
+  const k = cleanLaborKey(key);
+  if (!k) return { errors: ['That is not a person.'] };
+
+  const existing = (await readLabor(db, year))[k] || null;
+  const out = cleanLaborPerson(input, existing);
+  if (out.errors) return out;
+  const r = out.row;
+
+  if (r.clear) {
+    await db.prepare('DELETE FROM labor WHERE year = ? AND person_key = ?').bind(year, k).run();
+    return { ok: true, cleared: true };
+  }
+
+  await db.prepare(
+    'INSERT INTO labor (year, person_key, name, title, dept, division, pay_type, '
+    + 'rate, salary, hours, note, added, removed, updated_at, updated_by) '
+    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) '
+    + 'ON CONFLICT(year, person_key) DO UPDATE SET name = excluded.name, '
+    + 'title = excluded.title, dept = excluded.dept, division = excluded.division, '
+    + 'pay_type = excluded.pay_type, rate = excluded.rate, salary = excluded.salary, '
+    + 'hours = excluded.hours, note = excluded.note, added = excluded.added, '
+    + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
+    .bind(year, k, r.name, r.title, r.dept, r.division, r.pay,
+          r.rate, r.salary, r.hours, r.note, r.added ? 1 : 0,
+          new Date().toISOString(), who || '').run();
+  return { ok: true };
+}
+
+/**
+ * Take somebody off the plan.
+ *
+ * A write-in is deleted outright -- this table is the only record it ever
+ * had. Somebody from the roster is marked removed instead, because the
+ * roster is re-read on every boot and a plain delete would put them back.
+ */
+export async function removeLaborPerson(db, year, key, added, who) {
+  const k = cleanLaborKey(key);
+  if (!k) return { errors: ['That is not a person.'] };
+
+  if (added) {
+    await db.prepare('DELETE FROM labor WHERE year = ? AND person_key = ? AND added = 1')
+      .bind(year, k).run();
+    return { ok: true };
+  }
+  await db.prepare(
+    'INSERT INTO labor (year, person_key, removed, updated_at, updated_by) '
+    + 'VALUES (?, ?, 1, ?, ?) '
+    + 'ON CONFLICT(year, person_key) DO UPDATE SET removed = 1, '
+    + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
+    .bind(year, k, new Date().toISOString(), who || '').run();
   return { ok: true };
 }

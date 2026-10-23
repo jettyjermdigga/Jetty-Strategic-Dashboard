@@ -14,6 +14,11 @@ import {
   BASELINE_YEAR, FIRST_YEAR, GROUPS as BUDGET_GROUPS, CADENCES,
 } from '../worker/budget.js';
 import { periods, weekCounts, weekStart } from '../worker/retail.js';
+import {
+  rows as laborRows, cost, decided, byDepartment, summary as laborSummary,
+  against, cleanPerson as cleanLaborPerson, cleanKey as laborKey, csv as laborCsv,
+  num, rollOf, PEOPLE as ROSTER, PAY_TYPES, ROLLUPS, FULL_TIME_HOURS, ROSTER_AS_OF,
+} from '../worker/labor.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -950,6 +955,321 @@ describe('the retail year the budget is built on', () => {
   });
   it('gives the page every cadence at once', () => {
     eq(Object.keys(calendar(2027)).sort(), [...CADENCES].sort());
+  });
+});
+
+
+// ── Labor planning ──────────────────────────────────────────────────────
+
+// The invariant this whole design turns on. The Staff base holds salary
+// history, SS numbers and I-9 attachments, and the inventory written last
+// week called the duplicated copies of that the one real exposure in
+// Airtable. A regenerated seed that quietly brought pay across would put a
+// third copy into git -- in history, in every clone, for ever.
+describe('the roster seed carries no pay', () => {
+  const ALLOWED = new Set(['k', 'n', 't', 'd', 'v', 'pay', 'ft', 'type', 'tbh']);
+  it('has only the fields it is meant to', () => {
+    for (const p of ROSTER) {
+      for (const f of Object.keys(p)) {
+        ok(ALLOWED.has(f), p.k + ' carries an unexpected field: ' + f);
+      }
+    }
+  });
+  // "pay" is how, never how much. A number anywhere in this file is a
+  // figure, and no figure belongs in it.
+  it('holds no numbers at all', () => {
+    for (const p of ROSTER) {
+      for (const [f, v] of Object.entries(p)) {
+        ok(typeof v !== 'number', p.k + '.' + f + ' is a number: ' + v);
+      }
+    }
+  });
+  it('names no field that sounds like money', () => {
+    const HERE = path.dirname(fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(path.join(HERE, '..', 'worker', 'labor-seed.js'), 'utf8');
+    const body = src.slice(src.indexOf('export const PEOPLE'));
+    ok(!/\b(salary|rate|wage|comp|hourly_rate|gross)\b\s*:/i.test(body),
+       'the seed has a pay-shaped field in it');
+  });
+});
+
+describe('the roster seed', () => {
+  it('gives everybody a key of their own', () => {
+    const seen = new Set();
+    for (const p of ROSTER) {
+      ok(p.k && !seen.has(p.k), 'duplicate or empty key: ' + p.k);
+      seen.add(p.k);
+      eq(laborKey(p.k), p.k, p.k + ' is not a key this would accept back');
+    }
+  });
+  it('gives everybody a name and a department', () => {
+    for (const p of ROSTER) {
+      ok(p.n && p.n.trim(), p.k + ' has no name');
+      ok(p.d && p.d.trim(), p.k + ' has no department');
+    }
+  });
+  it('only uses ways of being paid that exist', () => {
+    const known = new Set(PAY_TYPES.map((t) => t.key));
+    for (const p of ROSTER) {
+      ok(!p.pay || known.has(p.pay), p.k + ' is paid "' + p.pay + '"');
+    }
+  });
+  it('has posts to be hired as well as people who are here', () => {
+    ok(ROSTER.some((p) => p.tbh), 'no to-be-hired posts came across');
+    ok(ROSTER.some((p) => !p.tbh), 'no actual people came across');
+  });
+  it('says when it was taken, because a roster goes stale', () => {
+    ok(/^\d{4}-\d{2}-\d{2}$/.test(ROSTER_AS_OF), ROSTER_AS_OF);
+  });
+});
+
+// Showing 2,080 as a placeholder and then quietly using it would put a
+// number nobody chose into the company's labor budget.
+describe('what one person costs', () => {
+  const at = (over) => ({ pay: '', rate: null, salary: null, hours: null, ...over });
+
+  it('costs an hourly person at rate times hours', () => {
+    eq(cost(at({ pay: 'hourly', rate: 26, hours: 2080 })), 54080);
+  });
+  it('will not cost an hourly person on a rate alone', () => {
+    eq(cost(at({ pay: 'hourly', rate: 26 })), null);
+    eq(cost(at({ pay: 'hourly', hours: 2080 })), null);
+  });
+  it('does not quietly assume a full-time year', () => {
+    ok(FULL_TIME_HOURS === 2080, 'the placeholder moved');
+    eq(cost(at({ pay: 'hourly', rate: 26 })), null, 'the placeholder became a decision');
+  });
+  it('costs a salaried person at their salary', () => {
+    eq(cost(at({ pay: 'salary', salary: 72000 })), 72000);
+  });
+  it('costs an unpaid intern at nothing, not at zero', () => {
+    eq(cost(at({ pay: 'unpaid', salary: 50000 })), null);
+  });
+  it('costs somebody with no way of being paid at nothing', () => {
+    eq(cost(at({ salary: 50000 })), null);
+  });
+  it('treats a salary of zero as a decision, not as undecided', () => {
+    eq(cost(at({ pay: 'salary', salary: 0 })), 0);
+    eq(decided(at({ pay: 'salary', salary: 0 })), true);
+  });
+});
+
+describe('the roster plus the plan', () => {
+  const someone = ROSTER.find((p) => !p.tbh).k;
+
+  it('shows everybody when nothing has been decided', () => {
+    eq(laborRows({}).length, ROSTER.length);
+  });
+  it('takes the decision where there is one, the roster where there is not', () => {
+    const r = laborRows({ [someone]: { pay: 'salary', salary: 81000 } })
+      .find((x) => x.k === someone);
+    eq([r.pay, r.salary], ['salary', 81000]);
+    eq(r.n, ROSTER.find((p) => p.k === someone).n, 'the name stopped coming from the roster');
+  });
+  // The bug this codebase has now had six times: the seed is re-read on
+  // every boot, so anything struck off comes straight back unless the
+  // striking-off is itself stored.
+  it('keeps somebody struck off struck off', () => {
+    const rs = laborRows({ [someone]: { removed: true } });
+    eq(rs.length, ROSTER.length - 1);
+    ok(!rs.some((r) => r.k === someone), 'they came back');
+  });
+  it('shows a write-in with the name it was given', () => {
+    const rs = laborRows({ 'ap-clerk': { added: true, name: 'A/P Clerk', dept: 'Finance' } });
+    const mine = rs.find((r) => r.k === 'ap-clerk');
+    eq([mine.n, mine.d, mine.added, mine.tbh], ['A/P Clerk', 'Finance', true, true]);
+  });
+  it('does not show a write-in that has been struck off', () => {
+    eq(laborRows({ x: { added: true, name: 'X', removed: true } }).length, ROSTER.length);
+  });
+  it('files a write-in with no department under Unassigned', () => {
+    eq(laborRows({ x: { added: true, name: 'X' } }).find((r) => r.k === 'x').d, 'Unassigned');
+  });
+});
+
+describe('the sheet, by department', () => {
+  it('puts Unassigned last however the alphabet falls', () => {
+    const gs = byDepartment(laborRows({}));
+    eq(gs[gs.length - 1].dept, 'Unassigned');
+  });
+  it('is otherwise alphabetical', () => {
+    const real = byDepartment(laborRows({})).slice(0, -1).map((g) => g.dept.toLowerCase());
+    eq(real, [...real].sort());
+  });
+  it('loses nobody', () => {
+    const gs = byDepartment(laborRows({}));
+    eq(gs.reduce((a, g) => a + g.people.length, 0), ROSTER.length);
+  });
+  // A list you are adding to must not reshuffle under the cursor.
+  it('puts a write-in after the people already in its department', () => {
+    const g = byDepartment(laborRows({ aaa: { added: true, name: 'Aaa', dept: 'Finance' } }))
+      .find((x) => x.dept === 'Finance');
+    eq(g.people[g.people.length - 1].k, 'aaa', 'the write-in sorted into the alphabet');
+  });
+});
+
+// Commissions and partner draws are real money and real people, but they
+// are their own budget lines. Rolling them into payroll would double count
+// them the moment anybody compared the two.
+describe('what the plan rolls up into', () => {
+  it('counts salary and hourly as payroll, and nothing else', () => {
+    eq(rollOf('salary'), 'payroll');
+    eq(rollOf('hourly'), 'payroll');
+    eq(rollOf('commission'), 'commission');
+    eq(rollOf('guaranteed'), 'guaranteed');
+    eq(rollOf('unpaid'), 'other');
+    eq(rollOf(''), 'other');
+  });
+  it('keeps a commission out of the payroll total', () => {
+    const who = ROSTER.filter((p) => p.pay === 'commission')[0];
+    ok(who, 'nobody in the roster is on commission to test with');
+    const s = laborSummary(laborRows({ [who.k]: { pay: 'commission', salary: 90000 } }));
+    eq(s.roll.payroll.cost, 0, 'a commission landed in payroll');
+    eq(s.roll.commission.cost, 90000);
+  });
+  it('counts every head exactly once', () => {
+    const s = laborSummary(laborRows({}));
+    eq(ROLLUPS.reduce((a, r) => a + s.roll[r.key].heads, 0), ROSTER.length);
+  });
+  it('counts only the people somebody has actually costed', () => {
+    const who = ROSTER.filter((p) => p.pay === 'salary')[0];
+    eq(laborSummary(laborRows({ [who.k]: { pay: 'salary', salary: 1 } })).set, 1);
+    eq(laborSummary(laborRows({})).set, 0);
+  });
+});
+
+// A rollup pointing at a budget line that does not exist would show "not
+// set" for ever and nobody would know why.
+describe('the plan against the budget', () => {
+  it('points every rollup at a line the budget actually has', () => {
+    for (const r of ROLLUPS) {
+      if (!r.line) continue;
+      ok(BUDGET_LINES.some((l) => l.k === r.line),
+         r.key + ' rolls into "' + r.line + '", which is not a budget line');
+    }
+  });
+  it('falls back to the 2026 baseline when the line is undecided', () => {
+    const out = against(laborSummary(laborRows({})), {}, 'proj');
+    const payroll = out.find((a) => a.key === 'payroll');
+    eq(payroll.budget, BUDGET_LINES.find((l) => l.k === 'labor-total').proj);
+    eq(payroll.decided, false);
+  });
+  it('uses the decision once there is one', () => {
+    const out = against(laborSummary(laborRows({})), { 'labor-total': { amount: 3000000 } }, 'proj');
+    const payroll = out.find((a) => a.key === 'payroll');
+    eq([payroll.budget, payroll.decided], [3000000, true]);
+  });
+  it('reports the gap in the direction that reads as overspend', () => {
+    const who = ROSTER.filter((p) => p.pay === 'salary')[0];
+    const rs = laborRows({ [who.k]: { pay: 'salary', salary: 4000000 } });
+    const payroll = against(laborSummary(rs), { 'labor-total': { amount: 3000000 } }, 'proj')
+      .find((a) => a.key === 'payroll');
+    eq(payroll.gap, 1000000, 'a plan over budget did not come out positive');
+  });
+});
+
+describe('what somebody typed into a person', () => {
+  const base = { pay: 'salary', salary: '72,000' };
+  it('takes figures typed the way people type figures', () => {
+    const r = cleanLaborPerson({ pay: 'hourly', rate: '$26.50', hours: '1,560' }).row;
+    eq([r.rate, r.hours], [26.5, 1560]);
+  });
+  it('refuses what is not a figure', () => {
+    ok(cleanLaborPerson({ ...base, salary: 'about 70k' }).errors);
+  });
+  it('refuses more hours than a year has', () => {
+    ok(cleanLaborPerson({ pay: 'hourly', rate: '20', hours: '20000' }).errors);
+    ok(!cleanLaborPerson({ pay: 'hourly', rate: '20', hours: '2080' }).errors);
+  });
+  it('refuses a way of being paid that does not exist', () => {
+    ok(cleanLaborPerson({ pay: 'equity' }).errors);
+  });
+  it('wants a name on a write-in, since nothing else knows about it', () => {
+    ok(cleanLaborPerson({ added: true, name: '  ' }).errors);
+    ok(!cleanLaborPerson({ added: true, name: 'Ink Sales Associate' }).errors);
+  });
+  // A second copy of somebody's name that drifts from the Staff base is how
+  // the duplicated-roster problem started in the first place.
+  it('does not let a seeded person be renamed here', () => {
+    eq(cleanLaborPerson({ name: 'Somebody Else', pay: 'salary', salary: '1' }).row.name, '');
+  });
+  it('calls a seeded person with nothing on their line undecided', () => {
+    eq(cleanLaborPerson({}).row.clear, true);
+    eq(cleanLaborPerson({ note: 'raise in Q2' }).row.clear, false);
+    eq(cleanLaborPerson({ pay: 'salary' }).row.clear, false);
+  });
+  // A write-in is the only record that the post exists, so its row never
+  // goes just because the figures were cleared.
+  it('never calls a write-in undecided', () => {
+    eq(cleanLaborPerson({ added: true, name: 'New post' }).row.clear, false);
+  });
+  it('reads a cleared figure as cleared, and zero as zero', () => {
+    eq(num(''), null);
+    eq(num('0'), 0);
+    eq(num(null), null);
+    eq(num('abc'), undefined);
+  });
+});
+
+describe('the labor download', () => {
+  const who = ROSTER.filter((p) => p.pay === 'hourly')[0];
+  const out = laborCsv(laborRows({
+    [who.k]: { pay: 'hourly', rate: 26, hours: 2080, note: 'Raise in Q2, "if" INK holds' },
+  }), 2027);
+  const lines = out.trim().split('\n');
+
+  it('has a row per person and a header', () => eq(lines.length, ROSTER.length + 1));
+  it('says which budget line each person lands on', () => {
+    ok(/Rolls into/.test(lines[0]), lines[0]);
+  });
+  it('carries a note with commas and quotes without breaking the row', () => {
+    ok(out.includes('"Raise in Q2, ""if"" INK holds"'), 'the note was not escaped');
+  });
+  it('says who is a post rather than a person', () => {
+    ok(/,To be hired,/.test(out), 'nothing is marked to-be-hired');
+  });
+});
+
+// The page has to redraw the instant a figure is typed, which it cannot do
+// by asking the server -- so which figures a way of being paid asks for is
+// decided in two places. They have to agree, or a row is un-fillable.
+describe('the page and the Worker agree on what each row asks for', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const page = fs.readFileSync(path.join(HERE, '..', 'public', 'assets', 'labor.js'), 'utf8');
+
+  it('only uses the three answers the page knows how to draw', () => {
+    for (const t of PAY_TYPES) {
+      ok(['rate', 'salary', 'none'].includes(t.asks),
+         t.key + ' asks for "' + t.asks + '", which the page cannot draw');
+    }
+  });
+  it('reads them off what the Worker sent, rather than keeping its own list', () => {
+    ok(/D\.payTypes/.test(page), 'the page does not use the types the Worker sent');
+    ok(!/'commission'|'guaranteed'|'unpaid'/.test(page),
+       'the page hardcodes a pay type, which will drift from PAY_TYPES');
+  });
+  it('gives every rollup the page draws a label', () => {
+    for (const r of ROLLUPS) ok(r.label, r.key + ' has no label');
+  });
+});
+
+describe('labor planning is gated and reachable', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
+  const budgetPage = fs.readFileSync(path.join(HERE, '..', 'public', 'budget.html'), 'utf8');
+
+  it('refuses before doing anything else', () => {
+    ok(/async function labor\([^)]*\)\s*\{\s*if \(!canBudget\(env, who\)\)/.test(idx),
+       'the labor handler does not begin by checking canBudget');
+  });
+  it('has a page behind the link the budget offers', () => {
+    const m = budgetPage.match(/href="\/(labor\.html)"/);
+    ok(m, 'the budget page does not link to labor planning');
+    ok(fs.existsSync(path.join(HERE, '..', 'public', m[1])), m[1] + ' is not in public/');
+  });
+  it('gets back to the budget from the labor page', () => {
+    const labourPage = fs.readFileSync(path.join(HERE, '..', 'public', 'labor.html'), 'utf8');
+    ok(/href="\/budget\.html"/.test(labourPage), 'no way back to the budget');
   });
 });
 
