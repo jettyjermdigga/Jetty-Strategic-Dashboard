@@ -28,10 +28,20 @@
     var t = (D.payTypes || []).filter(function (p) { return p.key === pay; })[0];
     return t ? t.asks : null;
   }
-  function roll(pay) {
-    var t = (D.payTypes || []).filter(function (p) { return p.key === pay; })[0];
-    return t ? t.roll : 'other';
+  // Payroll is the one bucket that splits again: salary and hourly land in
+  // direct labor or in G&A depending on what was decided about that person,
+  // and until it is decided, in neither. Mirrors rollOf in labor.js.
+  function roll(p) {
+    var t = (D.payTypes || []).filter(function (x) { return x.key === p.pay; })[0];
+    if (!t) return 'other';
+    if (t.roll !== 'payroll') return t.roll;
+    var c = (D.classes || []).filter(function (x) { return x.key === p.cls; })[0];
+    return c ? c.roll : 'unclassified';
   }
+  var splits = function (p) {
+    var t = (D.payTypes || []).filter(function (x) { return x.key === p.pay; })[0];
+    return Boolean(t && t.roll === 'payroll');
+  };
   function cost(p) {
     var a = asks(p.pay);
     if (!a || a === 'none') return null;
@@ -46,7 +56,8 @@
   function keep(p) {
     if (show === 'todo') return cost(p) == null;
     if (show === 'tbh') return p.tbh;
-    if (show === 'payroll') return roll(p.pay) === 'payroll';
+    if (show === 'payroll') return splits(p);
+    if (show === 'unsplit') return splits(p) && !p.cls;
     return true;
   }
 
@@ -75,10 +86,10 @@
 
   // ── Drawing ───────────────────────────────────────────────────────────
 
-  var COLS = 8;
+  var COLS = 9;
 
   function head() {
-    return '<tr><th>Person</th><th>Paid</th><th>Rate ($/hr)</th>'
+    return '<tr><th>Person</th><th>Paid</th><th>Direct or G&amp;A</th><th>Rate ($/hr)</th>'
       + '<th>Salary <span>annual</span></th><th>Hours <span>annual, est.</span></th>'
       + '<th>' + D.year + ' projection</th><th>Note</th><th></th></tr>';
   }
@@ -109,6 +120,21 @@
       + ' placeholder="' + ph + '"></td>';
   }
 
+  // Only payroll splits. A commission rep or a partner has a budget line of
+  // its own, so offering the choice would invite an answer that goes
+  // nowhere -- the dash reads as "not asked", the same as the figures a pay
+  // type does not want.
+  function clsCell(p) {
+    if (!splits(p)) return '<span class="lb-na">—</span>';
+    return '<select class="lb-sel lb-cls' + (p.cls ? ' set' : '') + '" data-f="cls"'
+      + ' aria-label="Is ' + esc(p.n) + ' direct labor or G&amp;A?">'
+      + '<option value="">—</option>'
+      + D.classes.map(function (c) {
+        return '<option value="' + c.key + '"' + (c.key === p.cls ? ' selected' : '')
+          + '>' + esc(c.label) + '</option>';
+      }).join('') + '</select>';
+  }
+
   function row(p) {
     var c = cost(p);
     var nameCell = p.added
@@ -130,6 +156,7 @@
           return '<option value="' + t.key + '"' + (t.key === p.pay ? ' selected' : '')
             + '>' + esc(t.label) + '</option>';
         }).join('') + '</select></td>'
+      + '<td>' + clsCell(p) + '</td>'
       + cell(p, 'rate', '', '')
       + cell(p, 'salary', '', '')
       + cell(p, 'hours', 'hrs', comma(D.fullTimeHours))
@@ -142,6 +169,22 @@
       + '</tr>';
   }
 
+  // Ninety-six dropdowns is not a decision anybody makes carefully by the
+  // fortieth one, and department is how this judgement is actually made.
+  // Shown only where there is payroll in the department to split.
+  function deptSetter(g) {
+    var mine = g.people.filter(splits);
+    if (!mine.length) return '';
+    var left = mine.filter(function (p) { return !p.cls; }).length;
+    return '<select class="lb-dsel" data-dept="' + esc(g.dept) + '"'
+      + ' aria-label="Set direct or G&amp;A for everybody in ' + esc(g.dept) + '">'
+      + '<option value="">' + (left ? left + ' to split…' : 'all split') + '</option>'
+      + D.classes.map(function (c) {
+        return '<option value="' + c.key + '">All ' + esc(c.label.toLowerCase()) + '</option>';
+      }).join('')
+      + '<option value="clear">Clear all</option></select>';
+  }
+
   function render() {
     var gs = depts();
     var out = [];
@@ -152,7 +195,8 @@
         + '<button class="lb-caret" type="button" aria-expanded="' + (!folded)
         + '" aria-label="' + (folded ? 'Show' : 'Hide') + ' ' + esc(g.dept) + '">'
         + (folded ? '▸' : '▾') + '</button>'
-        + esc(g.dept) + '<span class="lb-n">' + g.people.length + '</span></span></td>'
+        + esc(g.dept) + '<span class="lb-n">' + g.people.length + '</span>'
+        + deptSetter(g) + '</span></td>'
         + '<td class="lb-sum">' + (g.total ? money(g.total) : '') + '</td>'
         + '<td></td><td></td></tr>');
       if (!folded) g.people.forEach(function (p) { out.push(row(p)); });
@@ -174,7 +218,7 @@
     var set = 0;
     var open = 0;
     D.people.forEach(function (p) {
-      var b = by[roll(p.pay)];
+      var b = by[roll(p)];
       b.heads++;
       var c = cost(p);
       if (c != null) { b.cost += c; set++; }
@@ -191,8 +235,10 @@
       + (saving ? 'Saving…' : 'Saved as you type') + '</div>';
     $('#pl').hidden = false;
 
+    var unsplit = D.people.filter(function (p) { return splits(p) && !p.cls; }).length;
     $('#prog').innerHTML = '<b>' + D.people.length + '</b> on the plan · <b>'
-      + set + '</b> costed · <b>' + open + '</b> to be hired';
+      + set + '</b> costed · <b>' + unsplit + '</b> not split · <b>'
+      + open + '</b> to be hired';
 
     // Against the budget. Recomputed locally from the same rollups, so it
     // moves with the sheet rather than lagging a round trip behind.
@@ -208,9 +254,14 @@
               + (gap > 0 ? '+' : '−') + money(Math.abs(gap)).replace('−', '')
               + ' vs budget</span>')
           + '</div>'
+          // A line with no 2026 behind it cannot also be "still the 2026
+          // baseline". Saying both at once is how a reader concludes the
+          // page is confused rather than that the line is new.
           + '<div class="lb-vs-n">' + esc(a.lineName) + ': '
-          + (a.budget == null ? 'not set' : money(a.budget))
-          + (a.decided ? '' : ' (still the 2026 baseline)') + '</div></div>';
+          + (a.budget == null
+            ? 'new for ' + D.year + ', so there is no 2026 to compare'
+            : money(a.budget) + (a.decided ? '' : ' (still the 2026 baseline)'))
+          + '</div></div>';
       }).join('');
       vs.hidden = !(D.against || []).length;
     }
@@ -274,7 +325,7 @@
   function save(p, redraw) {
     send('/api/labor/person', {
       key: p.added ? p.k : p.k, added: p.added, name: p.n, title: p.t,
-      dept: p.d, division: p.v, pay: p.pay,
+      dept: p.d, division: p.v, pay: p.pay, cls: p.cls,
       rate: p.rate, salary: p.salary, hours: p.hours, note: p.note,
     }, redraw ? function () { render(); } : null);
   }
@@ -287,7 +338,7 @@
     else if (/^-?\d+(\.\d+)?$/.test(raw)) p[field] = Number(raw);
     else return false;
     input.classList.toggle('set', p[field] != null);
-    var td = input.closest('tr').children[5];
+    var td = input.closest('tr').children[6];
     var c = cost(p);
     td.textContent = c == null ? '—' : money(c);
     td.className = 'bd-n' + (c == null ? ' bd-base' : '');
@@ -319,6 +370,12 @@
       var p = person(tr.dataset.k);
       if (!p) return;
       var f = e.target.dataset.f;
+      if (f === 'cls') {
+        p.cls = e.target.value;
+        e.target.classList.toggle('set', Boolean(p.cls));
+        save(p);
+        return;
+      }
       if (f === 'pay') {
         p.pay = e.target.value;
         // Which figures the row asks for has just changed, so the row is
@@ -357,6 +414,20 @@
       send('/api/labor/person/remove', { key: p.k, added: p.added },
            function () { render(); });
     });
+
+    // The department-wide setter lives on a heading row, which has no
+    // data-k, so it is handled on the capture pass -- before the per-person
+    // branch above can look for one.
+    t.addEventListener('change', function (e) {
+      if (!e.target.classList.contains('lb-dsel')) return;
+      var want = e.target.value;
+      if (!want) return;
+      var dept = e.target.dataset.dept;
+      var keys = D.people.filter(function (p) { return p.d === dept && splits(p); })
+        .map(function (p) { return p.k; });
+      send('/api/labor/classify', { keys: keys, cls: want === 'clear' ? '' : want },
+           function () { render(); });
+    }, true);
 
     $('#filter').addEventListener('change', function (e) { show = e.target.value; render(); });
 

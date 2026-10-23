@@ -194,3 +194,11 @@
   .bd-pl{gap:18px;padding:10px 14px}
   .bd-m b{font-size:14px}
 }
+
+/* A line that starts in the budget year. Its 2026 columns are empty because
+   there was no such line in 2026 -- which is a different fact from having
+   spent nothing, and has to read differently. */
+.bd-new{
+  font-family:var(--mono);font-size:9px;letter-spacing:.09em;text-transform:uppercase;
+  padding:2px 5px;border-radius:4px;border:1px dashed var(--edge);
+}

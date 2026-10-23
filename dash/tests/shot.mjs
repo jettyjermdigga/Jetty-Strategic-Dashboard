@@ -15,7 +15,7 @@ import {
 } from '../worker/budget.js';
 import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
-  PEOPLE as ROSTER, ROSTER_AS_OF, PAY_TYPES, ROLLUPS, FULL_TIME_HOURS,
+  PEOPLE as ROSTER, ROSTER_AS_OF, PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS,
 } from '../worker/labor.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
@@ -150,6 +150,8 @@ const CASES = [
     path: 'budget.html', wait: '.bd-in' },
   { file: 'budget-year-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
     path: 'budget.html', wait: '.bd-in' },
+  { file: 'budget-new-line', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'budget.html', wait: '.bd-in', scroll: '.bd-wrap' },
   { file: 'budget-month-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
     path: 'budget.html', wait: '.bd-in', click: '#seg button[data-v="month"]',
     after: '.bd-t.ro' },
@@ -162,6 +164,8 @@ const CASES = [
     path: 'labor.html', wait: '.lb-sel' },
   { file: 'labor-tbh', scheme: 'dark', who: full('jeremy@jettylife.com'),
     path: 'labor.html', wait: '.lb-sel', select: ['#filter', 'tbh'], after: '.lb-chip.tbh' },
+  { file: 'labor-unsplit', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'labor.html', wait: '.lb-sel', select: ['#filter', 'unsplit'], after: '.lb-cls' },
   { file: 'labor-shut-out', scheme: 'light', who: full('amy@jettylife.com'),
     path: 'labor.html', wait: '.notice', noBudget: true },
   { file: 'budget-shut-out', scheme: 'dark', who: full('amy@jettylife.com'),
@@ -218,17 +222,22 @@ const PLANNED = (() => {
   const hourly = ROSTER.filter((p) => p.pay === 'hourly').slice(0, 9);
   salaried.forEach((p, i) => {
     out[p.k] = { pay: 'salary', salary: 62000 + i * 9500,
+                 // Some split, some not: "not yet split" is a state the
+                 // page has to show as plainly as the other two.
+                 cls: i < 4 ? 'gna' : i < 6 ? 'direct' : '',
                  note: i === 0 ? 'Merit review lands in Q2' : '' };
   });
   hourly.forEach((p, i) => {
     out[p.k] = { pay: 'hourly', rate: 21 + i, hours: i % 3 === 0 ? 1560 : FULL_TIME_HOURS,
+                 cls: i < 6 ? 'direct' : '',
                  note: i === 1 ? 'Part-time through the winter' : '' };
   });
   const gone = ROSTER.find((p) => p.type === 'outsourced');
   if (gone) out[gone.k] = { removed: true };
   out['ink-logistics-associate-2'] = {
     added: true, name: 'INK Logistics Associate', title: 'INK Logistics Associate',
-    dept: 'Operations (INK)', division: 'INK', pay: 'hourly', rate: 23, hours: 2080,
+    dept: 'Operations (INK)', division: 'INK', pay: 'hourly', cls: 'direct',
+    rate: 23, hours: 2080,
     note: 'Starts in March, so three quarters of a year',
   };
   return out;
@@ -239,7 +248,8 @@ const LABOR = (() => {
   return {
     year: FIRST_YEAR, you: 'jeremy@jettylife.com',
     rosterAsOf: ROSTER_AS_OF, rosterSize: ROSTER.length,
-    payTypes: PAY_TYPES, rollups: ROLLUPS, fullTimeHours: FULL_TIME_HOURS,
+    payTypes: PAY_TYPES, classes: CLASSES, rollups: ROLLUPS,
+    fullTimeHours: FULL_TIME_HOURS,
     people,
     against: laborAgainst(laborSummary(people), {}, 'proj'),
   };
@@ -286,6 +296,16 @@ for (const c of CASES) {
   if (c.type) {
     await page.fill(c.type[0], c.type[1]);
     await page.waitForTimeout(150);
+  }
+  // The new-for-2027 line sits at the foot of OpEx, which nothing else
+  // scrolls to -- and it is the only row that draws its 2026 columns
+  // differently.
+  if (c.scroll) {
+    await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (el) el.scrollTop = el.scrollHeight;
+    }, c.scroll);
+    await page.waitForTimeout(120);
   }
   if (c.select) {
     await page.selectOption(c.select[0], c.select[1]);

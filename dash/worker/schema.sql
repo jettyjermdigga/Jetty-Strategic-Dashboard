@@ -158,6 +158,9 @@ CREATE TABLE IF NOT EXISTS labor (
   dept        TEXT NOT NULL DEFAULT '',
   division    TEXT NOT NULL DEFAULT '',
   pay_type    TEXT NOT NULL DEFAULT '',
+  -- Direct labor or G&A. An accounting judgement rather than a fact about
+  -- the roster, so it starts empty for everybody and is never guessed.
+  cls         TEXT NOT NULL DEFAULT '',
   rate        REAL,
   salary      REAL,
   hours       REAL,

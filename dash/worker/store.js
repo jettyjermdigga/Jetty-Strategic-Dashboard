@@ -47,6 +47,11 @@ const ADDED_COLUMNS = [
   ['categories', 'icon TEXT NOT NULL DEFAULT \'link\''],
   ['tiles', 'everyone INTEGER NOT NULL DEFAULT 0'],
   ['people', 'tiles TEXT NOT NULL DEFAULT \'\''],
+  // The labor table shipped before payroll was split into direct and G&A.
+  // CREATE TABLE IF NOT EXISTS does not revisit a table that exists, so
+  // adding the column to schema.sql alone would reach every database but
+  // the one that matters.
+  ['labor', 'cls TEXT NOT NULL DEFAULT \'\''],
 ];
 
 export async function ensureSchema(db) {
@@ -719,14 +724,14 @@ export async function saveBudgetLine(db, year, key, input, who) {
 /** Every decision made about a person for a year, keyed by person. */
 export async function readLabor(db, year) {
   const res = await db.prepare(
-    'SELECT person_key, name, title, dept, division, pay_type, rate, salary, hours, '
-    + 'note, added, removed, updated_at, updated_by FROM labor WHERE year = ?')
+    'SELECT person_key, name, title, dept, division, pay_type, cls, rate, salary, '
+    + 'hours, note, added, removed, updated_at, updated_by FROM labor WHERE year = ?')
     .bind(year).all();
   const out = {};
   for (const r of res.results || []) {
     out[r.person_key] = {
       name: r.name || '', title: r.title || '', dept: r.dept || '',
-      division: r.division || '', pay: r.pay_type || '',
+      division: r.division || '', pay: r.pay_type || '', cls: r.cls || '',
       rate: r.rate, salary: r.salary, hours: r.hours,
       note: r.note || '', added: Boolean(r.added), removed: Boolean(r.removed),
       at: r.updated_at, by: r.updated_by,
@@ -751,18 +756,46 @@ export async function saveLaborPerson(db, year, key, input, who) {
   }
 
   await db.prepare(
-    'INSERT INTO labor (year, person_key, name, title, dept, division, pay_type, '
+    'INSERT INTO labor (year, person_key, name, title, dept, division, pay_type, cls, '
     + 'rate, salary, hours, note, added, removed, updated_at, updated_by) '
-    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) '
+    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) '
     + 'ON CONFLICT(year, person_key) DO UPDATE SET name = excluded.name, '
     + 'title = excluded.title, dept = excluded.dept, division = excluded.division, '
-    + 'pay_type = excluded.pay_type, rate = excluded.rate, salary = excluded.salary, '
-    + 'hours = excluded.hours, note = excluded.note, added = excluded.added, '
+    + 'pay_type = excluded.pay_type, cls = excluded.cls, rate = excluded.rate, '
+    + 'salary = excluded.salary, hours = excluded.hours, note = excluded.note, '
+    + 'added = excluded.added, '
     + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
-    .bind(year, k, r.name, r.title, r.dept, r.division, r.pay,
+    .bind(year, k, r.name, r.title, r.dept, r.division, r.pay, r.cls,
           r.rate, r.salary, r.hours, r.note, r.added ? 1 : 0,
           new Date().toISOString(), who || '').run();
   return { ok: true };
+}
+
+/**
+ * Set direct-or-G&A on a whole department at once.
+ *
+ * Ninety-six dropdowns is not a decision anybody makes carefully by the
+ * fortieth one, and department is how this judgement is actually made --
+ * the whole of INK production is direct, the whole of Finance is G&A. Only
+ * this one field is touched, so a figure already typed on a line is never
+ * disturbed by classifying the department around it.
+ */
+export async function classifyPeople(db, year, keys, cls, who) {
+  const now = new Date().toISOString();
+  const stmts = [];
+  for (const raw of keys || []) {
+    const k = cleanLaborKey(raw);
+    if (!k) continue;
+    stmts.push(db.prepare(
+      'INSERT INTO labor (year, person_key, cls, updated_at, updated_by) '
+      + 'VALUES (?, ?, ?, ?, ?) '
+      + 'ON CONFLICT(year, person_key) DO UPDATE SET cls = excluded.cls, '
+      + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
+      .bind(year, k, cls, now, who || ''));
+  }
+  if (!stmts.length) return { ok: true, set: 0 };
+  await db.batch(stmts);
+  return { ok: true, set: stmts.length };
 }
 
 /**

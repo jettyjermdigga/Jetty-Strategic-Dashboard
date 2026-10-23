@@ -21,13 +21,13 @@ import {
 import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
   csv as laborCsv, cleanKey as laborKey,
-  PEOPLE as ROSTER, ROSTER_AS_OF, PAY_TYPES, ROLLUPS, FULL_TIME_HOURS,
+  PEOPLE as ROSTER, ROSTER_AS_OF, PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS,
 } from './labor.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
   readLinks, cleanLink, saveLink, deleteLink, readMusic,
   readBudget, saveBudgetLine,
-  readLabor, saveLaborPerson, removeLaborPerson,
+  readLabor, saveLaborPerson, removeLaborPerson, classifyPeople,
   cleanTile, cleanPerson, cleanKey, saveTile, deleteTile, savePerson, deletePerson,
   saveCategory, deleteCategory, saveGroup, deleteGroup,
 } from './store.js';
@@ -308,7 +308,8 @@ async function labor(request, env, url, who) {
     return json({
       year, you: who.email,
       rosterAsOf: ROSTER_AS_OF, rosterSize: ROSTER.length,
-      payTypes: PAY_TYPES, rollups: ROLLUPS, fullTimeHours: FULL_TIME_HOURS,
+      payTypes: PAY_TYPES, classes: CLASSES, rollups: ROLLUPS,
+      fullTimeHours: FULL_TIME_HOURS,
       people: rs,
       // What the budget tab currently says for the lines this rolls into.
       // Shown beside the plan, never written into it: the two are built by
@@ -326,6 +327,34 @@ async function labor(request, env, url, who) {
         'content-disposition': 'attachment; filename="jetty-labor-' + year + '.csv"',
         'cache-control': 'no-store',
       },
+    });
+  }
+
+  // Direct-or-G&A across a whole department. One call rather than thirteen,
+  // and it touches only that field -- a figure already on a line is never
+  // disturbed by classifying the department around it.
+  if (what === '/classify' && request.method === 'POST') {
+    const body = await request.json().catch(() => null);
+    if (!body) return json({ error: 'That was not JSON.' }, 400);
+
+    const cls = String(body.cls || '');
+    if (cls && !CLASSES.some((c) => c.key === cls)) {
+      return json({ errors: ['No such kind of labor: ' + cls] }, 400);
+    }
+
+    // Only people this plan actually has. A key from anywhere else would
+    // create a row for somebody who is not on the roster and never shows.
+    const have = await readLabor(env.DB, year);
+    const known = new Set([...ROSTER.map((p) => p.k), ...Object.keys(have)]);
+    const keys = (Array.isArray(body.keys) ? body.keys : [])
+      .map(laborKey).filter((k) => k && known.has(k));
+    if (!keys.length) return json({ errors: ['Nobody to classify.'] }, 400);
+
+    await classifyPeople(env.DB, year, keys, cls, who.email);
+    const rs = laborRows(await readLabor(env.DB, year));
+    return json({
+      ok: true, set: keys.length, people: rs,
+      against: laborAgainst(laborSummary(rs), await readBudget(env.DB, year), 'proj'),
     });
   }
 

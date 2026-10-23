@@ -98,23 +98,32 @@
       + '<th>' + D.year + ' total</th></tr>';
   }
 
+  // A 2026 figure, or a note that there isn't one. Nothing and zero are
+  // different answers, and "$0K" in three columns would read as a line we
+  // spent nothing on rather than one that did not exist.
+  function was(v) {
+    return v == null ? '<span class="bd-new">new</span>' : kay(v);
+  }
+
   function annualRow(l) {
     var baseline = l[base];
     var v = val(l);
-    var d = l.amount == null ? null
+    // No baseline means no percentage: there is nothing to be a percentage
+    // of, and dividing by the 1 the guard supplies would print +340000%.
+    var d = l.amount == null || baseline == null ? null
       : (l.amount - baseline) / Math.max(1, Math.abs(baseline)) * 100;
     // Up is good on revenue and bad on everything else, so the colour is
     // decided by the group rather than by the sign.
     var good = d == null ? '' : (l.g === 'rev' ? d > 0 : d < 0) ? 'bd-dn' : 'bd-up';
     return '<tr data-k="' + esc(l.k) + '">'
       + '<td><span class="bd-name">' + dot(l) + '<span>' + esc(l.n) + '</span></span></td>'
-      + '<td class="bd-n bd-base">' + kay(l.plan) + '</td>'
-      + '<td class="bd-n bd-base">' + kay(l.act) + '</td>'
-      + '<td class="bd-n' + (base === 'proj' ? '' : ' bd-base') + '">' + kay(l.proj) + '</td>'
+      + '<td class="bd-n bd-base">' + was(l.plan) + '</td>'
+      + '<td class="bd-n bd-base">' + was(l.act) + '</td>'
+      + '<td class="bd-n' + (base === 'proj' ? '' : ' bd-base') + '">' + was(l.proj) + '</td>'
       + '<td><input class="bd-in bd-amt' + (l.amount != null ? ' set' : '') + '" inputmode="numeric"'
         + ' aria-label="' + esc(l.n) + ' budget for ' + D.year + '"'
         + ' value="' + (l.amount == null ? '' : Math.round(l.amount).toLocaleString()) + '"'
-        + ' placeholder="' + Math.round(baseline).toLocaleString() + '"></td>'
+        + ' placeholder="' + (baseline == null ? '' : Math.round(baseline).toLocaleString()) + '"></td>'
       + '<td class="bd-n ' + good + '">'
         + (d == null ? '—' : (d > 0 ? '+' : '−') + Math.abs(d).toFixed(1) + '%') + '</td>'
       + '<td><button class="bd-flag" type="button" aria-pressed="' + (l.flagged ? 'true' : 'false')

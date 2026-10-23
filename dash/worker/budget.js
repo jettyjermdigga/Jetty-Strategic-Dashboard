@@ -10,10 +10,35 @@
 // decided. A line with no decision shows the baseline, greyed, which is why
 // "n of 77 set" is a real count rather than a guess.
 
-import { LINES, BASELINE_YEAR } from './budget-seed.js';
+import { LINES as SEED_LINES, BASELINE_YEAR } from './budget-seed.js';
 import { periods, weekCounts } from './retail.js';
 
-export { LINES, BASELINE_YEAR };
+export { BASELINE_YEAR };
+
+/**
+ * Lines that begin in the budget year and have no 2026 behind them.
+ *
+ * Kept apart from budget-seed.js on purpose. That file is a snapshot of
+ * what the Strategic Dashboard actually reported for 2026, and a row
+ * hand-written into it with invented figures would make the whole file a
+ * lie about where its numbers came from. A line here says plainly: this is
+ * new, there is nothing to compare it to, and the 2026 columns are empty
+ * because the answer is genuinely not known rather than zero.
+ *
+ * Salaries -- G&A exists because the labor plan splits payroll into direct
+ * labor and G&A, and 2026 put the whole of it in one COGS line. Without
+ * somewhere in OpEx for the G&A half to land, splitting it would quietly
+ * take it out of the budget altogether.
+ */
+export const NEW_LINES = [
+  { k: 'salaries-g-a', g: 'opex', n: 'Salaries \u2014 G&A',
+    plan: null, act: null, proj: null, since: BASELINE_YEAR + 1 },
+];
+
+// One list, in group order. NEW_LINES are all OpEx and OpEx is last, so
+// appending keeps each group contiguous -- which is what the page's
+// heading rows depend on.
+export const LINES = [...SEED_LINES, ...NEW_LINES];
 
 export const GROUPS = [
   { key: 'rev', label: 'Revenue' },
@@ -82,6 +107,10 @@ export function rows(saved) {
     return {
       k: l.k, g: l.g, n: l.n,
       plan: l.plan, act: l.act, proj: l.proj,
+      // The year this line starts, for a line with no 2026 behind it. The
+      // page draws its baseline columns as "new" rather than as $0K --
+      // nothing and zero are different answers.
+      since: l.since || null,
       amount: d.amount == null ? null : Number(d.amount),
       note: d.note || '',
       flagged: Boolean(d.flagged),
@@ -91,7 +120,14 @@ export function rows(saved) {
 }
 
 /** What a line is worth in the budget year: the decision, or the baseline. */
-export const value = (row, base) => (row.amount == null ? row[base] : row.amount);
+export function value(row, base) {
+  const v = row.amount == null ? row[base] : row.amount;
+  // A line with no 2026 behind it has no baseline to fall back on, so it
+  // contributes nothing until somebody decides it. Coerced here rather
+  // than left as null, because null slips through arithmetic as zero in
+  // some places and as NaN in others.
+  return v == null ? 0 : v;
+}
 
 /**
  * One line's annual figure spread across a cadence's periods.
@@ -203,7 +239,8 @@ export function csv(rs, base, cadence, year) {
   const lines = [head.map(cell).join(',')];
   for (const r of rs) {
     const v = value(r, base);
-    const out = [label[r.g] || r.g, r.n, r.plan, r.act, r.proj];
+    const was = (v) => (v == null ? '' : v);
+    const out = [label[r.g] || r.g, r.n, was(r.plan), was(r.act), was(r.proj)];
     if (cadence === 'year') out.push(Math.round(v));
     else for (const n of spread(v, cadence)) out.push(Math.round(n));
     out.push(Math.round(v), r.amount == null ? 'baseline' : 'yes', r.flagged ? 'yes' : '', r.note);

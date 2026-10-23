@@ -11,7 +11,7 @@
 .lb-add:hover{background:var(--card-hover)}
 
 /* The name column carries the most, so it gets the most room. */
-.lb-t th:first-child,.lb-t td:first-child{min-width:270px;max-width:270px}
+.lb-t th:first-child,.lb-t td:first-child{min-width:248px;max-width:248px}
 
 .lb-head{display:flex;align-items:center;gap:9px;width:100%}
 .lb-head .lb-caret{
@@ -40,11 +40,11 @@
 .lb-sel{
   font-family:var(--body);font-size:12.5px;padding:4px 6px;border-radius:6px;
   border:1px solid var(--field-line);background:var(--field);color:var(--ink);
-  max-width:152px;
+  max-width:142px;
 }
 .lb-sel.set{border-color:var(--bd-pick)}
 
-.lb-in{width:94px}
+.lb-in{width:88px}
 .lb-in.hrs{width:76px}
 
 /* A figure this person's way of being paid does not ask for. Struck through
@@ -93,4 +93,15 @@
 
 @media (max-width:760px){
   .lb-t th:first-child,.lb-t td:first-child{min-width:190px;max-width:190px}
+}
+
+/* Direct or G&A. Set on a person, or on a whole department from its band --
+   which is how the judgement is actually made: all of INK production is
+   direct, all of Finance is G&A. */
+.lb-cls{max-width:128px}
+.lb-dsel{
+  margin-left:auto;font-family:var(--mono);font-size:10px;letter-spacing:.04em;
+  text-transform:none;font-weight:400;padding:3px 6px;border-radius:5px;
+  border:1px solid var(--field-line);background:var(--field);color:var(--ink);
+  max-width:168px;
 }

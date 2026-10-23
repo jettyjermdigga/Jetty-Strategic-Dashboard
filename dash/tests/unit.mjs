@@ -10,14 +10,15 @@ import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker
 import { canonicalTarget } from '../worker/canon.js';
 import {
   rows as budgetRows, value, spread, summary, csv, cleanLine, cleanYear,
-  calendar, WEEK_CURVE, CURVE_IS_PLACEHOLDER, LINES as BUDGET_LINES,
+  calendar, WEEK_CURVE, CURVE_IS_PLACEHOLDER, LINES as BUDGET_LINES, NEW_LINES,
   BASELINE_YEAR, FIRST_YEAR, GROUPS as BUDGET_GROUPS, CADENCES,
 } from '../worker/budget.js';
 import { periods, weekCounts, weekStart } from '../worker/retail.js';
+import { LINES as SEED_LINES } from '../worker/budget-seed.js';
 import {
   rows as laborRows, cost, decided, byDepartment, summary as laborSummary,
   against, cleanPerson as cleanLaborPerson, cleanKey as laborKey, csv as laborCsv,
-  num, rollOf, PEOPLE as ROSTER, PAY_TYPES, ROLLUPS, FULL_TIME_HOURS, ROSTER_AS_OF,
+  num, rollOf, PEOPLE as ROSTER, PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS, ROSTER_AS_OF,
 } from '../worker/labor.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -736,8 +737,8 @@ describe('the 2026 baseline it all hangs on', () => {
       seen.add(l.k);
     }
   });
-  it('carries all three 2026 columns as numbers on every line', () => {
-    for (const l of BUDGET_LINES) {
+  it('carries all three 2026 columns as numbers on every seeded line', () => {
+    for (const l of SEED_LINES) {
       for (const c of ['plan', 'act', 'proj']) {
         ok(Number.isFinite(l[c]), l.k + ' has a non-numeric ' + c + ': ' + l[c]);
       }
@@ -754,6 +755,54 @@ describe('the 2026 baseline it all hangs on', () => {
 
 // A curve summing to 0.98 would lose two percent of every line in every
 // view below annual, and every figure would still look perfectly plausible.
+// 2026 put the whole of payroll in one COGS line, so splitting it leaves
+// the G&A half with nowhere in OpEx to land. A line that begins in the
+// budget year has no 2026 behind it, and that is a different fact from
+// having spent nothing -- a hand-written row in budget-seed.js with
+// invented figures would make that file a lie about where it came from.
+describe('a line that begins in the budget year', () => {
+  it('is kept out of the 2026 snapshot', () => {
+    for (const l of NEW_LINES) {
+      ok(!SEED_LINES.some((x) => x.k === l.k),
+         l.k + ' was written into budget-seed.js, which is a 2026 snapshot');
+    }
+  });
+  it('still reaches the budget', () => {
+    for (const l of NEW_LINES) {
+      ok(BUDGET_LINES.some((x) => x.k === l.k), l.k + ' never reaches the sheet');
+    }
+    eq(BUDGET_LINES.length, SEED_LINES.length + NEW_LINES.length);
+  });
+  it('has no 2026 figures at all, rather than zeroes', () => {
+    for (const l of NEW_LINES) {
+      for (const c of ['plan', 'act', 'proj']) {
+        eq(l[c], null, l.k + '.' + c + ' is ' + l[c] + ', which reads as "we spent nothing"');
+      }
+    }
+  });
+  it('says which year it starts', () => {
+    for (const l of NEW_LINES) ok(l.since > BASELINE_YEAR, l.k + ' starts ' + l.since);
+    eq(budgetRows({}).find((r) => r.k === NEW_LINES[0].k).since, NEW_LINES[0].since);
+  });
+  // `a + null` is a, `a * null` is 0 and `Math.max(1, null)` is 1 -- null
+  // slips through arithmetic differently in each place it is touched.
+  it('contributes nothing to a total until somebody decides it', () => {
+    const r = budgetRows({}).find((x) => x.k === NEW_LINES[0].k);
+    eq(value(r, 'proj'), 0);
+    ok(Number.isFinite(summary(budgetRows({}), 'proj').opex), 'OpEx came out NaN');
+  });
+  it('counts once it is decided', () => {
+    const before = summary(budgetRows({}), 'proj').opex;
+    const after = summary(budgetRows({ [NEW_LINES[0].k]: { amount: 500000 } }), 'proj').opex;
+    eq(Math.round(after - before), 500000);
+  });
+  it('writes its empty 2026 cells as empty in the download', () => {
+    const line = csv(budgetRows({}), 'proj', 'year', 2027)
+      .split('\n').find((l) => l.startsWith('Operating expenses,Salaries'));
+    ok(/,,,/.test(line), 'the empty 2026 columns came out as something: ' + line);
+  });
+});
+
 describe('the seasonality curve', () => {
   it('is 52 weeks long', () => eq(WEEK_CURVE.length, 52));
   it('sums to exactly one', () => {
@@ -1112,24 +1161,44 @@ describe('the sheet, by department', () => {
 // are their own budget lines. Rolling them into payroll would double count
 // them the moment anybody compared the two.
 describe('what the plan rolls up into', () => {
-  it('counts salary and hourly as payroll, and nothing else', () => {
-    eq(rollOf('salary'), 'payroll');
-    eq(rollOf('hourly'), 'payroll');
-    eq(rollOf('commission'), 'commission');
-    eq(rollOf('guaranteed'), 'guaranteed');
-    eq(rollOf('unpaid'), 'other');
-    eq(rollOf(''), 'other');
+  it('splits payroll by what somebody decided, and nothing else by it', () => {
+    eq(rollOf({ pay: 'salary', cls: 'direct' }), 'direct');
+    eq(rollOf({ pay: 'hourly', cls: 'gna' }), 'gna');
+    eq(rollOf({ pay: 'commission', cls: 'direct' }), 'commission',
+       'a class on a commission line moved it');
+    eq(rollOf({ pay: 'guaranteed' }), 'guaranteed');
+    eq(rollOf({ pay: 'unpaid' }), 'other');
+    eq(rollOf({ pay: '' }), 'other');
   });
-  it('keeps a commission out of the payroll total', () => {
+  // Putting unsplit payroll into either half would be a guess with
+  // somebody's wages in it; leaving it out of the totals altogether would
+  // hide the work still to do.
+  it('holds payroll nobody has split in a bucket of its own', () => {
+    eq(rollOf({ pay: 'salary' }), 'unclassified');
+    eq(rollOf({ pay: 'hourly', cls: '' }), 'unclassified');
+    const who = ROSTER.filter((p) => p.pay === 'salary')[0];
+    const s = laborSummary(laborRows({ [who.k]: { pay: 'salary', salary: 90000 } }));
+    eq(s.roll.unclassified.cost, 90000);
+    eq([s.roll.direct.cost, s.roll.gna.cost], [0, 0]);
+  });
+  it('keeps a commission out of both halves of payroll', () => {
     const who = ROSTER.filter((p) => p.pay === 'commission')[0];
     ok(who, 'nobody in the roster is on commission to test with');
     const s = laborSummary(laborRows({ [who.k]: { pay: 'commission', salary: 90000 } }));
-    eq(s.roll.payroll.cost, 0, 'a commission landed in payroll');
+    eq(s.roll.direct.cost + s.roll.gna.cost + s.roll.unclassified.cost, 0);
     eq(s.roll.commission.cost, 90000);
   });
   it('counts every head exactly once', () => {
     const s = laborSummary(laborRows({}));
     eq(ROLLUPS.reduce((a, r) => a + s.roll[r.key].heads, 0), ROSTER.length);
+  });
+  it('sends direct labor and G&A to different places', () => {
+    const [a, b] = ROSTER.filter((p) => p.pay === 'salary').slice(0, 2);
+    const s = laborSummary(laborRows({
+      [a.k]: { pay: 'salary', salary: 100000, cls: 'direct' },
+      [b.k]: { pay: 'salary', salary: 60000, cls: 'gna' },
+    }));
+    eq([s.roll.direct.cost, s.roll.gna.cost], [100000, 60000]);
   });
   it('counts only the people somebody has actually costed', () => {
     const who = ROSTER.filter((p) => p.pay === 'salary')[0];
@@ -1150,21 +1219,29 @@ describe('the plan against the budget', () => {
   });
   it('falls back to the 2026 baseline when the line is undecided', () => {
     const out = against(laborSummary(laborRows({})), {}, 'proj');
-    const payroll = out.find((a) => a.key === 'payroll');
-    eq(payroll.budget, BUDGET_LINES.find((l) => l.k === 'labor-total').proj);
-    eq(payroll.decided, false);
+    const direct = out.find((a) => a.key === 'direct');
+    eq(direct.budget, BUDGET_LINES.find((l) => l.k === 'labor-total').proj);
+    eq(direct.decided, false);
   });
   it('uses the decision once there is one', () => {
     const out = against(laborSummary(laborRows({})), { 'labor-total': { amount: 3000000 } }, 'proj');
-    const payroll = out.find((a) => a.key === 'payroll');
-    eq([payroll.budget, payroll.decided], [3000000, true]);
+    const direct = out.find((a) => a.key === 'direct');
+    eq([direct.budget, direct.decided], [3000000, true]);
   });
   it('reports the gap in the direction that reads as overspend', () => {
     const who = ROSTER.filter((p) => p.pay === 'salary')[0];
-    const rs = laborRows({ [who.k]: { pay: 'salary', salary: 4000000 } });
-    const payroll = against(laborSummary(rs), { 'labor-total': { amount: 3000000 } }, 'proj')
-      .find((a) => a.key === 'payroll');
-    eq(payroll.gap, 1000000, 'a plan over budget did not come out positive');
+    const rs = laborRows({ [who.k]: { pay: 'salary', salary: 4000000, cls: 'direct' } });
+    const direct = against(laborSummary(rs), { 'labor-total': { amount: 3000000 } }, 'proj')
+      .find((a) => a.key === 'direct');
+    eq(direct.gap, 1000000, 'a plan over budget did not come out positive');
+  });
+  // G&A has no 2026 behind it -- 2026 put the whole of payroll in one COGS
+  // line -- so its budget cell is empty rather than zero, and the plan is
+  // the only figure there is.
+  it('says the G&A line has no baseline rather than calling it zero', () => {
+    const gna = against(laborSummary(laborRows({})), {}, 'proj').find((a) => a.key === 'gna');
+    eq(gna.budget, null, 'a line that did not exist in 2026 came back as a number');
+    eq(gna.lineName, 'Salaries \u2014 G&A');
   });
 });
 
@@ -1250,6 +1327,63 @@ describe('the page and the Worker agree on what each row asks for', () => {
   });
   it('gives every rollup the page draws a label', () => {
     for (const r of ROLLUPS) ok(r.label, r.key + ' has no label');
+  });
+  it('has a rollup for every way a person can be classified', () => {
+    for (const c of CLASSES) {
+      ok(ROLLUPS.some((r) => r.key === c.roll),
+         c.key + ' rolls into "' + c.roll + '", which is not a total');
+    }
+    ok(ROLLUPS.some((r) => r.key === 'unclassified'),
+       'payroll nobody has split has nowhere to go');
+  });
+  it('reads the classes off what the Worker sent, not its own list', () => {
+    ok(/D\.classes/.test(page), 'the page does not use the classes the Worker sent');
+    ok(!/'direct'|'gna'/.test(page), 'the page hardcodes a class, which will drift');
+  });
+});
+
+describe('setting a whole department at once', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
+  const store = fs.readFileSync(path.join(HERE, '..', 'worker', 'store.js'), 'utf8');
+
+  it('only accepts a kind of labor that exists', () => {
+    ok(/CLASSES\.some\(\(c\) => c\.key === cls\)/.test(idx),
+       'the classify endpoint does not check the value it is given');
+  });
+  it('only touches people this plan actually has', () => {
+    ok(/known\.has\(k\)/.test(idx),
+       'a key from anywhere would create a row for somebody who never shows');
+  });
+  // A bulk write that also wrote the figures would wipe a salary somebody
+  // had already typed, for everybody in the department, in one click.
+  it('writes only the one field', () => {
+    const fn = store.slice(store.indexOf('export async function classifyPeople'));
+    const body = fn.slice(0, fn.indexOf('\nexport '));
+    for (const col of ['salary', 'rate', 'hours', 'pay_type', 'note', 'name']) {
+      ok(!new RegExp('\\b' + col + '\\b').test(body),
+         'classifyPeople touches ' + col);
+    }
+  });
+});
+
+// The labor table shipped before payroll was split. CREATE TABLE IF NOT
+// EXISTS does not revisit a table that already exists, so a column added to
+// schema.sql alone reaches every database except the live one -- the trap
+// ADDED_COLUMNS exists for, and the one this codebase keeps falling into.
+describe('the direct/G&A column reaches a database that already exists', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const store = fs.readFileSync(path.join(HERE, '..', 'worker', 'store.js'), 'utf8');
+  const schema = fs.readFileSync(path.join(HERE, '..', 'worker', 'schema.sql'), 'utf8');
+
+  it('is in the schema, for a database that does not exist yet', () => {
+    ok(/CREATE TABLE IF NOT EXISTS labor[\s\S]*?cls\s+TEXT/.test(schema),
+       'labor has no cls column in schema.sql');
+  });
+  it('is in ADDED_COLUMNS, for the one that does', () => {
+    const added = store.slice(store.indexOf('const ADDED_COLUMNS'));
+    ok(/\['labor', 'cls TEXT/.test(added.slice(0, added.indexOf('];'))),
+       'nothing adds cls to a labor table that already exists');
   });
 });
 

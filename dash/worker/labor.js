@@ -21,7 +21,7 @@
 //   beside what the budget currently says, and leaves the two to a person.
 
 import { PEOPLE, ROSTER_AS_OF } from './labor-seed.js';
-import { LINES } from './budget-seed.js';
+import { LINES } from './budget.js';
 
 export { PEOPLE, ROSTER_AS_OF };
 
@@ -41,8 +41,27 @@ export const PAY_TYPES = [
   { key: 'unpaid', label: 'Unpaid', asks: 'none', roll: 'other' },
 ];
 
+/**
+ * Where a payroll person's cost belongs in the P&L.
+ *
+ * An accounting judgement, not a fact about the roster -- the same job
+ * title can be direct in one company and G&A in another, and Airtable has
+ * never recorded it. So it starts blank for everybody and is set here, by
+ * department where that is the honest answer and person by person where it
+ * is not.
+ */
+export const CLASSES = [
+  { key: 'direct', label: 'Direct labor', roll: 'direct' },
+  { key: 'gna', label: 'Salaries \u2014 G&A', roll: 'gna' },
+];
+
 export const ROLLUPS = [
-  { key: 'payroll', label: 'Payroll', line: 'labor-total' },
+  { key: 'direct', label: 'Direct labor', line: 'labor-total' },
+  { key: 'gna', label: 'Salaries \u2014 G&A', line: 'salaries-g-a' },
+  // Payroll that has not been split yet. It has no budget line, on purpose:
+  // leaving it out of the totals would hide the work still to do, and
+  // putting it in either half would be a guess with somebody's wages in it.
+  { key: 'unclassified', label: 'Not yet split', line: '' },
   { key: 'commission', label: 'Commissions', line: 'sales-commissions-brand' },
   { key: 'guaranteed', label: 'Guaranteed payments', line: 'guaranteed-payments-partners' },
   { key: 'other', label: 'Other', line: '' },
@@ -54,7 +73,24 @@ export const ROLLUPS = [
 export const FULL_TIME_HOURS = 2080;
 
 const payType = (k) => PAY_TYPES.find((p) => p.key === k) || null;
-export const rollOf = (k) => (payType(k) || { roll: 'other' }).roll;
+const classOf = (k) => CLASSES.find((c) => c.key === k) || null;
+
+/**
+ * Which total a person falls into.
+ *
+ * Takes the whole row rather than the pay type, because payroll is the one
+ * bucket that splits again: salary and hourly both land in direct labor or
+ * in G&A depending on what somebody decided about that person, and until
+ * they decide, in neither.
+ */
+export function rollOf(row) {
+  const r = typeof row === 'string' ? { pay: row } : (row || {});
+  const t = payType(r.pay);
+  if (!t) return 'other';
+  if (t.roll !== 'payroll') return t.roll;
+  const c = classOf(r.cls);
+  return c ? c.roll : 'unclassified';
+}
 
 const KEY_RE = /^[a-z0-9][a-z0-9-]{0,38}$/;
 export function cleanKey(s) {
@@ -116,6 +152,7 @@ export function rows(saved) {
       k: p.k, n: p.n, t: p.t, d: p.d, v: p.v, ft: p.ft, type: p.type, tbh: p.tbh,
       added: false,
       pay: d && d.pay ? d.pay : p.pay,
+      cls: (d && d.cls) || '',
       rate: d && d.rate != null ? d.rate : null,
       salary: d && d.salary != null ? d.salary : null,
       hours: d && d.hours != null ? d.hours : null,
@@ -132,7 +169,7 @@ export function rows(saved) {
     out.push({
       k, n: d.name || 'New post', t: d.title || '', d: d.dept || 'Unassigned',
       v: d.division || '', ft: '', type: 'w2', tbh: true, added: true,
-      pay: d.pay || '', rate: d.rate == null ? null : d.rate,
+      pay: d.pay || '', cls: d.cls || '', rate: d.rate == null ? null : d.rate,
       salary: d.salary == null ? null : d.salary,
       hours: d.hours == null ? null : d.hours,
       note: d.note || '',
@@ -176,7 +213,7 @@ export function summary(rs) {
   let open = 0;
 
   for (const r of rs) {
-    const bucket = roll[rollOf(r.pay)];
+    const bucket = roll[rollOf(r)];
     bucket.heads++;
     const c = cost(r);
     if (c != null) { bucket.cost += c; decidedCount++; }
@@ -232,6 +269,9 @@ export function cleanPerson(input, existing) {
   const pay = text(input && input.pay, 20);
   if (pay && !payType(pay)) errors.push('No such way of being paid: ' + pay);
 
+  const cls = text(input && input.cls, 20);
+  if (cls && !classOf(cls)) errors.push('No such kind of labor: ' + cls);
+
   const figures = {};
   for (const f of ['rate', 'salary', 'hours']) {
     const v = num(input ? input[f] : null);
@@ -253,13 +293,13 @@ export function cleanPerson(input, existing) {
       title: added ? text(input && input.title, 80) : '',
       dept: added ? (text(input && input.dept, 60) || 'Unassigned') : '',
       division: added ? text(input && input.division, 20) : '',
-      pay,
+      pay, cls,
       rate: figures.rate, salary: figures.salary, hours: figures.hours,
       note: text(input && input.note, 300),
       // A seeded person with nothing on their line is simply undecided, and
       // the row goes rather than sitting there as a set of nulls. A write-in
       // always keeps its row: it IS the only record that the post exists.
-      clear: !added && !pay && figures.rate == null && figures.salary == null
+      clear: !added && !pay && !cls && figures.rate == null && figures.salary == null
         && figures.hours == null && !text(input && input.note, 300),
     },
   };
@@ -275,18 +315,19 @@ const cell = (v) => {
 export function csv(rs, year) {
   const label = (k) => (payType(k) || { label: '' }).label;
   const head = ['Department', 'Name', 'Job title', 'Status', 'Division', 'Full/part time',
-                'Paid', 'Rate ($/hr)', 'Salary (annual)', 'Est. hours (annual)',
-                year + ' projection', 'Rolls into', 'Note'];
+                'Paid', 'Direct or G&A', 'Rate ($/hr)', 'Salary (annual)',
+                'Est. hours (annual)', year + ' projection', 'Rolls into', 'Note'];
   const out = [head.map(cell).join(',')];
   for (const g of byDepartment(rs)) {
     for (const r of g.people) {
       const c = cost(r);
       out.push([
         g.dept, r.n, r.t, r.tbh ? 'To be hired' : 'Active', r.v, r.ft,
-        label(r.pay), r.rate == null ? '' : r.rate,
+        label(r.pay), (classOf(r.cls) || { label: '' }).label,
+        r.rate == null ? '' : r.rate,
         r.salary == null ? '' : r.salary, r.hours == null ? '' : r.hours,
         c == null ? '' : Math.round(c),
-        (ROLLUPS.find((x) => x.key === rollOf(r.pay)) || {}).label || '',
+        (ROLLUPS.find((x) => x.key === rollOf(r)) || {}).label || '',
         r.note,
       ].map(cell).join(','));
     }
