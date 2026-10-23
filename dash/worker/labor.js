@@ -20,10 +20,36 @@
 //   It does not set the budget's Labor line. It shows what it adds up to
 //   beside what the budget currently says, and leaves the two to a person.
 
-import { PEOPLE, ROSTER_AS_OF } from './labor-seed.js';
+import { PEOPLE as ON_STAFF, ROSTER_AS_OF } from './labor-seed.js';
 import { LINES } from './budget.js';
 
-export { PEOPLE, ROSTER_AS_OF };
+export { ROSTER_AS_OF };
+
+/**
+ * Divisions that are not this company.
+ *
+ * The Jetty Rock Foundation is its own 501(c)(3): its own books, its own
+ * payroll, its own board. Its people are in the Staff base because that is
+ * where the whole org chart lives, and they belong there -- but budgeting
+ * their wages against Jetty's Labor line would put another entity's costs
+ * into this company's P&L.
+ *
+ * Done here rather than by cutting rows out of labor-seed.js, for two
+ * reasons. The seed is a snapshot of the Staff base and quietly missing
+ * people would make it untrue. And this is a rule about how the business
+ * is structured, which is worth being able to read -- and to test -- in
+ * one named place rather than inferring it from a list that is two people
+ * shorter than it should be.
+ */
+export const SEPARATE_DIVISIONS = ['NONPROFIT'];
+
+const ours = (p) => !SEPARATE_DIVISIONS.includes(String(p.v || '').toUpperCase());
+
+/** The roster this plan covers: the Staff base, less the separate entities. */
+export const PEOPLE = ON_STAFF.filter(ours);
+
+/** Everybody the Staff base had, for anything that needs the whole org. */
+export { ON_STAFF };
 
 // How somebody is paid, and therefore which figures their line asks for and
 // which budget line their cost lands on.

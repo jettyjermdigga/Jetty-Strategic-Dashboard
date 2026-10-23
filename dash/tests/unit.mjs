@@ -18,7 +18,8 @@ import { LINES as SEED_LINES } from '../worker/budget-seed.js';
 import {
   rows as laborRows, cost, decided, byDepartment, summary as laborSummary,
   against, cleanPerson as cleanLaborPerson, cleanKey as laborKey, csv as laborCsv,
-  num, rollOf, PEOPLE as ROSTER, PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS, ROSTER_AS_OF,
+  num, rollOf, PEOPLE as ROSTER, ON_STAFF, SEPARATE_DIVISIONS,
+  PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS, ROSTER_AS_OF,
 } from '../worker/labor.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1018,7 +1019,7 @@ describe('the retail year the budget is built on', () => {
 describe('the roster seed carries no pay', () => {
   const ALLOWED = new Set(['k', 'n', 't', 'd', 'v', 'pay', 'ft', 'type', 'tbh']);
   it('has only the fields it is meant to', () => {
-    for (const p of ROSTER) {
+    for (const p of ON_STAFF) {
       for (const f of Object.keys(p)) {
         ok(ALLOWED.has(f), p.k + ' carries an unexpected field: ' + f);
       }
@@ -1027,7 +1028,7 @@ describe('the roster seed carries no pay', () => {
   // "pay" is how, never how much. A number anywhere in this file is a
   // figure, and no figure belongs in it.
   it('holds no numbers at all', () => {
-    for (const p of ROSTER) {
+    for (const p of ON_STAFF) {
       for (const [f, v] of Object.entries(p)) {
         ok(typeof v !== 'number', p.k + '.' + f + ' is a number: ' + v);
       }
@@ -1042,24 +1043,65 @@ describe('the roster seed carries no pay', () => {
   });
 });
 
+// The Jetty Rock Foundation is its own 501(c)(3), with its own books and
+// its own payroll. Its people are in the Staff base because that is where
+// the org chart lives; budgeting their wages against Jetty's Labor line
+// would put another entity's costs into this company's P&L.
+describe('a separate entity is not on this plan', () => {
+  it('leaves them in the Staff base snapshot, which is a snapshot', () => {
+    ok(ON_STAFF.some((p) => SEPARATE_DIVISIONS.includes(p.v)),
+       'the seed was cut rather than filtered, so it no longer matches Staff');
+  });
+  it('keeps them off the plan', () => {
+    for (const p of ROSTER) {
+      ok(!SEPARATE_DIVISIONS.includes(p.v), p.k + ' is in ' + p.v);
+    }
+    ok(ROSTER.length < ON_STAFF.length, 'nobody was excluded at all');
+  });
+  it('keeps them out of the sheet and out of every total', () => {
+    const gone = ON_STAFF.filter((p) => SEPARATE_DIVISIONS.includes(p.v));
+    const rs = laborRows(Object.fromEntries(
+      gone.map((p) => [p.k, { pay: 'salary', salary: 90000, cls: 'gna' }])));
+    eq(rs.length, ROSTER.length, 'a decision put an excluded person back');
+    eq(laborSummary(rs).roll.gna.cost, 0, 'their pay landed in a total');
+    for (const g of byDepartment(rs)) {
+      ok(!/nonprofit|jrf/i.test(g.dept), 'their department is still a band: ' + g.dept);
+    }
+  });
+  it('keeps them out of the download', () => {
+    const out = laborCsv(laborRows({}), 2027);
+    for (const p of ON_STAFF.filter((x) => SEPARATE_DIVISIONS.includes(x.v))) {
+      ok(!out.includes(p.n), p.n + ' is in the CSV');
+    }
+  });
+  // Said on the page, not left as a list that is quietly two people short.
+  it('says so on the page', () => {
+    const HERE = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(HERE, '..', 'public', 'assets', 'labor.js'), 'utf8');
+    const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
+    ok(/separate: SEPARATE_DIVISIONS/.test(idx), 'the Worker does not send what it left out');
+    ok(/D\.separate/.test(page), 'the page does not say what it left out');
+  });
+});
+
 describe('the roster seed', () => {
   it('gives everybody a key of their own', () => {
     const seen = new Set();
-    for (const p of ROSTER) {
+    for (const p of ON_STAFF) {
       ok(p.k && !seen.has(p.k), 'duplicate or empty key: ' + p.k);
       seen.add(p.k);
       eq(laborKey(p.k), p.k, p.k + ' is not a key this would accept back');
     }
   });
   it('gives everybody a name and a department', () => {
-    for (const p of ROSTER) {
+    for (const p of ON_STAFF) {
       ok(p.n && p.n.trim(), p.k + ' has no name');
       ok(p.d && p.d.trim(), p.k + ' has no department');
     }
   });
   it('only uses ways of being paid that exist', () => {
     const known = new Set(PAY_TYPES.map((t) => t.key));
-    for (const p of ROSTER) {
+    for (const p of ON_STAFF) {
       ok(!p.pay || known.has(p.pay), p.k + ' is paid "' + p.pay + '"');
     }
   });

@@ -15,7 +15,8 @@ import {
 } from '../worker/budget.js';
 import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
-  PEOPLE as ROSTER, ROSTER_AS_OF, PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS,
+  PEOPLE as ROSTER, ROSTER_AS_OF, SEPARATE_DIVISIONS, PAY_TYPES, CLASSES,
+  ROLLUPS, FULL_TIME_HOURS,
 } from '../worker/labor.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
@@ -248,6 +249,7 @@ const LABOR = (() => {
   return {
     year: FIRST_YEAR, you: 'jeremy@jettylife.com',
     rosterAsOf: ROSTER_AS_OF, rosterSize: ROSTER.length,
+    separate: SEPARATE_DIVISIONS.join(', '),
     payTypes: PAY_TYPES, classes: CLASSES, rollups: ROLLUPS,
     fullTimeHours: FULL_TIME_HOURS,
     people,

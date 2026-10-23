@@ -21,7 +21,8 @@ import {
 import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
   csv as laborCsv, cleanKey as laborKey,
-  PEOPLE as ROSTER, ROSTER_AS_OF, PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS,
+  PEOPLE as ROSTER, ROSTER_AS_OF, SEPARATE_DIVISIONS, PAY_TYPES, CLASSES,
+  ROLLUPS, FULL_TIME_HOURS,
 } from './labor.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
@@ -308,6 +309,9 @@ async function labor(request, env, url, who) {
     return json({
       year, you: who.email,
       rosterAsOf: ROSTER_AS_OF, rosterSize: ROSTER.length,
+      // Said on the page rather than left as a silently shorter list: two
+      // people are missing from it on purpose.
+      separate: SEPARATE_DIVISIONS.join(', '),
       payTypes: PAY_TYPES, classes: CLASSES, rollups: ROLLUPS,
       fullTimeHours: FULL_TIME_HOURS,
       people: rs,

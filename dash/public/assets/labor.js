@@ -269,7 +269,8 @@
     $('#dl').href = '/api/labor.csv?year=' + D.year;
     $('#sub').textContent = D.year + ' · ' + D.people.length + ' people';
     $('#rc').textContent = 'Roster from the Staff base as of ' + D.rosterAsOf
-      + ' · Active and to-be-hired · ' + D.rosterSize + ' people';
+      + ' · Active and to-be-hired · ' + D.rosterSize + ' people'
+      + (D.separate ? ' · ' + D.separate + ' excluded, separate entity' : '');
   }
 
   // ── Saving ────────────────────────────────────────────────────────────
