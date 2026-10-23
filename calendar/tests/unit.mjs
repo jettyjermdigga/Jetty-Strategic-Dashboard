@@ -1032,7 +1032,8 @@ describe('the watcher is wired the way it is meant to be', () => {
   it('never makes the save wait on Slack', () => {
     const fn = idx.slice(idx.indexOf('const tellWatchers'));
     const body = fn.slice(0, fn.indexOf('\n  if (path ==='));
-    ok(body.length > 200 && body.length < 2000, 'the slice no longer covers tellWatchers alone');
+    ok(fn.indexOf('\n  if (path ===') > 0, 'the slice has no end, so it covers the whole file');
+    ok(!/\/api\/places/.test(body), 'the slice runs past tellWatchers');
     ok(/ctx\.waitUntil\(notify\)/.test(body), 'the notification is not deferred');
     ok(!/await dmMentions/.test(body.split('const notify')[0] || ''),
        'something awaits Slack before responding');
@@ -1044,6 +1045,22 @@ describe('the watcher is wired the way it is meant to be', () => {
   it('takes the tag key from the taxonomy rather than spelling it again', () => {
     ok(/PAID_ADVO/.test(idx), 'index.js does not use the named key');
     ok(!/'paid-advo'/.test(idx), 'index.js spells the key by hand, which will go stale');
+  });
+  // A watcher added to Slack after the roster was last cached would not be
+  // found, and the ping would fail quietly until somebody opened the mention
+  // picker on a comment.
+  it('looks Slack up again when a watcher is not in the cached roster', () => {
+    const fn = idx.slice(idx.indexOf('const tellWatchers'));
+    const body = fn.slice(0, fn.indexOf('\n  if (path ==='));
+    ok(/refreshRoster\(env, db\)/.test(body), 'a stale roster is never refreshed');
+    ok(/mine\(roster\)\.length < to\.length/.test(body),
+       'it refreshes unconditionally, or never');
+  });
+  it('still delivers to the watchers it does know if the refresh fails', () => {
+    const fn = idx.slice(idx.indexOf('const tellWatchers'));
+    const body = fn.slice(0, fn.indexOf('\n  if (path ==='));
+    ok(/catch \(e\) \{ \/\* a stale roster/.test(body),
+       'a Slack lookup failure would stop the message going out at all');
   });
   it('is off until somebody is named, rather than erroring', () => {
     ok(/env\.PAID_ADVO_WATCHERS \|\| ''/.test(idx), 'an unset watcher list is not handled');

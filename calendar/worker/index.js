@@ -901,7 +901,18 @@ async function handleApi(request, env, url, who, ctx) {
 
     const item = after || before;
     const notify = (async () => {
-      const roster = await listPeople(db);
+      let roster = await listPeople(db);
+      const mine = (list) => to.filter((e) => (list.find((p) => p.email === e) || {}).slack_id);
+      // A watcher added to Slack after the roster was last cached would not be
+      // found, and the ping would fail quietly until somebody happened to open
+      // the mention picker. refreshRoster rate-limits itself, so asking is
+      // cheap; only ask when somebody is actually missing.
+      if (mine(roster).length < to.length) {
+        try {
+          await refreshRoster(env, db);
+          roster = await listPeople(db);
+        } catch (e) { /* a stale roster still delivers to everyone it knows */ }
+      }
       const me = roster.find((p) => p.email === String(who.email).toLowerCase());
       // An address with no Slack account still goes through: dmMentions
       // reports it, and a watcher who is quietly not being told is worse
