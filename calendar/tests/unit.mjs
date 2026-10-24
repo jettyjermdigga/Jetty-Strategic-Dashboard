@@ -1217,6 +1217,55 @@ describe('finding the comments that mention you', () => {
   });
 });
 
+// Who is actually configured to be told.
+//
+// A typo here is invisible: the comment is written, the mention is stored
+// against an address nobody has, and it is never seen by anyone. Nothing
+// errors, nothing warns, and the first anybody knows is a media buyer
+// asking why they were not told about a date change.
+describe('the watcher list as it ships', () => {
+  const toml = fs.readFileSync(root('wrangler.toml'), 'utf8');
+  const read = (key) => {
+    const m = toml.match(new RegExp('^' + key + ' = "([^"]*)"', 'm'));
+    return m ? m[1].split(',').map((x) => x.trim()).filter(Boolean) : null;
+  };
+  const watchers = read('PAID_ADVO_WATCHERS');
+
+  it('is set at all', () => {
+    ok(watchers, 'PAID_ADVO_WATCHERS is missing from wrangler.toml');
+  });
+  it('is every one of them a real address', () => {
+    for (const e of watchers) {
+      ok(/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(e), e + ' is not an email address');
+      eq(e, e.toLowerCase(), e + ' is not lowercased, and the match is exact');
+    }
+  });
+  // The comment is on an event. An address Access will not let in cannot
+  // open the event, so the notice is written somewhere they cannot reach.
+  it('is on a domain that can sign in to the calendar', () => {
+    // The three domains Access admits. Kept here rather than read from
+    // Cloudflare because this is the check that a FOURTH one, added to the
+    // watch list without being added to Access, is caught before it ships.
+    const ALLOWED = ['jettylife.com', 'sunnysidecalifornia.com', 'jettyrockfoundation.org'];
+    for (const e of watchers) {
+      const domain = e.split('@')[1];
+      ok(ALLOWED.includes(domain),
+         domain + ' is not on the calendar’s Access policy, so ' + e
+         + ' cannot open the event the notice is written on');
+    }
+  });
+  // Nothing but the Paid Advo watch can reach them. They are not in the
+  // Slack roster, so they cannot be picked in the mention box either.
+  it('is only ever used by the Paid Advo watch', () => {
+    const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+    eq((idx.match(/PAID_ADVO_WATCHERS/g) || []).length, 1);
+    const calls = [...idx.matchAll(/\bwatchers\(\)/g)].map((m) => m.index);
+    eq(calls.length, 1, 'the watcher list is read in more than one place');
+    ok(calls[0] > idx.indexOf('const tellWatchers'),
+       'it is read somewhere other than inside the Paid Advo watch');
+  });
+});
+
 for (const [name, build] of groups) {
   group = [];
   build();

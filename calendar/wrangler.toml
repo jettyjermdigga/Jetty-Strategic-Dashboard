@@ -96,4 +96,4 @@ FEED_ORIGIN = "https://jetty-calendar-feed.jeremy-85e.workers.dev"
 # These addresses need to be ones Cloudflare Access will let in, or the
 # person cannot open the event the comment is on. sunnysidecalifornia.com is
 # already on the calendar's Access policy.
-PAID_ADVO_WATCHERS = ""
+PAID_ADVO_WATCHERS = "taylor.heussner@sunnysidecalifornia.com"
