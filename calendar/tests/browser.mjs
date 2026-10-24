@@ -90,7 +90,8 @@ const COMMENTS = [{
 let slackStatus = null;
 
 const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], deleted: [],
-               deletedComments: [], commented: null, savedFilters: null, resets: 0 };
+               deletedComments: [], commented: null, savedFilters: null, resets: 0,
+               mentionsSeen: 0 };
 let feedRow = { url: 'https://feed.test/calendar.ics?token=' + 'a'.repeat(64), filters: {} };
 
 const browser = await chromium.launch();
@@ -120,6 +121,24 @@ await page.route('**/*', async (route) => {
   }
   // Everywhere the calendar has been, as the Worker derives it. Two of them
   // so picking one and then picking another is a real change.
+  // Comments that mention me. One automatic notice from the calendar and
+  // one from a person, so both render; the first is new, the second is not.
+  if (p === '/api/mentions') {
+    if (url.searchParams.get('seen') === '1') seen.mentionsSeen++;
+    return route.fulfill({ json: {
+      seenAt: seen.mentionsSeen ? '2026-12-31T00:00:00.000Z' : '2026-10-01T00:00:00.000Z',
+      unread: seen.mentionsSeen ? 0 : 1,
+      mentions: [
+        { id: 'm1', item_id: ITEMS[0].id, title: ITEMS[0].title,
+          start_date: ITEMS[0].start_date, author: 'calendar',
+          body: 'Arlynn changed this Paid Advo item.\nChanged: start date',
+          created_at: '2026-10-20T10:00:00.000Z' },
+        { id: 'm2', item_id: ITEMS[0].id, title: ITEMS[0].title,
+          start_date: ITEMS[0].start_date, author: 'amy@jettylife.com',
+          body: 'Can you confirm the spend?', created_at: '2026-09-01T10:00:00.000Z' },
+      ],
+    } });
+  }
   if (p === '/api/places') {
     return route.fulfill({ json: { places: [
       { key: 'a', label: 'Jetty Flagship \u2014 700 S Main St \u00b7 Manahawkin, NJ',
@@ -767,6 +786,43 @@ await t('reset issues a new link', async () => {
   await page.waitForFunction(() =>
     document.querySelector('#feedUrl').textContent.includes('bbbb'));
   return seen.resets === 1;
+});
+await page.locator('button[data-act="close"]').click();
+
+console.log('for you');
+await t('shows a badge with how many are new', async () => {
+  await page.waitForSelector('#forMe:not([hidden])');
+  return (await page.locator('#forMe').textContent()).trim() === 'For you \u00b7 1'
+    && await page.locator('#forMe.has-new').count() === 1;
+});
+await page.locator('#forMe').click();
+await page.waitForSelector('.fy-list');
+await t('lists every comment that mentions me, newest first', async () => {
+  const titles = await page.locator('.fy-body').allTextContents();
+  return titles.length === 2
+    && titles[0].startsWith('Arlynn changed this Paid Advo item.')
+    && titles[1] === 'Can you confirm the spend?';
+});
+// The notice has no "@" in its author, so it is the calendar itself rather
+// than somebody with an odd name.
+await t('names the calendar as the author of an automatic notice', async () =>
+  (await page.locator('.fy').first().locator('.fy-who').textContent())
+    .startsWith('Jetty Calendar'));
+await t('shows only one line of a comment that has several', async () =>
+  !(await page.locator('.fy-body').first().textContent()).includes('Changed:'));
+await t('marks the new one and leaves the old one alone', async () =>
+  (await page.locator('.fy.is-new').count()) === 1);
+// On opening, not on closing: a modal dismissed with Escape would otherwise
+// leave a badge that never clears.
+await t('marks them read on opening', async () => {
+  await page.waitForFunction(() => !document.querySelector('#forMe.has-new'));
+  return seen.mentionsSeen === 1
+    && (await page.locator('#forMe').textContent()).trim() === 'For you';
+});
+await t('opens the event behind a row', async () => {
+  await page.locator('.fy').first().click();
+  await page.waitForSelector('.det-title');
+  return (await page.locator('.det-title').textContent()).includes(ITEMS[0].title);
 });
 await page.locator('button[data-act="close"]').click();
 

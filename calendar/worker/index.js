@@ -23,6 +23,7 @@ import { normaliseProducts } from './products.js';
 import { commentMessage, dmMentions, displayName, eventUrl,
          fetchSlackPeople, slackHint, watchMessage, changedFields } from './slack.js';
 import { rollPlaces, FIELDS as PLACE_FIELDS } from './places.js';
+import { noticeBody, countUnread, CALENDAR_AUTHOR } from './notices.js';
 import SCHEMA from './schema.sql';
 import SOCIAL_BACKFILL from '../backfill/social.json';
 
@@ -892,7 +893,7 @@ async function handleApi(request, env, url, who, ctx) {
    */
   const tellWatchers = (action, before, after) => {
     const to = watchers();
-    if (!to.length || !env.SLACK_BOT_TOKEN) return;
+    if (!to.length) return;
     if (!isPaidAdvo(before) && !isPaidAdvo(after)) return;
 
     const changed = action === 'changed' ? changedFields(before, after) : [];
@@ -900,6 +901,8 @@ async function handleApi(request, env, url, who, ctx) {
     if (action === 'changed' && !changed.length) return;
 
     const item = after || before;
+    const label = (SUB_TYPES.find((t) => t.key === PAID_ADVO) || {}).label || 'Paid Advo';
+
     const notify = (async () => {
       let roster = await listPeople(db);
       const mine = (list) => to.filter((e) => (list.find((p) => p.email === e) || {}).slack_id);
@@ -914,25 +917,87 @@ async function handleApi(request, env, url, who, ctx) {
         } catch (e) { /* a stale roster still delivers to everyone it knows */ }
       }
       const me = roster.find((p) => p.email === String(who.email).toLowerCase());
-      // An address with no Slack account still goes through: dmMentions
-      // reports it, and a watcher who is quietly not being told is worse
-      // than one who is not set up yet.
+      // Only the people Slack can actually reach. A watcher with no Slack
+      // account is no longer a failure to report -- the comment above is
+      // how they are told, and Slack is the extra that starts working on
+      // its own the day they get an account.
       const targets = to
         .filter((e) => e !== String(who.email).toLowerCase())
-        .map((e) => roster.find((p) => p.email === e) || { email: e, slack_id: '' });
+        .map((e) => roster.find((p) => p.email === e))
+        .filter((p) => p && p.slack_id);
       if (!targets.length) return;
       const result = await dmMentions(env.SLACK_BOT_TOKEN, targets, watchMessage({
         actorName: displayName(who.email, me && me.name),
-        item, action, changed,
-        label: (SUB_TYPES.find((t) => t.key === PAID_ADVO) || {}).label || 'Paid Advo',
+        item, action, changed, label,
         url: eventUrl(url.origin, item && item.id),
       }));
       await recordSlackResult(db, result);
     })().catch((e) => recordSlackResult(db, {
       sent: 0, errors: [{ email: '', error: String((e && e.message) || e) }],
     }).catch(() => {}));
-    if (ctx && ctx.waitUntil) ctx.waitUntil(notify);
+    // The comment is the notice. It goes on the event, mentioning the
+    // watchers, whether or not anybody has Slack -- and it goes first,
+    // because it is the delivery that has to work.
+    //
+    // Not on a deletion: there is no event left to comment on, and a
+    // comment nobody can open is not a notice. Slack still carries that
+    // one, for whoever has it.
+    const comment = (async () => {
+      if (action === 'deleted' || !item || !item.id) return;
+      const roster = await listPeople(db).catch(() => []);
+      const me = roster.find((p) => p.email === String(who.email).toLowerCase());
+      const mentions = to.filter((e) => e !== String(who.email).toLowerCase());
+      if (!mentions.length) return;
+      await db.prepare(
+        'INSERT INTO comments (id, item_id, body, mentions, author, created_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?)',
+      ).bind(crypto.randomUUID(), item.id,
+             noticeBody({
+               actorName: displayName(who.email, me && me.name),
+               item, action, changed, label,
+             }),
+             mentions.join(','), CALENDAR_AUTHOR, new Date().toISOString()).run();
+    })().catch(() => {});
+
+    if (ctx && ctx.waitUntil) {
+      ctx.waitUntil(comment);
+      if (env.SLACK_BOT_TOKEN) ctx.waitUntil(notify);
+    }
   };
+
+  // Comments that mention you, newest first, and how many are new since you
+  // last looked. The only way to find out somebody wants you on an event --
+  // before this, a mention was a thing you had to already be looking at the
+  // event to see.
+  if (path === '/api/mentions' && method === 'GET') {
+    if (!who.email) return json({ error: 'Not signed in.' }, 403);
+    const me = String(who.email).toLowerCase();
+
+    if (method === 'GET' && url.searchParams.get('seen') === '1') {
+      await db.prepare(
+        'INSERT INTO seen (email, mentions_at) VALUES (?, ?) '
+        + 'ON CONFLICT(email) DO UPDATE SET mentions_at = excluded.mentions_at')
+        .bind(me, new Date().toISOString()).run();
+    }
+
+    const row = await db.prepare('SELECT mentions_at FROM seen WHERE email = ?')
+      .bind(me).first();
+    const seenAt = (row && row.mentions_at) || '';
+
+    // LIKE on a comma-separated column, then an exact check in JS: '%a@b%'
+    // also matches 'xa@b.co', and a notice meant for one person turning up
+    // for another is worse than one that is slow to find.
+    const res = await db.prepare(
+      'SELECT c.id, c.item_id, c.body, c.author, c.created_at, c.mentions, '
+      + 'i.title, i.start_date FROM comments c JOIN items i ON i.id = c.item_id '
+      + "WHERE c.mentions LIKE ? ORDER BY c.created_at DESC LIMIT 100")
+      .bind('%' + me + '%').all();
+
+    const mine = (res.results || []).filter((r) => String(r.mentions || '')
+      .split(',').map((x) => x.trim().toLowerCase()).includes(me));
+
+    return json({ seenAt, unread: countUnread(mine, seenAt, me), mentions: mine.slice(0, 50) });
+  }
 
   // Everywhere the calendar has already been, for the picker on the Where
   // step. Derived from the events rather than kept in a table of its own --

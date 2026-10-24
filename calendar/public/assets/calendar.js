@@ -32,6 +32,7 @@
     people: [],        // the mention roster, fetched once
     slack: { configured: false, status: null },
     places: [],
+    mentions: { unread: 0, seenAt: '', list: [] },
   };
 
   // ── remembered preferences ─────────────────────────────────────────────
@@ -508,6 +509,66 @@
     return placesLoaded;
   }
 
+  // ── For you ───────────────────────────────────────────────────────────
+  //
+  // Comments that mention you, and how many are new. Before this a mention
+  // was only visible to somebody already looking at the event -- which is
+  // no use at all to the person being told about it.
+  function loadMentions(markSeen) {
+    if (!state.me || !state.me.email) return Promise.resolve();
+    return api('/api/mentions' + (markSeen ? '?seen=1' : ''))
+      .then(function (r) {
+        state.mentions = { unread: r.unread || 0, seenAt: r.seenAt || '',
+                           list: r.mentions || [] };
+        paintForMe();
+      })
+      .catch(function () { /* a calendar that works is worth more than a badge */ });
+  }
+
+  function paintForMe() {
+    var btn = $('#forMe');
+    if (!btn) return;
+    var m = state.mentions;
+    btn.hidden = !m.list.length;
+    btn.textContent = m.unread ? 'For you \u00b7 ' + m.unread : 'For you';
+    btn.classList.toggle('has-new', !!m.unread);
+  }
+
+  function showForMe() {
+    var list = state.mentions.list;
+    var seen = state.mentions.seenAt;
+    var body = list.length
+      ? '<ul class="fy-list">' + list.map(function (c) {
+          var isNew = (!seen || c.created_at > seen)
+            && c.author !== (state.me && state.me.email);
+          return '<li class="fy' + (isNew ? ' is-new' : '') + '" data-item="'
+            + esc(c.item_id) + '">'
+            + '<div class="fy-top"><span class="fy-title">'
+            + esc(c.title || 'An event') + '</span>'
+            + '<span class="fy-when">' + esc(whenStamp(c.created_at)) + '</span></div>'
+            + '<div class="fy-who">' + esc(personName(c.author))
+            + (c.start_date ? ' \u00b7 event on ' + esc(c.start_date) : '') + '</div>'
+            + '<div class="fy-body">' + esc(firstLine(c.body)) + '</div></li>';
+        }).join('') + '</ul>'
+      : '<p class="muted">Nothing mentions you yet.</p>';
+    openModal('For you', body,
+      '<button class="cal-btn" data-act="close">Close</button>');
+    // Marked read on opening, not on closing: a modal dismissed with Escape
+    // would otherwise leave a badge that never clears.
+    loadMentions(true);
+  }
+
+  function firstLine(body) {
+    var lines = String(body == null ? '' : body).split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].trim()) {
+        return lines[i].trim().length > 120
+          ? lines[i].trim().slice(0, 119) + '\u2026' : lines[i].trim();
+      }
+    }
+    return '';
+  }
+
   var peopleLoaded = null;
   function loadPeople() {
     if (!peopleLoaded) {
@@ -522,7 +583,11 @@
     return peopleLoaded;
   }
 
+  // An automatic notice has no "@" in its author, which no verified Access
+  // claim ever lacks -- so this can never shadow a real person.
+  var CALENDAR_AUTHOR = 'calendar';
   function personName(email) {
+    if (email === CALENDAR_AUTHOR) return 'Jetty Calendar';
     var p = state.people.filter(function (x) { return x.email === email; })[0];
     return p ? p.name : (String(email || '').split('@')[0] || email);
   }
@@ -771,6 +836,28 @@
     $('#modal').hidden = false;
   }
   function closeModal() { $('#modal').hidden = true; }
+
+  // Go to an event from somewhere else on the page. The month moves with it:
+  // closing the modal onto a month the event is not in reads as the calendar
+  // having lost it.
+  function jumpTo(id) {
+    var it = state.items.filter(function (x) { return x.id === id; })[0];
+    if (it) {
+      state.cursor = fromYmd(it.start_date);
+      render();
+      showDetail(id);
+      return;
+    }
+    // Outside the months currently loaded -- the deep link reloads onto it
+    // rather than guessing which range to fetch.
+    location.href = '/?event=' + encodeURIComponent(id);
+  }
+
+  document.addEventListener('click', function (e) {
+    var row = e.target.closest ? e.target.closest('.fy[data-item]') : null;
+    if (!row) return;
+    jumpTo(row.dataset.item);
+  });
 
   function whenText(it) {
     var s = fromYmd(it.start_date), e = fromYmd(it.end_date);
@@ -2362,6 +2449,7 @@
     $('#prev').addEventListener('click', function () { shift(-1); });
     $('#next').addEventListener('click', function () { shift(1); });
     $('#today').addEventListener('click', function () { state.cursor = new Date(); render(); });
+    $('#forMe').addEventListener('click', showForMe);
     $('#subscribe').addEventListener('click', showSubscribe);
     $('#addBtn').addEventListener('click', function () {
       showForm(null, null);
@@ -2543,6 +2631,9 @@
         $('#addBtn').hidden = false;
       }
       wire();
+      // Not awaited: the badge is worth having, and worth nothing compared
+      // to the calendar itself rendering.
+      loadMentions();
       return loadItems();
     })
     .then(function () {

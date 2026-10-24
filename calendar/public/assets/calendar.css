@@ -911,3 +911,27 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
   .day-item{ page-break-inside:avoid }
 }
 .aov-sep{opacity:.35;margin:0 9px}
+
+/* ── For you ──────────────────────────────────────────────────────────────
+   Comments that mention you. Before this, a mention was only visible to
+   somebody already looking at the event -- which is no use to the person
+   being told about it. */
+#forMe.has-new{
+  border-color:var(--accent,#43575E);
+  box-shadow:inset 0 0 0 1px var(--accent,#43575E);
+  font-weight:700;
+}
+.fy-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.fy{
+  padding:11px 13px;border-radius:9px;cursor:pointer;
+  border:1px solid transparent;
+}
+.fy:hover{background:var(--wash)}
+/* A left edge, not a colour wash: the row still has to be readable, and
+   "unread" is a state rather than a category. */
+.fy.is-new{box-shadow:inset 3px 0 0 var(--primary)}
+.fy-top{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
+.fy-title{font-family:var(--display);font-weight:700;font-size:14.5px}
+.fy-when{font-family:var(--mono);font-size:10.5px;opacity:.75;white-space:nowrap}
+.fy-who{font-family:var(--mono);font-size:10px;letter-spacing:.05em;opacity:.75;margin-top:3px}
+.fy-body{font-family:var(--body);font-size:13.5px;line-height:1.5;margin-top:5px;opacity:.9}

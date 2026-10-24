@@ -24,6 +24,8 @@ import { commentMessage, displayName, dmMentions, escapeSlack, eventUrl, eventWh
          WATCHED_FIELDS } from '../worker/slack.js';
 import { rollPlaces, placeKey, placeLabel, hasPlace,
          FIELDS as PLACE_FIELDS } from '../worker/places.js';
+import { noticeBody, summarise, countUnread, isAutomatic,
+         CALENDAR_AUTHOR } from '../worker/notices.js';
 import SOCIAL_BACKFILL from '../backfill/social.json' with { type: 'json' };
 import { buildIcs } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
@@ -1064,8 +1066,154 @@ describe('the watcher is wired the way it is meant to be', () => {
   });
   it('is off until somebody is named, rather than erroring', () => {
     ok(/env\.PAID_ADVO_WATCHERS \|\| ''/.test(idx), 'an unset watcher list is not handled');
-    ok(/if \(!to\.length \|\| !env\.SLACK_BOT_TOKEN\) return;/.test(idx),
-       'it would try to notify with no token or nobody to notify');
+    ok(/if \(!to\.length\) return;/.test(idx), 'it would try to notify nobody');
+  });
+  // The comment IS the notice, and Taylor has no Slack account. Gating the
+  // whole thing on a Slack token -- which is what it did when Slack was the
+  // only delivery -- would mean the one person it was built for never hears.
+  it('writes the comment whether or not Slack is configured', () => {
+    const fn = idx.slice(idx.indexOf('const tellWatchers'));
+    const body = fn.slice(0, fn.indexOf('\n  if (path ==='));
+    const guards = body.slice(0, body.indexOf('const notify'));
+    const writing = body.slice(body.indexOf('const comment'), body.indexOf('if (ctx &&'));
+    ok(guards.indexOf('const notify') === -1 && guards.length > 80, 'the guard slice is wrong');
+    ok(!/SLACK_BOT_TOKEN/.test(guards),
+       'a missing Slack token stops the watch before it writes anything');
+    ok(!/SLACK_BOT_TOKEN/.test(writing),
+       'writing the comment depends on Slack being configured');
+    ok(/if \(env\.SLACK_BOT_TOKEN\) ctx\.waitUntil\(notify\)/.test(body),
+       'the DM is attempted with no token');
+    ok(/ctx\.waitUntil\(comment\)/.test(body), 'the comment is never deferred');
+  });
+  // A watcher with no Slack account is not a failure any more: the comment
+  // is how they are told. Reporting it as one would put a permanent warning
+  // on the page for a thing that is working as designed.
+  it('only DMs the people Slack can actually reach', () => {
+    ok(/\.filter\(\(p\) => p && p\.slack_id\)/.test(idx),
+       'it still hands dmMentions somebody with no Slack account');
+  });
+  // There is no event left to open, so a comment on it would be a notice
+  // nobody can reach.
+  it('writes no comment on a deletion', () => {
+    ok(/if \(action === 'deleted' \|\| !item \|\| !item\.id\) return;/.test(idx),
+       'a deleted event is commented on');
+  });
+});
+
+// ── The notice in the calendar ──────────────────────────────────────────
+//
+// Taylor has no Slack account, so the DM had nowhere to land. She can sign
+// in to the calendar -- Access lets sunnysidecalifornia.com through -- so
+// the notice goes there instead: a comment on the event, mentioning her,
+// which she can also reply to.
+
+describe('the automatic notice', () => {
+  const item = {
+    id: 'abc', title: 'Spring IG push', start_date: '2027-03-01',
+    end_date: '2027-03-14', all_day: 1, status: 'Booked',
+    venue: 'Jetty Flagship', city: 'Manahawkin', state: 'NJ',
+  };
+
+  it('reads like something a person would have written', () => {
+    const body = noticeBody({ actorName: 'Arlynn', item, action: 'created' });
+    ok(body.startsWith('Arlynn added this Paid Advo item.'), body);
+    ok(body.includes('When: 2027-03-01 – 2027-03-14'), body);
+    ok(body.includes('Where: Jetty Flagship · Manahawkin, NJ'), body);
+  });
+  // Which date it moved to is the entire reason somebody outside the
+  // company is being told.
+  it('names the fields that moved', () => {
+    const body = noticeBody({ actorName: 'A', item, action: 'changed',
+                              changed: ['start date', 'status'] });
+    ok(body.includes('Changed: start date, status'), body);
+  });
+  // It is read in a comment thread, not in Slack. Markup here would be
+  // shown literally, and the page escapes what it renders anyway.
+  it('carries no Slack markup', () => {
+    const body = noticeBody({ actorName: 'A', item, action: 'created',
+                              url: 'https://cal/?event=abc' });
+    ok(!/[*<>|]/.test(body), body);
+  });
+  it('says something even when the event has nothing on it', () => {
+    ok(noticeBody({ action: 'created', item: {} }).length > 10);
+    ok(noticeBody({}).length > 10);
+  });
+
+  // Every real author comes out of verified Access claims, which always
+  // carry an "@". So nothing a person can sign in as collides with this.
+  it('has an author no person could ever be', () => {
+    ok(!CALENDAR_AUTHOR.includes('@'), CALENDAR_AUTHOR + ' could be an address');
+    eq(isAutomatic(CALENDAR_AUTHOR), true);
+    eq(isAutomatic('jeremy@jettylife.com'), false);
+    eq(isAutomatic(''), false);
+  });
+  it('is drawn as the calendar rather than as somebody oddly named', () => {
+    const page = fs.readFileSync(root('public/assets/calendar.js'), 'utf8');
+    ok(page.includes("var CALENDAR_AUTHOR = '" + CALENDAR_AUTHOR + "'"),
+       'the page does not know the automatic author, or spells it differently');
+    ok(/return 'Jetty Calendar'/.test(page), 'the page has no name for it');
+  });
+});
+
+describe('what the For you list shows of a comment', () => {
+  it('takes the first line that has anything on it', () => {
+    eq(summarise('\n\n  Arlynn changed this.\nChanged: start date'), 'Arlynn changed this.');
+  });
+  it('trims one that runs on', () => {
+    const out = summarise('x'.repeat(300), 40);
+    eq(out.length, 40);
+    ok(out.endsWith('…'), out);
+  });
+  it('copes with nothing', () => {
+    eq(summarise(''), '');
+    eq(summarise(null), '');
+    eq(summarise('\n\n\n'), '');
+  });
+});
+
+// A badge you cannot clear by reading is worse than no badge.
+describe('how many mentions are new', () => {
+  const rows = [
+    { author: 'a@x.com', created_at: '2026-10-23T00:00:00Z' },
+    { author: 'b@x.com', created_at: '2026-10-20T00:00:00Z' },
+    { author: 'me@x.com', created_at: '2026-10-24T00:00:00Z' },
+  ];
+  it('counts only what arrived since you last looked', () => {
+    eq(countUnread(rows, '2026-10-21T00:00:00Z', 'me@x.com'), 1);
+  });
+  it('counts everything when you never have', () => {
+    eq(countUnread(rows, '', 'me@x.com'), 2);
+  });
+  // Mentioning yourself is a thing people do by accident.
+  it('never counts your own', () => {
+    eq(countUnread(rows, '', 'ME@X.COM'), 2);
+    eq(countUnread([{ author: 'me@x.com', created_at: '2026-10-24T00:00:00Z' }], '', 'me@x.com'), 0);
+  });
+  it('counts nothing out of nothing', () => {
+    eq(countUnread(null, '', 'me@x.com'), 0);
+    eq(countUnread([], '2026-01-01', 'me@x.com'), 0);
+  });
+});
+
+// A LIKE on a comma-separated column matches more than it should: '%a@b%'
+// also hits 'xa@b.co'. A notice meant for one person turning up for another
+// is worse than one that is slow to find.
+describe('finding the comments that mention you', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+  it('checks the match exactly rather than trusting the LIKE', () => {
+    ok(/\.split\(','\)\.map\(\(x\) => x\.trim\(\)\.toLowerCase\(\)\)\.includes\(me\)/.test(idx),
+       'the LIKE result is used as-is, so a mention can reach the wrong person');
+  });
+  it('refuses a request with nobody signed in', () => {
+    const fn = idx.slice(idx.indexOf("path === '/api/mentions'"));
+    ok(/if \(!who\.email\) return json\(\{ error: 'Not signed in\.' \}, 403\);/
+      .test(fn.slice(0, 400)), 'the endpoint answers an unidentified request');
+  });
+  it('stores the seen mark against the signed-in address, not one that was sent', () => {
+    const fn = idx.slice(idx.indexOf("path === '/api/mentions'"));
+    const body = fn.slice(0, fn.indexOf('\n  // Everywhere'));
+    ok(/const me = String\(who\.email\)\.toLowerCase\(\);/.test(body), 'me is not the caller');
+    ok(!/searchParams\.get\('email'\)/.test(body), 'it takes an address from the query');
   });
 });
 

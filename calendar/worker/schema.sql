@@ -119,3 +119,15 @@ CREATE TABLE IF NOT EXISTS people (
   slack_id   TEXT,
   updated_at TEXT
 );
+
+-- When each person last looked at the comments that mention them.
+--
+-- One row per person, not one per comment. The question being asked is
+-- "what is new since I last looked", and a timestamp answers it without a
+-- table that grows with every comment ever written -- and without having to
+-- write a row the moment anybody is mentioned, which would put a write on
+-- the path of every save.
+CREATE TABLE IF NOT EXISTS seen (
+  email       TEXT PRIMARY KEY,
+  mentions_at TEXT
+);
