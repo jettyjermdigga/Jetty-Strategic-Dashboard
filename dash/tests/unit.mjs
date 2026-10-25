@@ -35,9 +35,15 @@ function it(label, fn) {
   try { fn(); console.log('  ok   ' + label); }
   catch (err) { failed++; console.log('  FAIL ' + label + '\n         ' + err.message); }
 }
+// JSON.stringify turns Infinity and NaN into null, so eq(Infinity, null)
+// passes -- and a check that a division guards against zero passes whether
+// or not the guard is there. The calendar suite had exactly that hole and
+// it hid a real break. Non-finite numbers show as themselves instead.
+const show = (v) => JSON.stringify(v, (k, x) =>
+  (typeof x === 'number' && !Number.isFinite(x) ? '<' + String(x) + '>' : x));
 function eq(got, want, note) {
-  const a = JSON.stringify(got);
-  const b = JSON.stringify(want);
+  const a = show(got);
+  const b = show(want);
   if (a !== b) throw new Error((note ? note + ': ' : '') + 'got ' + a + ', wanted ' + b);
 }
 function ok(cond, note) { if (!cond) throw new Error(note || 'expected true'); }

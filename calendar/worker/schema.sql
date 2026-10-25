@@ -46,6 +46,10 @@ CREATE TABLE IF NOT EXISTS items (
                                           -- id, division, category, sku, url. See
                                           -- worker/products.js. An example image is an
                                           -- ordinary attachment whose slot is the row id.
+  results_posted_at TEXT,                 -- when the sales report was announced in
+                                          -- Slack. Set once; it is what stops the
+                                          -- announcement firing again on every
+                                          -- subsequent save of the same event.
   event_types TEXT,                       -- retired. The pre-decision-tree "Event Type" axis,
                                           -- kept only so the one-time migration below has a
                                           -- source; nothing reads it afterwards.

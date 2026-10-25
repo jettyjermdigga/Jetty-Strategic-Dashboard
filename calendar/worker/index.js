@@ -21,9 +21,11 @@ import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
 import { applyBlanks } from './blanks.js';
 import { normaliseProducts } from './products.js';
 import { commentMessage, dmMentions, displayName, eventUrl,
-         fetchSlackPeople, slackHint, watchMessage, changedFields } from './slack.js';
+         fetchSlackPeople, slackHint, watchMessage, changedFields,
+         postToChannel, postFileToChannel } from './slack.js';
 import { rollPlaces, FIELDS as PLACE_FIELDS } from './places.js';
 import { noticeBody, countUnread, CALENDAR_AUTHOR } from './notices.js';
+import { readyToPost, salesMessage, RESULTS_SLOT } from './sales.js';
 import SCHEMA from './schema.sql';
 import SOCIAL_BACKFILL from '../backfill/social.json';
 
@@ -85,6 +87,10 @@ const ADDED_COLUMNS = [
   'social_type TEXT', 'channels TEXT', 'pillar TEXT', 'production TEXT',
   'caption TEXT', 'tags TEXT',
   'event_fee REAL', 'orders INTEGER', 'net_revenue REAL',
+  // The items table long predates the sales announcement, and CREATE TABLE
+  // IF NOT EXISTS does not revisit a table that exists -- so a column added
+  // to schema.sql alone reaches every database except the live one.
+  'results_posted_at TEXT',
 ];
 
 // Same idea, on the attachments table.
@@ -1010,6 +1016,72 @@ async function handleApi(request, env, url, who, ctx) {
     return json({ places: rollPlaces(res.results || [], 400) });
   }
 
+  /**
+   * Announce an event's results in Slack, once, when there is something to
+   * announce.
+   *
+   * The trigger is deliberately not "somebody saved". Results arrive in two
+   * pieces -- the figures and the export from the till -- in whichever
+   * order the person works, so this runs after BOTH of the writes that can
+   * complete the set and goes out on whichever one does.
+   *
+   * The stamp is claimed with a conditional update before anything is sent.
+   * An upload and a save landing at the same moment would otherwise each
+   * see an incomplete row become complete and both post -- and the failure
+   * being guarded against here is two @channel pings, which is the kind of
+   * mistake people remember.
+   */
+  const announceResults = (itemId) => {
+    if (!env.SLACK_BOT_TOKEN || !env.SALES_REPORT_CHANNEL) return;
+
+    const run = (async () => {
+      const item = await db.prepare('SELECT * FROM items WHERE id = ?').bind(itemId).first();
+      const atts = await listAttachments(db, itemId);
+      if (!readyToPost(item, atts)) return;
+
+      const claim = await db.prepare(
+        'UPDATE items SET results_posted_at = ? WHERE id = ? AND results_posted_at IS NULL')
+        .bind(new Date().toISOString(), itemId).run();
+      // Somebody else got there first in the moment between the two.
+      if (!claim.meta || claim.meta.changes !== 1) return;
+
+      const text = salesMessage({ item, url: eventUrl(url.origin, itemId) });
+      const report = atts.filter((a) => a.slot === RESULTS_SLOT)[0];
+
+      try {
+        let sent = false;
+        // The report itself is half of what anybody wants from this, so it
+        // goes as a file with the numbers as its comment -- one post, not
+        // a message and then an attachment.
+        if (report && env.FILES) {
+          const obj = await env.FILES.get(report.r2_key);
+          if (obj) {
+            await postFileToChannel(env.SLACK_BOT_TOKEN, env.SALES_REPORT_CHANNEL, {
+              filename: report.name, bytes: await obj.arrayBuffer(),
+              title: (item.title || 'Event') + ' \u2014 sales report', comment: text,
+            });
+            sent = true;
+          }
+        }
+        // No bucket, no object, or an upload that would not go. The numbers
+        // are most of the value and a missing attachment beats silence.
+        if (!sent) await postToChannel(env.SLACK_BOT_TOKEN, env.SALES_REPORT_CHANNEL, text);
+      } catch (e) {
+        // Unclaim, so fixing the scope or inviting the app to the channel is
+        // followed by the next save actually sending it.
+        await db.prepare('UPDATE items SET results_posted_at = NULL WHERE id = ?')
+          .bind(itemId).run().catch(() => {});
+        await recordSlackResult(db, {
+          sent: 0, errors: [{ email: env.SALES_REPORT_CHANNEL, error: String((e && e.message) || e) }],
+        });
+        return;
+      }
+      await recordSlackResult(db, { sent: 1, errors: [] });
+    })().catch(() => {});
+
+    if (ctx && ctx.waitUntil) ctx.waitUntil(run);
+  };
+
   const requireEditor = () => (who.canEdit
     ? null
     : json({ error: who.email
@@ -1119,6 +1191,8 @@ async function handleApi(request, env, url, who, ctx) {
       ).bind(id, itemId, name, body.byteLength,
              clean(request.headers.get('content-type'), 120), r2Key, slot, who.email, now).run();
 
+      // One of the two writes that can complete a set of results.
+      announceResults(itemId);
       return json({ attachment: { id, name, size: body.byteLength, slot,
                                   uploaded_by: who.email, uploaded_at: now } }, 201);
     }
@@ -1287,6 +1361,8 @@ async function handleApi(request, env, url, who, ctx) {
         + ', updated_by = ?, updated_at = ? WHERE id = ?',
       ).bind(...COLS.map((c) => row[c]), who.email, now, id).run();
       tellWatchers('changed', existing, { id, ...row });
+      // The other one.
+      announceResults(id);
       return json({ item: withRetail({ id, ...row, updated_by: who.email, updated_at: now }) });
     }
 

@@ -97,3 +97,20 @@ FEED_ORIGIN = "https://jetty-calendar-feed.jeremy-85e.workers.dev"
 # person cannot open the event the comment is on. sunnysidecalifornia.com is
 # already on the calendar's Access policy.
 PAID_ADVO_WATCHERS = "taylor.heussner@sunnysidecalifornia.com"
+
+# Where an event's sales report is announced, once the figures AND the
+# export from the till are both on the event.
+#
+# A channel ID (the C0123ABCD on the channel's "View channel details"), not
+# a #name: a renamed channel keeps its id and loses its name. The message
+# carries an @channel, so pick the channel that should actually be pinged.
+#
+# Three things have to be true or nothing is sent, and the calendar says so
+# on the event rather than failing quietly:
+#   the SLACK_BOT_TOKEN secret is set;
+#   the app has chat:write AND files:write, and was reinstalled after the
+#     scopes were added -- a scope added to an installed app does nothing;
+#   the app is a member of this channel (/invite it).
+#
+# Empty turns the announcement off entirely.
+SALES_REPORT_CHANNEL = ""

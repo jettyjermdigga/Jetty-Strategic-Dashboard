@@ -26,6 +26,8 @@ import { rollPlaces, placeKey, placeLabel, hasPlace,
          FIELDS as PLACE_FIELDS } from '../worker/places.js';
 import { noticeBody, summarise, countUnread, isAutomatic,
          CALENDAR_AUTHOR } from '../worker/notices.js';
+import { aov, netOfFee, hasReport, readyToPost, money, salesMessage,
+         RESULTS_SLOT } from '../worker/sales.js';
 import SOCIAL_BACKFILL from '../backfill/social.json' with { type: 'json' };
 import { buildIcs } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
@@ -42,8 +44,15 @@ let group = null;
 
 function describe(name, fn) { groups.push([name, fn]); }
 function it(name, fn) { group.push({ name, fn }); }
+// JSON.stringify turns Infinity and NaN into null, so eq(Infinity, null)
+// used to pass -- and the check that a division guards against zero passed
+// whether or not the guard was there. Non-finite numbers are shown as
+// themselves instead, which is both a correct comparison and a readable
+// failure message.
+const show = (v) => JSON.stringify(v, (k, x) =>
+  (typeof x === 'number' && !Number.isFinite(x) ? '<' + String(x) + '>' : x));
 function eq(got, want, what) {
-  const g = JSON.stringify(got); const w = JSON.stringify(want);
+  const g = show(got); const w = show(want);
   if (g !== w) throw new Error((what ? what + ': ' : '') + 'got ' + g + ', want ' + w);
 }
 function ok(cond, what) { if (!cond) throw new Error(what || 'expected true'); }
@@ -1263,6 +1272,174 @@ describe('the watcher list as it ships', () => {
     eq(calls.length, 1, 'the watcher list is read in more than one place');
     ok(calls[0] > idx.indexOf('const tellWatchers'),
        'it is read somewhere other than inside the Paid Advo watch');
+  });
+});
+
+// ── The sales report announcement ───────────────────────────────────────
+//
+// Results arrive in two pieces, in whichever order the person works: the
+// figures typed into the form and the export from the till attached beside
+// them. Announcing on either one alone sends a message with half of it
+// missing, so the announcement waits for the set.
+
+describe('average order value', () => {
+  it('is revenue over orders', () => eq(aov(142, 8420.5).toFixed(4), '59.2993'));
+  it('reads a figure typed the way people type one', () => {
+    eq(aov('142', '$8,420.50').toFixed(2), '59.30');
+  });
+  // An event that took no orders has no average. $0.00 in a channel message
+  // reads as a number somebody measured; Infinity reads as a broken page.
+  it('is nothing at all when there were no orders', () => {
+    eq(aov(0, 8420.5), null);
+    eq(aov(null, 8420.5), null);
+    eq(aov('', 8420.5), null);
+  });
+  it('is nothing at all when there is no revenue', () => {
+    eq(aov(142, null), null);
+    eq(aov(142, ''), null);
+  });
+  it('survives a revenue of zero, which is a real outcome', () => {
+    eq(aov(142, 0), 0);
+  });
+});
+
+describe('net of fee', () => {
+  it('takes the cost of being there off the top', () => eq(netOfFee(8420.5, 250), 8170.5));
+  it('goes negative when the day did not cover it', () => eq(netOfFee(100, 250), -150));
+  // Equal to revenue would imply the day was free, which is a different
+  // claim from not having been asked what it cost.
+  it('is nothing at all when no fee was recorded', () => {
+    eq(netOfFee(8420.5, null), null);
+    eq(netOfFee(8420.5, ''), null);
+  });
+});
+
+describe('when there is something to announce', () => {
+  const full = { orders: 142, net_revenue: 8420.5, results_posted_at: null };
+  const withReport = [{ slot: RESULTS_SLOT }];
+
+  it('needs the figures and the report', () => {
+    eq(readyToPost(full, withReport), true);
+    eq(readyToPost(full, [{ slot: null }]), false, 'announced with no report');
+    eq(readyToPost({ ...full, orders: null }, withReport), false, 'announced with no orders');
+    eq(readyToPost({ ...full, net_revenue: null }, withReport), false, 'announced with no revenue');
+  });
+  // A real outcome worth recording on the event, but not what @channel is
+  // for.
+  it('does not announce an event that took no orders', () => {
+    eq(readyToPost({ ...full, orders: 0 }, withReport), false);
+  });
+  it('announces an event that took no money, which is news of a kind', () => {
+    eq(readyToPost({ ...full, net_revenue: 0 }, withReport), true);
+  });
+  // The whole point of the stamp.
+  it('never announces the same event twice', () => {
+    eq(readyToPost({ ...full, results_posted_at: '2026-10-05T00:00:00Z' }, withReport), false);
+  });
+  it('knows a report from an ordinary attachment', () => {
+    eq(hasReport([{ slot: 'results' }]), true);
+    eq(hasReport([{ slot: null }, { slot: 'row-1' }]), false);
+    eq(hasReport([]), false);
+    eq(hasReport(null), false);
+  });
+  it('copes with no event at all', () => eq(readyToPost(null, withReport), false));
+  // The page has called this slot 'results' since results were added. The
+  // Worker decides what to announce on; they cannot be allowed to drift.
+  it('agrees with the page on which slot the report is in', () => {
+    const page = fs.readFileSync(root('public/assets/calendar.js'), 'utf8');
+    ok(page.includes("var RESULTS_SLOT = '" + RESULTS_SLOT + "'"),
+       'the page puts the sales report in a different slot from the one watched');
+  });
+});
+
+describe('the @channel message', () => {
+  const item = { title: 'Chowderfest', start_date: '2026-10-04',
+                 orders: 142, net_revenue: 8420.5, event_fee: 250 };
+
+  it('leads with the event and carries all four figures', () => {
+    const m = salesMessage({ item, url: 'https://cal/?event=1' });
+    ok(m.includes('Sales report in for *Chowderfest* (2026-10-04).'), m);
+    ok(m.includes('Orders: 142'), m);
+    ok(m.includes('Revenue: $8,420.50'), m);
+    ok(m.includes('AOV: $59.30'), m);
+    ok(m.includes('Net of fee: $8,170.50'), m);
+    ok(m.includes('<https://cal/?event=1|'), m);
+  });
+  // Escaping the whole string at the end would turn the mention into
+  // literal text and nobody would be notified at all -- which looks exactly
+  // like a message that was sent.
+  it('keeps the @channel mention as a mention', () => {
+    ok(salesMessage({ item }).startsWith('<!channel> '), 'the mention was escaped away');
+  });
+  it('still escapes what came from the event', () => {
+    const m = salesMessage({ item: { ...item, title: 'Beer & <Sauce>' } });
+    ok(m.includes('Beer &amp; &lt;Sauce&gt;'), m);
+    ok(m.startsWith('<!channel> '), m);
+  });
+  it('leaves the fee line off when no fee was recorded', () => {
+    ok(!salesMessage({ item: { ...item, event_fee: null } }).includes('Net of fee'));
+  });
+  it('can be asked not to ping everybody', () => {
+    ok(!salesMessage({ item, mention: false }).includes('<!channel>'));
+  });
+  it('shows money the way money is written', () => {
+    eq(money(8420.5), '$8,420.50');
+    eq(money(0), '$0.00');
+    eq(money(-150), '−$150.00');
+    eq(money(null), '');
+  });
+});
+
+// Two @channel pings for one event is the kind of mistake people remember.
+describe('the announcement is wired so it fires once', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+  const fn = idx.slice(idx.indexOf('const announceResults'));
+  const body = fn.slice(0, fn.indexOf('\n  const requireEditor'));
+
+  it('is the function this block is actually about', () => {
+    ok(fn.indexOf('\n  const requireEditor') > 0, 'the slice has no end');
+    ok(/const announceResults = \(itemId\) => \{/.test(body), 'announceResults is not here');
+  });
+  // An upload and a save landing together would each see an incomplete row
+  // become complete.
+  it('claims the event before it sends anything', () => {
+    ok(/WHERE id = \? AND results_posted_at IS NULL/.test(body),
+       'the stamp is not claimed conditionally, so two writes can both post');
+    ok(/claim\.meta\.changes !== 1/.test(body), 'the claim result is not checked');
+    ok(body.indexOf('results_posted_at IS NULL') < body.indexOf('salesMessage'),
+       'the message is built before the event is claimed');
+  });
+  // A failed post that stays stamped never retries, and fixing the scope
+  // would change nothing.
+  it('gives the claim back when Slack refuses', () => {
+    ok(/UPDATE items SET results_posted_at = NULL WHERE id = \?/.test(body),
+       'a failed send leaves the event marked as announced');
+  });
+  // The numbers are most of the value.
+  it('still posts the numbers when the file will not go', () => {
+    ok(/if \(!sent\) await postToChannel/.test(body), 'a missing file means no message at all');
+  });
+  it('fires on both of the writes that can complete a set', () => {
+    const calls = [...idx.matchAll(/announceResults\(/g)].map((m) => m.index);
+    eq(calls.length, 2, 'called somewhere other than the save and the upload');
+    const att = idx.indexOf("const attMatch");
+    const patch = idx.indexOf("if (method === 'PATCH' || method === 'PUT')");
+    ok(calls.some((c) => c > att && c < patch), 'nothing announces after an upload');
+    ok(calls.some((c) => c > patch), 'nothing announces after a save');
+  });
+  it('is off until a channel is named', () => {
+    ok(/if \(!env\.SLACK_BOT_TOKEN \|\| !env\.SALES_REPORT_CHANNEL\) return;/.test(body),
+       'it would try to post with no channel');
+  });
+  it('never makes the save wait on Slack', () => {
+    ok(/ctx\.waitUntil\(run\)/.test(body), 'the announcement is not deferred');
+  });
+  // The items table predates all of this, and CREATE TABLE IF NOT EXISTS
+  // does not revisit a table that exists.
+  it('adds its column to a database that already exists', () => {
+    const added = idx.slice(idx.indexOf('const ADDED_COLUMNS'));
+    ok(/'results_posted_at TEXT'/.test(added.slice(0, added.indexOf('];'))),
+       'the column reaches schema.sql but never the live database');
   });
 });
 

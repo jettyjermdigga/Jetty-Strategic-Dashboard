@@ -206,9 +206,83 @@ export async function dmMentions(token, targets, text) {
   return out;
 }
 
+// ── Posting to a channel, with a file ───────────────────────────────────
+//
+// Everything above this point sends DMs. A sales report is the opposite
+// case: it is news for whoever is in the channel, and the export itself is
+// half of what people want from it.
+//
+// Slack's file upload is three calls, not one. You ask for somewhere to put
+// it, you PUT it there, and then you tell Slack to finish -- and it is that
+// third call that posts the message, so the file and the text arrive as one
+// post rather than as two.
+
+// Form-encoded rather than JSON: getUploadURLExternal is one of the older
+// methods and does not read a JSON body.
+async function slackForm(token, method, params) {
+  const res = await fetch('https://slack.com/api/' + method, {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer ' + token,
+      'content-type': 'application/x-www-form-urlencoded; charset=utf-8',
+    },
+    body: new URLSearchParams(params).toString(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!body.ok) throw new Error(method + ': ' + (body.error || res.status));
+  return body;
+}
+
+/** A plain message in a channel. The bot has to be a member of it. */
+export async function postToChannel(token, channel, text) {
+  const body = await fetch('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer ' + token,
+      'content-type': 'application/json; charset=utf-8',
+    },
+    // link_names so <!channel> is treated as the mention it is.
+    body: JSON.stringify({ channel, text, mrkdwn: true, link_names: true }),
+  }).then((r) => r.json()).catch(() => ({}));
+  if (!body.ok) throw new Error('chat.postMessage: ' + (body.error || 'failed'));
+  return body;
+}
+
+/**
+ * A file in a channel, with the message as its comment.
+ *
+ * Returns nothing useful and throws on failure. The caller decides what a
+ * failure means -- for the sales report it means falling back to posting
+ * the message without the file, because the numbers are most of the value
+ * and a missing attachment is better than silence.
+ */
+export async function postFileToChannel(token, channel, { filename, bytes, title, comment }) {
+  const got = await slackForm(token, 'files.getUploadURLExternal', {
+    filename: filename || 'report',
+    length: String(bytes ? bytes.byteLength : 0),
+  });
+  if (!got.upload_url || !got.file_id) throw new Error('getUploadURLExternal: no url');
+
+  const put = await fetch(got.upload_url, { method: 'POST', body: bytes });
+  if (!put.ok) throw new Error('upload: ' + put.status);
+
+  // This is the call that posts. channel_id and initial_comment here mean
+  // one post carrying both, rather than a file and then a message about it.
+  return slackForm(token, 'files.completeUploadExternal', {
+    files: JSON.stringify([{ id: got.file_id, title: title || filename || 'Sales report' }]),
+    channel_id: channel,
+    initial_comment: comment || '',
+  });
+}
+
 // Slack's own error strings, turned into the thing to actually go and do.
 export function slackHint(error) {
   const e = String(error || '');
+  if (/getUploadURLExternal|completeUploadExternal|upload:/.test(e)) {
+    return 'The Slack app cannot upload files. Add files:write under OAuth & '
+      + 'Permissions and reinstall the app -- a scope added after '
+      + 'installation does nothing until you do.';
+  }
   if (/missing_scope/.test(e)) {
     return 'The Slack app is missing a scope. Add chat:write and im:write under '
       + 'OAuth & Permissions, then reinstall the app -- a scope added after '
@@ -221,6 +295,11 @@ export function slackHint(error) {
   if (/no Slack account/.test(e)) {
     return 'That address has no Slack account. Their Slack email probably '
       + 'differs from the one the calendar knows them by.';
+  }
+  if (/not_in_channel|channel_not_found/.test(e)) {
+    return 'The Slack app is not in that channel, or the channel does not '
+      + 'exist. Invite the app to it (/invite @<the app>) and check '
+      + 'SALES_REPORT_CHANNEL is the channel ID, not its name.';
   }
   if (/ratelimited/.test(e)) return 'Slack is rate limiting us. It should settle on its own.';
   return '';
