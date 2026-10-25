@@ -26,7 +26,7 @@ import { rollPlaces, placeKey, placeLabel, hasPlace,
          FIELDS as PLACE_FIELDS } from '../worker/places.js';
 import { noticeBody, summarise, countUnread, isAutomatic,
          CALENDAR_AUTHOR } from '../worker/notices.js';
-import { aov, netOfFee, hasReport, readyToPost, money, salesMessage,
+import { aov, netOfFee, hasReport, readyToPost, money, salesMessage, deliver,
          RESULTS_SLOT } from '../worker/sales.js';
 import SOCIAL_BACKFILL from '../backfill/social.json' with { type: 'json' };
 import { buildIcs } from '../worker/ics.js';
@@ -1405,6 +1405,66 @@ describe('the @channel message', () => {
   });
 });
 
+// The branch that matters is the one where Slack REFUSES the upload, and
+// it was wrong: the fallback ran when there was no file to send and not
+// when sending it failed. A missing files:write scope meant no message at
+// all -- while the comment beside it said the opposite, which is how it
+// survived being written.
+describe('sending it when the file will not go', () => {
+  const run = async (postFile) => {
+    const posted = [];
+    const out = await deliver({
+      file: {}, text: 'the numbers',
+      postFile: async (f, c) => { posted.push(['file', c]); return postFile(); },
+      postText: async (t) => { posted.push(['text', t]); },
+    });
+    return { out, posted };
+  };
+  const refuse = () => { throw new Error('getUploadURLExternal: missing_scope'); };
+  const fine = () => {};
+
+  it('still posts the numbers', async () => {
+    const { out, posted } = await run(refuse);
+    eq(posted.map((p) => p[0]), ['file', 'text'], 'the numbers never went');
+    eq(out.withFile, false);
+  });
+  // "Posted, without the report" is a different thing to have happened
+  // from "posted", and whoever pressed the button can fix it.
+  it('says why the file did not go, rather than swallowing it', async () => {
+    const { out } = await run(refuse);
+    ok(/missing_scope/.test(out.fileError), out.fileError);
+  });
+  it('posts once, not twice, when the file does go', async () => {
+    const { out, posted } = await run(fine);
+    eq(posted.map((p) => p[0]), ['file']);
+    eq([out.withFile, out.fileError], [true, '']);
+  });
+  it('sends the numbers as the file\u2019s comment, so it is one post', async () => {
+    const { posted } = await run(fine);
+    eq(posted[0][1], 'the numbers');
+  });
+  it('posts the numbers alone when there is no file', async () => {
+    const posted = [];
+    const out = await deliver({
+      file: null, text: 'the numbers',
+      postFile: async () => { posted.push('file'); },
+      postText: async () => { posted.push('text'); },
+    });
+    eq(posted, ['text']);
+    eq([out.withFile, out.fileError], [false, '']);
+  });
+  // Nothing to fall back to. The caller turns this into the error the
+  // person sees.
+  it('throws when even the numbers will not go', async () => {
+    let threw = '';
+    try {
+      await deliver({ file: null, text: 't', postFile: async () => {},
+                      postText: async () => { throw new Error('not_in_channel'); } });
+    } catch (e) { threw = e.message; }
+    eq(threw, 'not_in_channel');
+  });
+});
+
 // Two @channel pings for one event is the kind of mistake people remember.
 // The automatic announcement fires on the write that completes a set of
 // results -- which is no use to an event whose results were typed in before
@@ -1483,10 +1543,11 @@ describe('the announcement is wired so it fires once', () => {
   // The numbers are most of the value.
   it('still posts the numbers when the file will not go', () => {
     const send = body.slice(0, body.indexOf('const announceResults'));
-    ok(/return \{ withFile: true \};/.test(send), 'the file path does not return');
-    ok(/await postToChannel\(env\.SLACK_BOT_TOKEN, env\.SALES_REPORT_CHANNEL, text\);/
-      .test(send.slice(send.indexOf('withFile: true'))),
-       'nothing posts the numbers when there is no file to attach');
+    // The decision itself is deliver(), tested above against a Slack that
+    // refuses. All this has to check is that the Worker uses it rather than
+    // branching on its own again.
+    ok(/return deliver\(\{/.test(send), 'the Worker decides this itself instead of using deliver');
+    ok(/postText: \(t\) => postToChannel/.test(send), 'there is no text fallback wired in');
   });
   it('fires on both of the writes that can complete a set', () => {
     const calls = [...idx.matchAll(/announceResults\(/g)].map((m) => m.index);

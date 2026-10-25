@@ -104,3 +104,35 @@ export function salesMessage({ item, url, mention }) {
   const link = url ? '\n\n<' + url + '|Open it on the Jetty calendar>' : '';
   return head + '\n' + lines.map((l) => '• ' + l).join('\n') + link;
 }
+
+/**
+ * Send it: the file with the numbers as its comment, or just the numbers.
+ *
+ * The sending itself is injected so the decision can be tested without a
+ * Slack. That is not ceremony -- the branch that matters here is the one
+ * where Slack REFUSES the upload, and it was wrong: the code fell back to
+ * a plain post when there was no file to send and not when sending it
+ * failed, so a missing files:write scope meant no message at all. The
+ * comment beside it claimed otherwise, which is how it survived review.
+ *
+ * Returns { withFile, fileError }. A file that would not go is reported
+ * rather than swallowed -- "posted, without the report" is a different
+ * thing to have happened from "posted", and the person who pressed the
+ * button is the one who can fix it.
+ */
+export async function deliver({ file, text, postFile, postText }) {
+  if (file) {
+    try {
+      await postFile(file, text);
+      return { withFile: true, fileError: '' };
+    } catch (e) {
+      // Fall through. The numbers are most of the value, and an attachment
+      // that did not make it beats silence.
+      const fileError = String((e && e.message) || e);
+      await postText(text);
+      return { withFile: false, fileError };
+    }
+  }
+  await postText(text);
+  return { withFile: false, fileError: '' };
+}

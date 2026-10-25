@@ -2583,9 +2583,16 @@
         api('/api/items/' + b.dataset.id + '/announce', { method: 'POST' })
           .then(function (r) {
             if (said) {
-              said.className = 'det-said ok';
-              said.textContent = 'Posted to Slack'
-                + (r.withFile ? ' with the report.' : ' \u2014 without the file.');
+              // Posted-without-the-file is not a success worth a tick: the
+              // report is half of what the channel wanted, and the person
+              // who pressed the button is the one who can fix it.
+              said.className = 'det-said ' + (r.fileError ? 'bad' : 'ok');
+              said.textContent = r.withFile
+                ? 'Posted to Slack with the report.'
+                : r.fileError
+                  ? 'Posted \u2014 but the report did not attach. '
+                    + (r.hint || r.fileError)
+                  : 'Posted to Slack. No report file was attached to this event.';
             }
             b.textContent = 'Post to Slack again';
             b.disabled = false;

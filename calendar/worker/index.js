@@ -25,7 +25,7 @@ import { commentMessage, dmMentions, displayName, eventUrl,
          postToChannel, postFileToChannel } from './slack.js';
 import { rollPlaces, FIELDS as PLACE_FIELDS } from './places.js';
 import { noticeBody, countUnread, CALENDAR_AUTHOR } from './notices.js';
-import { readyToPost, salesMessage, RESULTS_SLOT } from './sales.js';
+import { readyToPost, salesMessage, deliver, RESULTS_SLOT } from './sales.js';
 import SCHEMA from './schema.sql';
 import SOCIAL_BACKFILL from '../backfill/social.json';
 
@@ -1042,24 +1042,22 @@ async function handleApi(request, env, url, who, ctx) {
   const sendResults = async (item, atts) => {
     const text = salesMessage({ item, url: eventUrl(url.origin, item.id) });
     const report = atts.filter((a) => a.slot === RESULTS_SLOT)[0];
+    const obj = report && env.FILES ? await env.FILES.get(report.r2_key) : null;
 
     // The report itself is half of what anybody wants from this, so it goes
     // as a file with the numbers as its comment -- one post, not a message
-    // and then an attachment.
-    if (report && env.FILES) {
-      const obj = await env.FILES.get(report.r2_key);
-      if (obj) {
-        await postFileToChannel(env.SLACK_BOT_TOKEN, env.SALES_REPORT_CHANNEL, {
-          filename: report.name, bytes: await obj.arrayBuffer(),
-          title: (item.title || 'Event') + ' \u2014 sales report', comment: text,
-        });
-        return { withFile: true };
-      }
-    }
-    // No bucket, no object, or an upload that would not go. The numbers are
-    // most of the value and a missing attachment beats silence.
-    await postToChannel(env.SLACK_BOT_TOKEN, env.SALES_REPORT_CHANNEL, text);
-    return { withFile: false };
+    // and then an attachment. deliver() owns what happens when it will not:
+    // the numbers still go.
+    return deliver({
+      text,
+      file: obj ? { report, obj } : null,
+      postFile: async ({ report: r, obj: o }, comment) => postFileToChannel(
+        env.SLACK_BOT_TOKEN, env.SALES_REPORT_CHANNEL, {
+          filename: r.name, bytes: await o.arrayBuffer(),
+          title: (item.title || 'Event') + ' \u2014 sales report', comment,
+        }),
+      postText: (t) => postToChannel(env.SLACK_BOT_TOKEN, env.SALES_REPORT_CHANNEL, t),
+    });
   };
 
   const announceResults = (itemId) => {
@@ -1076,8 +1074,9 @@ async function handleApi(request, env, url, who, ctx) {
       // Somebody else got there first in the moment between the two.
       if (!claim.meta || claim.meta.changes !== 1) return;
 
+      let out;
       try {
-        await sendResults(item, atts);
+        out = await sendResults(item, atts);
       } catch (e) {
         // Unclaim, so fixing the scope or inviting the app to the channel is
         // followed by the next save actually sending it.
@@ -1088,7 +1087,11 @@ async function handleApi(request, env, url, who, ctx) {
         });
         return;
       }
-      await recordSlackResult(db, { sent: 1, errors: [] });
+      // Posted, but the report did not make it. Said on the event rather
+      // than left for somebody to notice the attachment is missing.
+      await recordSlackResult(db, out && out.fileError
+        ? { sent: 1, errors: [{ email: 'the report file', error: out.fileError }] }
+        : { sent: 1, errors: [] });
     })().catch(() => {});
 
     if (ctx && ctx.waitUntil) ctx.waitUntil(run);
@@ -1202,8 +1205,12 @@ async function handleApi(request, env, url, who, ctx) {
       const now = new Date().toISOString();
       await db.prepare('UPDATE items SET results_posted_at = ? WHERE id = ?')
         .bind(now, itemId).run();
-      await recordSlackResult(db, { sent: 1, errors: [] });
+      await recordSlackResult(db, out.fileError
+        ? { sent: 1, errors: [{ email: 'the report file', error: out.fileError }] }
+        : { sent: 1, errors: [] });
       return json({ posted: true, at: now, withFile: out.withFile,
+                    fileError: out.fileError,
+                    hint: out.fileError ? slackHint(out.fileError) : '',
                     again: Boolean(item.results_posted_at) });
     } catch (e) {
       const msg = String((e && e.message) || e);

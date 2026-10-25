@@ -96,7 +96,8 @@ let slackStatus = null;
 
 const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], deleted: [],
                deletedComments: [], commented: null, savedFilters: null, resets: 0,
-               mentionsSeen: 0, announced: [], announceFails: false };
+               mentionsSeen: 0, announced: [], announceFails: false,
+               announceNoFile: false };
 let feedRow = { url: 'https://feed.test/calendar.ics?token=' + 'a'.repeat(64), filters: {} };
 
 const browser = await chromium.launch();
@@ -137,8 +138,12 @@ await page.route('**/*', async (route) => {
       ? route.fulfill({ status: 502, json: {
           error: 'Slack refused it: chat.postMessage: not_in_channel',
           hint: 'Invite the app to the channel.' } })
-      : route.fulfill({ json: { posted: true, at: '2026-10-25T12:00:00.000Z',
-                                withFile: true, again: false } });
+      : seen.announceNoFile
+        ? route.fulfill({ json: { posted: true, at: '2026-10-25T12:00:00.000Z',
+            withFile: false, fileError: 'getUploadURLExternal: missing_scope',
+            hint: 'Add files:write and reinstall the app.', again: false } })
+        : route.fulfill({ json: { posted: true, at: '2026-10-25T12:00:00.000Z',
+            withFile: true, again: false } });
   }
   if (p === '/api/mentions') {
     if (url.searchParams.get('seen') === '1') seen.mentionsSeen++;
@@ -833,6 +838,21 @@ await t('posts it, and says the report went with it', async () => {
 await t('says it would be posting again, next time', async () =>
   (await page.locator('button[data-act="announce"]').textContent()) === 'Post to Slack again');
 await page.locator('button[data-act="close"]').click();
+
+// Posted, but the report did not attach. Not a success worth a tick: the
+// file is half of what the channel wanted.
+seen.announceNoFile = true;
+await page.locator('.chip:has-text("Asbury Halloween")').click();
+await page.waitForSelector('button[data-act="announce"]');
+await page.locator('button[data-act="announce"]').click();
+await t('says the numbers went but the report did not, and why', async () => {
+  await page.waitForSelector('.det-said.bad');
+  const msg = await page.locator('.det-said').textContent();
+  return msg.includes('Posted') && msg.includes('did not attach')
+    && msg.includes('Add files:write and reinstall the app.');
+});
+await page.locator('button[data-act="close"]').click();
+seen.announceNoFile = false;
 
 // Slack's own error strings mean nothing to somebody who has never
 // configured a Slack app; the hint is the useful half.
