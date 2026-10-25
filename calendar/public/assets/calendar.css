@@ -935,3 +935,12 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
 .fy-when{font-family:var(--mono);font-size:10.5px;opacity:.75;white-space:nowrap}
 .fy-who{font-family:var(--mono);font-size:10px;letter-spacing:.05em;opacity:.75;margin-top:3px}
 .fy-body{font-family:var(--body);font-size:13.5px;line-height:1.5;margin-top:5px;opacity:.9}
+
+/* What happened when the sales report was posted. In the modal footer
+   beside the button, because that is where the person is looking. */
+.det-said{
+  font-family:var(--mono);font-size:11px;line-height:1.4;
+  max-width:46ch;text-align:right;margin-right:4px;
+}
+.det-said.ok{color:var(--good,#2F7A5C)}
+.det-said.bad{color:var(--watch,#B4482F)}

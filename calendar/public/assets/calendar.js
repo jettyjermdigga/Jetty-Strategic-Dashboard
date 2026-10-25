@@ -1037,9 +1037,21 @@
           : '')
       + '</div>';
 
+    // Posting the results is offered only where there is something to post.
+    // The automatic announcement fires on the write that completes a set,
+    // which is no use to an event whose results were typed in before any of
+    // this existed -- and no use for trying it out.
+    var canPost = state.me.canEdit && it.orders > 0 && it.net_revenue != null;
+    var postBtn = canPost
+      ? '<button class="cal-btn" data-act="announce" data-id="' + esc(it.id) + '">'
+        + (it.results_posted_at ? 'Post to Slack again' : 'Post sales report') + '</button>'
+      : '';
+
     var foot = state.me.canEdit
       ? '<button class="cal-btn danger" data-act="delete" data-id="' + esc(it.id) + '">Delete</button>'
         + '<div class="grow"></div>'
+        + '<span class="det-said" id="postSaid"></span>'
+        + postBtn
         + '<button class="cal-btn" data-act="close">Close</button>'
         + '<button class="cal-btn primary" data-act="edit" data-id="' + esc(it.id) + '">Edit</button>'
       : '<div class="grow"></div><button class="cal-btn" data-act="close">Close</button>';
@@ -2390,6 +2402,10 @@
           if (!res.ok) {
             var err = new Error(body.error || ('Request failed (' + res.status + ')'));
             err.problems = body.problems;
+            // What to actually go and do about it, when the server knows.
+            // Slack's own error strings mean nothing to somebody who has
+            // never configured a Slack app.
+            err.hint = body.hint;
             throw err;
           }
           return body;
@@ -2559,6 +2575,37 @@
       }
 
       if (act === 'day-add') return showForm(null, b.dataset.day);
+
+      if (act === 'announce') {
+        var said = $('#postSaid');
+        b.disabled = true;
+        if (said) { said.className = 'det-said'; said.textContent = 'Posting\u2026'; }
+        api('/api/items/' + b.dataset.id + '/announce', { method: 'POST' })
+          .then(function (r) {
+            if (said) {
+              said.className = 'det-said ok';
+              said.textContent = 'Posted to Slack'
+                + (r.withFile ? ' with the report.' : ' \u2014 without the file.');
+            }
+            b.textContent = 'Post to Slack again';
+            b.disabled = false;
+            // So the button says the right thing the next time this event
+            // is opened, without a reload.
+            var it = state.items.filter(function (x) { return x.id === b.dataset.id; })[0];
+            if (it) it.results_posted_at = r.at;
+          })
+          .catch(function (err) {
+            if (said) {
+              said.className = 'det-said bad';
+              // The hint is the useful half: "not_in_channel" means nothing
+              // to somebody who has never set a Slack app up.
+              said.textContent = (err.message || 'That did not post.')
+                + (err.hint ? ' ' + err.hint : '');
+            }
+            b.disabled = false;
+          });
+        return;
+      }
 
       if (act === 'edit') {
         var it = state.items.filter(function (x) { return x.id === b.dataset.id; })[0];

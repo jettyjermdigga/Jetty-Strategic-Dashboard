@@ -1391,14 +1391,64 @@ describe('the @channel message', () => {
 });
 
 // Two @channel pings for one event is the kind of mistake people remember.
+// The automatic announcement fires on the write that completes a set of
+// results -- which is no use to an event whose results were typed in before
+// any of this existed, and no use for trying it out.
+describe('posting a sales report on demand', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+  const fn = idx.slice(idx.indexOf('const announceMatch'));
+  const body = fn.slice(0, fn.indexOf('\n  // Files attached to one event'));
+
+  it('is the block this is about', () => {
+    ok(body.length > 400 && /\/announce\$/.test(body), 'the slice missed the endpoint');
+  });
+  it('is editors only, and a POST', () => {
+    ok(/if \(method !== 'POST'\) return json/.test(body), 'a GET would post to Slack');
+    ok(/const denied = requireEditor\(\); if \(denied\) return denied;/.test(body),
+       'anybody who can read the calendar could post to @channel');
+  });
+  // "Cannot post" sends somebody hunting. Naming the missing piece is one
+  // glance at the form.
+  it('says which piece is missing rather than refusing flatly', () => {
+    for (const bit of ['orders', 'net revenue', 'the sales report file']) {
+      ok(body.includes("'" + bit + "'"), 'it does not name ' + bit + ' as missing');
+    }
+    ok(/missing\.join\(', '\)/.test(body), 'it names only the first missing piece');
+  });
+  // Unlike the automatic path. A corrected revenue figure is worth saying
+  // out loud, and refusing would send somebody to the database to clear a
+  // timestamp.
+  it('will post an event that has already been posted', () => {
+    ok(!/readyToPost/.test(body), 'the button is gated on the same stamp as the automatic path');
+    ok(/again: Boolean\(item\.results_posted_at\)/.test(body),
+       'it does not say when it is posting a second time');
+  });
+  it('sends the same message the automatic path does', () => {
+    ok(/await sendResults\(item, atts\)/.test(body),
+       'the button builds its own message, which will drift from the other one');
+  });
+  // Slack's own error strings mean nothing to somebody who has never
+  // configured a Slack app.
+  it('hands back what to actually go and do', () => {
+    ok(/hint: slackHint\(msg\)/.test(body), 'the error is relayed with no hint');
+    const page = fs.readFileSync(root('public/assets/calendar.js'), 'utf8');
+    ok(/err\.hint = body\.hint;/.test(page), 'the page throws the hint away');
+  });
+  it('says plainly when there is no channel to post to', () => {
+    ok(/No Slack channel is set for sales reports/.test(body),
+       'an unconfigured channel fails as something else');
+  });
+});
+
 describe('the announcement is wired so it fires once', () => {
   const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
-  const fn = idx.slice(idx.indexOf('const announceResults'));
+  const fn = idx.slice(idx.indexOf('const sendResults'));
   const body = fn.slice(0, fn.indexOf('\n  const requireEditor'));
 
   it('is the function this block is actually about', () => {
     ok(fn.indexOf('\n  const requireEditor') > 0, 'the slice has no end');
     ok(/const announceResults = \(itemId\) => \{/.test(body), 'announceResults is not here');
+    ok(/const sendResults = async/.test(body), 'sendResults is not here');
   });
   // An upload and a save landing together would each see an incomplete row
   // become complete.
@@ -1406,8 +1456,8 @@ describe('the announcement is wired so it fires once', () => {
     ok(/WHERE id = \? AND results_posted_at IS NULL/.test(body),
        'the stamp is not claimed conditionally, so two writes can both post');
     ok(/claim\.meta\.changes !== 1/.test(body), 'the claim result is not checked');
-    ok(body.indexOf('results_posted_at IS NULL') < body.indexOf('salesMessage'),
-       'the message is built before the event is claimed');
+    ok(body.indexOf('results_posted_at IS NULL') < body.indexOf('await sendResults'),
+       'it sends before it claims, so two writes can both post');
   });
   // A failed post that stays stamped never retries, and fixing the scope
   // would change nothing.
@@ -1417,7 +1467,11 @@ describe('the announcement is wired so it fires once', () => {
   });
   // The numbers are most of the value.
   it('still posts the numbers when the file will not go', () => {
-    ok(/if \(!sent\) await postToChannel/.test(body), 'a missing file means no message at all');
+    const send = body.slice(0, body.indexOf('const announceResults'));
+    ok(/return \{ withFile: true \};/.test(send), 'the file path does not return');
+    ok(/await postToChannel\(env\.SLACK_BOT_TOKEN, env\.SALES_REPORT_CHANNEL, text\);/
+      .test(send.slice(send.indexOf('withFile: true'))),
+       'nothing posts the numbers when there is no file to attach');
   });
   it('fires on both of the writes that can complete a set', () => {
     const calls = [...idx.matchAll(/announceResults\(/g)].map((m) => m.index);

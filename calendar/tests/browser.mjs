@@ -51,6 +51,11 @@ const NEXT_MONTH_LABEL = MONTH_NAMES[nextMonth.getMonth()] + ' ' + nextMonth.get
 const ITEMS = [
   ev({ id: '11111111-1111-4111-8111-111111111111', title: 'Coquina Jam',
        departments: 'box-truck', vehicles: 'box-truck', attachment_count: 1 }),
+  // An event whose results are already in: the button is only offered where
+  // there is something to post, and this is the one that has it.
+  ev({ id: '44444444-4444-4444-8444-444444444444', title: 'Asbury Halloween',
+       orders: 142, net_revenue: 8420.5, event_fee: 250, attachment_count: 1,
+       start_date: dayThis(12), end_date: dayThis(12) }),
   ev({ id: '22222222-2222-4222-8222-222222222222', title: 'LB Spring Sale',
        department: 'long-branch-store', departments: 'marketing', sub_types: 'campaign-promotion',
        status: 'Pending', start_date: dayThis(10), end_date: dayThis(10) }),
@@ -91,7 +96,7 @@ let slackStatus = null;
 
 const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], deleted: [],
                deletedComments: [], commented: null, savedFilters: null, resets: 0,
-               mentionsSeen: 0 };
+               mentionsSeen: 0, announced: [], announceFails: false };
 let feedRow = { url: 'https://feed.test/calendar.ics?token=' + 'a'.repeat(64), filters: {} };
 
 const browser = await chromium.launch();
@@ -99,9 +104,12 @@ const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 page.on('console', (m) => {
-  // The lapsed-sign-in check aborts a request on purpose; the browser logs
-  // that, and it is the point of the test rather than a fault.
-  if (m.type() === 'error' && !/net::ERR_FAILED/.test(m.text())) {
+  // Two checks fail a request on purpose -- the lapsed sign-in aborts one,
+  // and the Slack-refused check answers 502 -- and the browser logs both.
+  // That is the point of those tests rather than a fault.
+  if (m.type() === 'error'
+      && !/net::ERR_FAILED/.test(m.text())
+      && !/502 \(Bad Gateway\)/.test(m.text())) {
     errors.push('console: ' + m.text());
   }
 });
@@ -123,6 +131,15 @@ await page.route('**/*', async (route) => {
   // so picking one and then picking another is a real change.
   // Comments that mention me. One automatic notice from the calendar and
   // one from a person, so both render; the first is new, the second is not.
+  if (/\/announce$/.test(p) && method === 'POST') {
+    seen.announced.push(p.split('/')[3]);
+    return seen.announceFails
+      ? route.fulfill({ status: 502, json: {
+          error: 'Slack refused it: chat.postMessage: not_in_channel',
+          hint: 'Invite the app to the channel.' } })
+      : route.fulfill({ json: { posted: true, at: '2026-10-25T12:00:00.000Z',
+                                withFile: true, again: false } });
+  }
   if (p === '/api/mentions') {
     if (url.searchParams.get('seen') === '1') seen.mentionsSeen++;
     return route.fulfill({ json: {
@@ -788,6 +805,50 @@ await t('reset issues a new link', async () => {
   return seen.resets === 1;
 });
 await page.locator('button[data-act="close"]').click();
+
+console.log('posting a sales report');
+await page.locator('.chip:has-text("Asbury Halloween")').click();
+await page.waitForSelector('.det-title');
+await t('offers the button on an event whose results are in', async () =>
+  (await page.locator('button[data-act="announce"]').textContent()) === 'Post sales report');
+await page.locator('button[data-act="close"]').click();
+// Offering it on an event with nothing to post is an invitation to press a
+// button that can only answer "still needs orders".
+await page.locator('.chip:has-text("LB Spring Sale")').click();
+await page.waitForSelector('.det-title');
+await t('does not offer it on an event with no results yet', async () =>
+  (await page.locator('button[data-act="announce"]').count()) === 0);
+await page.locator('button[data-act="close"]').click();
+await page.locator('.chip:has-text("Asbury Halloween")').click();
+await page.waitForSelector('button[data-act="announce"]');
+
+await t('posts it, and says the report went with it', async () => {
+  await page.locator('button[data-act="announce"]').click();
+  await page.waitForSelector('.det-said.ok');
+  return seen.announced.length === 1
+    && seen.announced[0] === '44444444-4444-4444-8444-444444444444'
+    && (await page.locator('.det-said').textContent()).includes('with the report');
+});
+// So pressing it twice by accident is at least an informed second press.
+await t('says it would be posting again, next time', async () =>
+  (await page.locator('button[data-act="announce"]').textContent()) === 'Post to Slack again');
+await page.locator('button[data-act="close"]').click();
+
+// Slack's own error strings mean nothing to somebody who has never
+// configured a Slack app; the hint is the useful half.
+seen.announceFails = true;
+await page.locator('.chip:has-text("Asbury Halloween")').click();
+await page.waitForSelector('.det-title');
+await page.locator('button[data-act="announce"]').click();
+await t('says what Slack refused, and what to do about it', async () => {
+  await page.waitForSelector('.det-said.bad');
+  const msg = await page.locator('.det-said').textContent();
+  return msg.includes('not_in_channel') && msg.includes('Invite the app to the channel.');
+});
+await t('leaves the button usable so it can be tried again', async () =>
+  await page.locator('button[data-act="announce"]').isEnabled());
+await page.locator('button[data-act="close"]').click();
+seen.announceFails = false;
 
 console.log('for you');
 await t('shows a badge with how many are new', async () => {

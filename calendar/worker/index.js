@@ -1031,6 +1031,37 @@ async function handleApi(request, env, url, who, ctx) {
    * being guarded against here is two @channel pings, which is the kind of
    * mistake people remember.
    */
+  /**
+   * Send it. Shared by the automatic announcement and the button, so the
+   * two cannot post differently formatted versions of the same thing.
+   *
+   * Throws on a Slack failure; the callers differ on what that means. The
+   * automatic one gives back its claim and records the error for the
+   * warning strip; the button says it out loud to whoever pressed it.
+   */
+  const sendResults = async (item, atts) => {
+    const text = salesMessage({ item, url: eventUrl(url.origin, item.id) });
+    const report = atts.filter((a) => a.slot === RESULTS_SLOT)[0];
+
+    // The report itself is half of what anybody wants from this, so it goes
+    // as a file with the numbers as its comment -- one post, not a message
+    // and then an attachment.
+    if (report && env.FILES) {
+      const obj = await env.FILES.get(report.r2_key);
+      if (obj) {
+        await postFileToChannel(env.SLACK_BOT_TOKEN, env.SALES_REPORT_CHANNEL, {
+          filename: report.name, bytes: await obj.arrayBuffer(),
+          title: (item.title || 'Event') + ' \u2014 sales report', comment: text,
+        });
+        return { withFile: true };
+      }
+    }
+    // No bucket, no object, or an upload that would not go. The numbers are
+    // most of the value and a missing attachment beats silence.
+    await postToChannel(env.SLACK_BOT_TOKEN, env.SALES_REPORT_CHANNEL, text);
+    return { withFile: false };
+  };
+
   const announceResults = (itemId) => {
     if (!env.SLACK_BOT_TOKEN || !env.SALES_REPORT_CHANNEL) return;
 
@@ -1045,27 +1076,8 @@ async function handleApi(request, env, url, who, ctx) {
       // Somebody else got there first in the moment between the two.
       if (!claim.meta || claim.meta.changes !== 1) return;
 
-      const text = salesMessage({ item, url: eventUrl(url.origin, itemId) });
-      const report = atts.filter((a) => a.slot === RESULTS_SLOT)[0];
-
       try {
-        let sent = false;
-        // The report itself is half of what anybody wants from this, so it
-        // goes as a file with the numbers as its comment -- one post, not
-        // a message and then an attachment.
-        if (report && env.FILES) {
-          const obj = await env.FILES.get(report.r2_key);
-          if (obj) {
-            await postFileToChannel(env.SLACK_BOT_TOKEN, env.SALES_REPORT_CHANNEL, {
-              filename: report.name, bytes: await obj.arrayBuffer(),
-              title: (item.title || 'Event') + ' \u2014 sales report', comment: text,
-            });
-            sent = true;
-          }
-        }
-        // No bucket, no object, or an upload that would not go. The numbers
-        // are most of the value and a missing attachment beats silence.
-        if (!sent) await postToChannel(env.SLACK_BOT_TOKEN, env.SALES_REPORT_CHANNEL, text);
+        await sendResults(item, atts);
       } catch (e) {
         // Unclaim, so fixing the scope or inviting the app to the channel is
         // followed by the next save actually sending it.
@@ -1147,6 +1159,62 @@ async function handleApi(request, env, url, who, ctx) {
   }
 
   const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+  // Post the sales report now, because somebody asked.
+  //
+  // The automatic announcement fires on the write that completes a set of
+  // results -- which is no use at all to an event whose results were typed
+  // in before any of this existed, and no use for trying the thing out.
+  // So there is a button, and unlike the automatic path it will post an
+  // event that has already been posted: a corrected revenue figure is
+  // worth saying out loud, and refusing would send somebody to the
+  // database to clear a timestamp.
+  const announceMatch = path.match(new RegExp('^/api/items/(' + UUID + ')/announce$', 'i'));
+  if (announceMatch) {
+    if (method !== 'POST') return json({ error: 'Method not allowed.' }, 405);
+    const denied = requireEditor(); if (denied) return denied;
+
+    if (!env.SLACK_BOT_TOKEN) {
+      return json({ error: 'The calendar has no Slack token, so it cannot post.' }, 400);
+    }
+    if (!env.SALES_REPORT_CHANNEL) {
+      return json({ error: 'No Slack channel is set for sales reports. '
+        + 'Set SALES_REPORT_CHANNEL on the calendar Worker.' }, 400);
+    }
+
+    const itemId = announceMatch[1];
+    const item = await db.prepare('SELECT * FROM items WHERE id = ?').bind(itemId).first();
+    if (!item) return json({ error: 'No calendar item with that id.' }, 404);
+    const atts = await listAttachments(db, itemId);
+
+    // Said precisely. "Cannot post" sends somebody hunting; naming the
+    // missing piece is one glance at the form.
+    const missing = [];
+    if (!(Number(item.orders) > 0)) missing.push('orders');
+    if (item.net_revenue == null || item.net_revenue === '') missing.push('net revenue');
+    if (!atts.some((a) => a.slot === RESULTS_SLOT)) missing.push('the sales report file');
+    if (missing.length) {
+      return json({ error: 'Still needs ' + missing.join(', ') + '.' }, 400);
+    }
+
+    try {
+      const out = await sendResults(item, atts);
+      const now = new Date().toISOString();
+      await db.prepare('UPDATE items SET results_posted_at = ? WHERE id = ?')
+        .bind(now, itemId).run();
+      await recordSlackResult(db, { sent: 1, errors: [] });
+      return json({ posted: true, at: now, withFile: out.withFile,
+                    again: Boolean(item.results_posted_at) });
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      await recordSlackResult(db, {
+        sent: 0, errors: [{ email: env.SALES_REPORT_CHANNEL, error: msg }],
+      });
+      // The hint is the useful half: "not_in_channel" means nothing to
+      // somebody who has never configured a Slack app.
+      return json({ error: 'Slack refused it: ' + msg, hint: slackHint(msg) }, 502);
+    }
+  }
 
   // Files attached to one event. Everything here is a no-op until an R2 bucket
   // is bound, rather than a 500 -- the calendar works without attachments and
