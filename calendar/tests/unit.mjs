@@ -1232,6 +1232,21 @@ describe('finding the comments that mention you', () => {
 // against an address nobody has, and it is never seen by anyone. Nothing
 // errors, nothing warns, and the first anybody knows is a media buyer
 // asking why they were not told about a date change.
+// A channel ID, not a #name. A renamed channel keeps its id and loses its
+// name, and the failure mode of getting this wrong is "channel_not_found"
+// at the moment somebody is trying to post a sales report.
+describe('the sales report channel as it ships', () => {
+  const toml = fs.readFileSync(root('wrangler.toml'), 'utf8');
+  const m = toml.match(/^SALES_REPORT_CHANNEL = "([^"]*)"/m);
+
+  it('is set at all', () => ok(m, 'SALES_REPORT_CHANNEL is missing from wrangler.toml'));
+  it('is an id rather than a name', () => {
+    ok(!m[1].startsWith('#'), m[1] + ' is a channel name; a rename would break it');
+    ok(/^[CG][A-Z0-9]{6,20}$/.test(m[1]),
+       m[1] + ' is not a Slack channel id (C… for a channel, G… for a private one)');
+  });
+});
+
 describe('the watcher list as it ships', () => {
   const toml = fs.readFileSync(root('wrangler.toml'), 'utf8');
   const read = (key) => {
