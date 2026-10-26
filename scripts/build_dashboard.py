@@ -4476,6 +4476,8 @@ FACT_KEYS = [
     'rev_lines', 'cogs_lines', 'opex_lines', 'opex_categories',
     'cf', 'cf_ann_plan', 'cf_forecast',
     'inv_latest_wk', 'inv_prev_wk', 'on_order', 'on_order_cats',
+    'cog_2026', 'units_2026', 'yoy_cog_2025', 'yoy_units_2025',
+    'st_s26', 'st_f26',
     'bp_latest', 'bp_ytd', 'bp_year_start', 'bp_flags', 'bp_gap_watch',
     'ar_latest', 'ap_cns', 'ap_key_vendors_open',
     'labor_total', 'labor_brand', 'labor_ink', 'payroll_latest',
