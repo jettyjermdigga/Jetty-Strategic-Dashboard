@@ -515,7 +515,7 @@ await t('derives the retail week on screen', async () =>
 await page.locator('button[data-act="next"]').click();
 await page.locator('button[data-act="next"]').click();
 await t('asks every event what it needs', async () =>
-  (await page.locator('.f-need').count()) === 3);
+  (await page.locator('.f-need').count()) === TAXONOMY.needs.length);
 await t('asks how many only once extra staff is ticked', async () => {
   const before = await page.locator('#staffRow').isVisible();
   await page.locator('.f-need[value="extra-staff"]').check();

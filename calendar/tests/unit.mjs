@@ -24,6 +24,8 @@ import { commentMessage, displayName, dmMentions, escapeSlack, eventUrl, eventWh
          WATCHED_FIELDS } from '../worker/slack.js';
 import { rollPlaces, placeKey, placeLabel, hasPlace,
          FIELDS as PLACE_FIELDS } from '../worker/places.js';
+import { listingAction, listingMessage, needed, LISTING_FIELDS,
+         WEBSITE_NEED } from '../worker/listing.js';
 import { noticeBody, summarise, countUnread, isAutomatic,
          CALENDAR_AUTHOR } from '../worker/notices.js';
 import { aov, netOfFee, hasReport, readyToPost, money, salesMessage, deliver,
@@ -35,6 +37,7 @@ import {
   DEPARTMENTS, DEPARTMENT_KEYS, DIVISIONS, EVENT_TYPE_KEYS, SUB_TYPES, NEEDS, VEHICLES,
   STATUSES, PRIMACY, RETAIL_EPOCH, SOCIAL_TYPES, CHANNELS, PILLARS, PRODUCTION,
   SUB_TYPE_KEYS, SOCIAL_TYPE_KEYS, CHANNEL_KEYS, PILLAR_KEYS, PRODUCTION_KEYS, PAID_ADVO,
+  WEBSITE_LISTING,
 } from '../worker/taxonomy.js';
 
 let failed = 0;
@@ -1570,6 +1573,175 @@ describe('the announcement is wired so it fires once', () => {
     const added = idx.slice(idx.indexOf('const ADDED_COLUMNS'));
     ok(/'results_posted_at TEXT'/.test(added.slice(0, added.indexOf('];'))),
        'the column reaches schema.sql but never the live database');
+  });
+});
+
+// ── Add to Website Events page ──────────────────────────────────────────
+//
+// A tick box in the needs grid rather than a message somebody remembers to
+// send. Ticking it posts in the website channel; it posts again if what
+// goes ON the page moves, and once more if the tick comes off.
+
+describe('the website listing need', () => {
+  it('is a need the form actually offers', () => {
+    ok(NEEDS.some((n) => n.key === WEBSITE_NEED),
+       WEBSITE_NEED + ' is not in the needs list, so nothing can ever tick it');
+    eq(WEBSITE_LISTING, WEBSITE_NEED, 'the taxonomy and the watch disagree on the key');
+  });
+  it('reads the tick off a comma-separated needs column', () => {
+    eq(needed({ needs: 'extra-staff,website-listing' }), true);
+    eq(needed({ needs: 'website-listing' }), true);
+    eq(needed({ needs: 'extra-staff,sound' }), false);
+    eq(needed({ needs: '' }), false);
+    eq(needed(null), false);
+  });
+  // 'website-listing-extra' must not match 'website-listing'.
+  it('is not fooled by a key that merely starts the same', () => {
+    eq(needed({ needs: 'website-listing-draft' }), false);
+  });
+});
+
+describe('what the website channel is told, and when', () => {
+  const on = { title: 'Sample Sale', start_date: '2026-11-07', end_date: '2026-11-08',
+               all_day: 1, status: 'Booked', venue: 'Jetty Flagship', city: 'Manahawkin',
+               state: 'NJ', needs: 'extra-staff,website-listing' };
+  const off = { ...on, needs: 'extra-staff' };
+
+  it('asks for it when the box is ticked', () => {
+    eq(listingAction(off, on).action, 'add');
+  });
+  it('asks for it when an event arrives with the box already on', () => {
+    eq(listingAction(null, on).action, 'add');
+  });
+  // Opening an event and pressing save is not news.
+  it('says nothing when nothing changed', () => {
+    eq(listingAction(on, { ...on }).action, '');
+  });
+  // A ping that fires on every edit is one somebody filters within a
+  // fortnight.
+  it('says nothing when the edit does not touch the page', () => {
+    eq(listingAction(on, { ...on, notes: 'new note' }).action, '');
+    eq(listingAction(on, { ...on, department: 'marketing' }).action, '');
+    eq(listingAction(on, { ...on, sub_types: 'collab' }).action, '');
+  });
+  it('speaks up when something on the page moves', () => {
+    eq(listingAction(on, { ...on, start_date: '2026-11-14' }),
+       { action: 'update', changed: ['start date'] });
+    eq(listingAction(on, { ...on, status: 'Cancelled' }),
+       { action: 'update', changed: ['status'] });
+    eq(listingAction(on, { ...on, venue: 'Long Branch', city: 'Long Branch' }),
+       { action: 'update', changed: ['venue', 'city'] });
+  });
+  // A listing for an event that is not happening is worse than one that was
+  // never added, and the page does not know on its own.
+  it('asks for it to come off when the tick does', () => {
+    eq(listingAction(on, off).action, 'remove');
+  });
+  it('asks for it to come off when the event is deleted', () => {
+    eq(listingAction(on, null).action, 'remove');
+  });
+  it('says nothing about an event that never had the tick', () => {
+    eq(listingAction(off, off).action, '');
+    eq(listingAction(off, { ...off, start_date: '2027-01-01' }).action, '');
+    eq(listingAction(null, off).action, '');
+    eq(listingAction(off, null).action, '');
+  });
+  it('is not fooled by a number that came back as a string', () => {
+    eq(listingAction(on, { ...on, all_day: '1' }).action, '');
+  });
+  it('watches only what the page actually shows', () => {
+    const cols = LISTING_FIELDS.map(([c]) => c);
+    for (const c of ['start_date', 'status', 'venue', 'title', 'url']) {
+      ok(cols.includes(c), c + ' goes on the page but is not watched');
+    }
+    for (const c of ['notes', 'needs', 'department', 'sub_types', 'updated_at']) {
+      ok(!cols.includes(c), c + ' is watched but never reaches the page');
+    }
+  });
+});
+
+describe('the website channel message', () => {
+  const item = { title: 'Sample Sale', start_date: '2026-11-07', end_date: '2026-11-08',
+                 all_day: 1, status: 'Booked', venue: 'Jetty Flagship',
+                 city: 'Manahawkin', state: 'NJ', url: 'https://jettylife.com/sale' };
+  const m = (over) => listingMessage({ actorName: 'Jeremy', item, action: 'add',
+                                       mentionId: 'U123', url: 'https://cal/?e=1', ...over });
+
+  it('says what to do, and to which event', () => {
+    const out = m();
+    ok(out.includes('please add to the *Website Events page*: *Sample Sale*'), out);
+    ok(out.includes('When: 2026-11-07 – 2026-11-08'), out);
+    ok(out.includes('Where: Jetty Flagship · Manahawkin, NJ'), out);
+    ok(out.includes('Link: https://jettylife.com/sale'), out);
+  });
+  // Escaping the mention would leave the literal text in the channel and
+  // nobody would be told at all.
+  it('addresses her as a mention that notifies', () => {
+    ok(m().startsWith('<@U123> '), m());
+  });
+  it('still posts to the channel with nobody to address', () => {
+    const out = m({ mentionId: '' });
+    ok(!out.includes('<@'), out);
+    ok(out.includes('please add to the *Website Events page*'), out);
+  });
+  it('still escapes what came off the event', () => {
+    const out = listingMessage({ item: { ...item, title: 'Beer & <Sauce>' },
+                                 action: 'add', mentionId: 'U1' });
+    ok(out.includes('Beer &amp; &lt;Sauce&gt;'), out);
+    ok(out.startsWith('<@U1> '), out);
+  });
+  it('says something different for a change and for a removal', () => {
+    ok(m({ action: 'update', changed: ['start date'] })
+      .includes('it has changed'), 'an update reads like a new request');
+    ok(m({ action: 'update', changed: ['start date'] })
+      .includes('Changed: start date'), 'an update does not say what moved');
+    ok(m({ action: 'remove' }).includes('take this *off*'), 'a removal reads like a request');
+  });
+  it('offers no link on a removal, because there is nothing to open', () => {
+    ok(!m({ action: 'remove' }).includes('https://cal'), m({ action: 'remove' }));
+  });
+});
+
+describe('the website watch is wired the way it is meant to be', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+  const fn = idx.slice(idx.indexOf('const tellWebsite'));
+  const body = fn.slice(0, fn.indexOf('\n  // Comments that mention you'));
+
+  it('is the block this is about', () => {
+    ok(fn.indexOf('\n  // Comments that mention you') > 0, 'the slice has no end');
+    ok(/const tellWebsite = \(before, after\) => \{/.test(body), 'tellWebsite is not here');
+  });
+  it('fires on all three writes', () => {
+    const calls = [...idx.matchAll(/tellWebsite\(/g)].map((x) => x.index);
+    eq(calls.length, 3, 'called somewhere other than create, edit and delete');
+    const create = idx.indexOf("if (path === '/api/items' && method === 'POST')");
+    const del = idx.indexOf("if (method === 'DELETE')");
+    const edit = idx.indexOf("if (method === 'PATCH' || method === 'PUT')");
+    ok(create > 0 && del > create && edit > del, 'the write paths moved');
+    ok(calls.some((c) => c > create && c < del), 'nothing tells the channel about a new event');
+    ok(calls.some((c) => c > del && c < edit), 'nothing tells the channel about a deletion');
+    ok(calls.some((c) => c > edit), 'nothing tells the channel about an edit');
+  });
+  it('decides with listingAction rather than working it out again', () => {
+    ok(/listingAction\(before, after\)/.test(body),
+       'the Worker re-implements the decision, which will drift from the tests');
+  });
+  it('is off until a channel is named', () => {
+    ok(/if \(!env\.SLACK_BOT_TOKEN \|\| !env\.WEBSITE_CHANNEL\) return;/.test(body),
+       'it would try to post with no channel');
+  });
+  // A website listing is work somebody else can pick up if she is away.
+  it('posts in a channel rather than DMing', () => {
+    ok(/postToChannel\(env\.SLACK_BOT_TOKEN, env\.WEBSITE_CHANNEL/.test(body),
+       'it is not posting to the channel');
+    ok(!/dmMentions/.test(body), 'it DMs, so nobody else can pick the work up');
+  });
+  it('still posts when there is nobody to address', () => {
+    ok(/let mentionId = '';/.test(body) && /if \(want\) \{/.test(body),
+       'an unset WEBSITE_WATCHER would stop the post rather than drop the ping');
+  });
+  it('never makes the save wait on Slack', () => {
+    ok(/ctx\.waitUntil\(run\)/.test(body), 'the post is not deferred');
   });
 });
 

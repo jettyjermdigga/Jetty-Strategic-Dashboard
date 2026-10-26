@@ -26,6 +26,7 @@ import { commentMessage, dmMentions, displayName, eventUrl,
 import { rollPlaces, FIELDS as PLACE_FIELDS } from './places.js';
 import { noticeBody, countUnread, CALENDAR_AUTHOR } from './notices.js';
 import { readyToPost, salesMessage, deliver, RESULTS_SLOT } from './sales.js';
+import { listingAction, listingMessage, WEBSITE_NEED } from './listing.js';
 import SCHEMA from './schema.sql';
 import SOCIAL_BACKFILL from '../backfill/social.json';
 
@@ -971,6 +972,59 @@ async function handleApi(request, env, url, who, ctx) {
     }
   };
 
+  /**
+   * Tell the website channel that an event needs listing, or has changed,
+   * or has come off.
+   *
+   * A channel post addressed to one person rather than a DM: a website
+   * listing is work somebody else can pick up if she is away, and a DM is
+   * invisible to everyone who could.
+   *
+   * Never blocks and never fails the save, the same as the Paid Advo watch
+   * -- the event is stored by the time this runs.
+   */
+  const tellWebsite = (before, after) => {
+    if (!env.SLACK_BOT_TOKEN || !env.WEBSITE_CHANNEL) return;
+
+    const { action, changed } = listingAction(before, after);
+    if (!action) return;
+
+    const item = after || before;
+    const run = (async () => {
+      // Her Slack id, so the post is a mention that actually notifies
+      // rather than her name as text. Optional: with nobody configured the
+      // post still goes to the channel, which is most of the point.
+      const want = String(env.WEBSITE_WATCHER || '').trim().toLowerCase();
+      let mentionId = '';
+      if (want) {
+        let roster = await listPeople(db);
+        let found = roster.find((p) => p.email === want);
+        if (!found || !found.slack_id) {
+          try {
+            await refreshRoster(env, db);
+            roster = await listPeople(db);
+            found = roster.find((p) => p.email === want);
+          } catch (e) { /* a stale roster still reaches the channel */ }
+        }
+        mentionId = (found && found.slack_id) || '';
+      }
+
+      const me = (await listPeople(db).catch(() => []))
+        .find((p) => p.email === String(who.email).toLowerCase());
+
+      await postToChannel(env.SLACK_BOT_TOKEN, env.WEBSITE_CHANNEL, listingMessage({
+        actorName: displayName(who.email, me && me.name),
+        item, action, changed, mentionId,
+        url: eventUrl(url.origin, item && item.id),
+      }));
+      await recordSlackResult(db, { sent: 1, errors: [] });
+    })().catch((e) => recordSlackResult(db, {
+      sent: 0, errors: [{ email: env.WEBSITE_CHANNEL, error: String((e && e.message) || e) }],
+    }).catch(() => {}));
+
+    if (ctx && ctx.waitUntil) ctx.waitUntil(run);
+  };
+
   // Comments that mention you, newest first, and how many are new since you
   // last looked. The only way to find out somebody wants you on an event --
   // before this, a mention was a thing you had to already be looking at the
@@ -1017,21 +1071,6 @@ async function handleApi(request, env, url, who, ctx) {
   }
 
   /**
-   * Announce an event's results in Slack, once, when there is something to
-   * announce.
-   *
-   * The trigger is deliberately not "somebody saved". Results arrive in two
-   * pieces -- the figures and the export from the till -- in whichever
-   * order the person works, so this runs after BOTH of the writes that can
-   * complete the set and goes out on whichever one does.
-   *
-   * The stamp is claimed with a conditional update before anything is sent.
-   * An upload and a save landing at the same moment would otherwise each
-   * see an incomplete row become complete and both post -- and the failure
-   * being guarded against here is two @channel pings, which is the kind of
-   * mistake people remember.
-   */
-  /**
    * Send it. Shared by the automatic announcement and the button, so the
    * two cannot post differently formatted versions of the same thing.
    *
@@ -1060,6 +1099,21 @@ async function handleApi(request, env, url, who, ctx) {
     });
   };
 
+  /**
+   * Announce an event's results in Slack, once, when there is something to
+   * announce.
+   *
+   * The trigger is deliberately not "somebody saved". Results arrive in two
+   * pieces -- the figures and the export from the till -- in whichever
+   * order the person works, so this runs after BOTH of the writes that can
+   * complete the set and goes out on whichever one does.
+   *
+   * The stamp is claimed with a conditional update before anything is sent.
+   * An upload and a save landing at the same moment would otherwise each
+   * see an incomplete row become complete and both post -- and the failure
+   * being guarded against here is two @channel pings, which is the kind of
+   * mistake people remember.
+   */
   const announceResults = (itemId) => {
     if (!env.SLACK_BOT_TOKEN || !env.SALES_REPORT_CHANNEL) return;
 
@@ -1119,6 +1173,7 @@ async function handleApi(request, env, url, who, ctx) {
     ).bind(id, ...COLS.map((c) => row[c]), who.email, now, who.email, now).run();
 
     tellWatchers('created', null, { id, ...row });
+    tellWebsite(null, { id, ...row });
     return json({ item: withRetail({ id, ...row, created_by: who.email, created_at: now }) }, 201);
   }
 
@@ -1422,6 +1477,9 @@ async function handleApi(request, env, url, who, ctx) {
       // A paid placement that is cancelled is the change most worth hearing
       // about, and the one a watcher would otherwise never learn of.
       tellWatchers('deleted', existing, null);
+      // A listing for an event that is not happening is worse than one that
+      // was never added, and the page does not know on its own.
+      tellWebsite(existing, null);
       return json({ deleted: id });
     }
 
@@ -1436,6 +1494,7 @@ async function handleApi(request, env, url, who, ctx) {
         + ', updated_by = ?, updated_at = ? WHERE id = ?',
       ).bind(...COLS.map((c) => row[c]), who.email, now, id).run();
       tellWatchers('changed', existing, { id, ...row });
+      tellWebsite(existing, { id, ...row });
       // The other one.
       announceResults(id);
       return json({ item: withRetail({ id, ...row, updated_by: who.email, updated_at: now }) });

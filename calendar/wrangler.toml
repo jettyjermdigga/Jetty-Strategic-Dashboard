@@ -114,3 +114,22 @@ PAID_ADVO_WATCHERS = "taylor.heussner@sunnysidecalifornia.com"
 #
 # Empty turns the announcement off entirely.
 SALES_REPORT_CHANNEL = "CHDDD4GTE"
+
+# Where "Add to Website Events page" posts, and who it addresses.
+#
+# Ticking that need on an event posts in this channel. It posts again if
+# something that goes ON the page later moves -- the date, the time, the
+# venue, the status, the link -- and once more if the tick comes off or the
+# event is deleted, because the page does not know that on its own.
+#
+# A channel rather than a DM: a website listing is work somebody else can
+# pick up if she is away, and a DM is invisible to everyone who could.
+#
+# WEBSITE_CHANNEL is a channel ID (C0123ABCD), not a #name. The app has to
+# be a member of it -- /invite it, the same as the sales report channel.
+#
+# WEBSITE_WATCHER is the address on her SLACK profile, used only to turn
+# the post into a mention that notifies her. Leave it empty and the post
+# still goes to the channel, just without the ping.
+WEBSITE_CHANNEL = ""
+WEBSITE_WATCHER = ""

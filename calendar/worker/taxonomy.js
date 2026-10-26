@@ -171,6 +171,10 @@ export const NEEDS = [
     detail: { key: 'staff_count', label: 'How many?', placeholder: 'e.g. 3' } },
   { key: 'social-permit', label: 'Social Permit' },
   { key: 'sound',         label: 'Sound' },
+  // Ticking this posts in the website channel. The key is exported below
+  // and read by the Worker, so renaming the LABEL is free and changing the
+  // KEY is not -- which is the right way round.
+  { key: 'website-listing', label: 'Add to Website Events page' },
 ];
 
 // Unscoped: whose event it is has no bearing on what has to be driven there.
@@ -238,3 +242,6 @@ export const TAXONOMY = {
 
 // The sub-type SunnySide is pinged about. See PAID_ADVO_WATCHERS.
 export const PAID_ADVO = 'paid-advo';
+
+// The need that asks for an event to go on the website. See listing.js.
+export const WEBSITE_LISTING = 'website-listing';
