@@ -131,5 +131,5 @@ SALES_REPORT_CHANNEL = "CHDDD4GTE"
 # WEBSITE_WATCHER is the address on her SLACK profile, used only to turn
 # the post into a mention that notifies her. Leave it empty and the post
 # still goes to the channel, just without the ping.
-WEBSITE_CHANNEL = ""
-WEBSITE_WATCHER = ""
+WEBSITE_CHANNEL = "C4V064MQA"
+WEBSITE_WATCHER = "k.hehl@jettylife.com"

@@ -1238,15 +1238,28 @@ describe('finding the comments that mention you', () => {
 // A channel ID, not a #name. A renamed channel keeps its id and loses its
 // name, and the failure mode of getting this wrong is "channel_not_found"
 // at the moment somebody is trying to post a sales report.
-describe('the sales report channel as it ships', () => {
+describe('the Slack channels as they ship', () => {
   const toml = fs.readFileSync(root('wrangler.toml'), 'utf8');
-  const m = toml.match(/^SALES_REPORT_CHANNEL = "([^"]*)"/m);
+  const read = (key) => {
+    const m = toml.match(new RegExp('^' + key + ' = "([^"]*)"', 'm'));
+    return m ? m[1] : null;
+  };
 
-  it('is set at all', () => ok(m, 'SALES_REPORT_CHANNEL is missing from wrangler.toml'));
-  it('is an id rather than a name', () => {
-    ok(!m[1].startsWith('#'), m[1] + ' is a channel name; a rename would break it');
-    ok(/^[CG][A-Z0-9]{6,20}$/.test(m[1]),
-       m[1] + ' is not a Slack channel id (C… for a channel, G… for a private one)');
+  for (const key of ['SALES_REPORT_CHANNEL', 'WEBSITE_CHANNEL']) {
+    it(key + ' is set at all', () => ok(read(key), key + ' is missing from wrangler.toml'));
+    it(key + ' is an id rather than a name', () => {
+      const v = read(key);
+      ok(!v.startsWith('#'), v + ' is a channel name; a rename would break it');
+      ok(/^[CG][A-Z0-9]{6,20}$/.test(v),
+         v + ' is not a Slack channel id (C… for a channel, G… for a private one)');
+    });
+  }
+  // Posting a sales report into the website channel, or the other way
+  // round, is the kind of mistake a copy-paste makes and nobody notices
+  // until it has happened in front of everybody.
+  it('does not point two different things at the same channel', () => {
+    ok(read('SALES_REPORT_CHANNEL') !== read('WEBSITE_CHANNEL'),
+       'both channels are ' + read('WEBSITE_CHANNEL'));
   });
 });
 
@@ -1283,6 +1296,15 @@ describe('the watcher list as it ships', () => {
   });
   // Nothing but the Paid Advo watch can reach them. They are not in the
   // Slack roster, so they cannot be picked in the mention box either.
+  it('names the person the website channel addresses', () => {
+    const m = toml.match(/^WEBSITE_WATCHER = "([^"]*)"/m);
+    ok(m, 'WEBSITE_WATCHER is missing from wrangler.toml');
+    // Deliberately no Access-domain check here, unlike the Paid Advo list:
+    // this address is only ever looked up against Slack, to turn the post
+    // into a mention. It never has to open anything.
+    ok(/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(m[1]), m[1] + ' is not an email address');
+    eq(m[1], m[1].toLowerCase(), m[1] + ' is not lowercased, and the match is exact');
+  });
   it('is only ever used by the Paid Advo watch', () => {
     const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
     eq((idx.match(/PAID_ADVO_WATCHERS/g) || []).length, 1);
