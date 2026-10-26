@@ -27,6 +27,11 @@ import { rollPlaces, FIELDS as PLACE_FIELDS } from './places.js';
 import { noticeBody, countUnread, CALENDAR_AUTHOR } from './notices.js';
 import { readyToPost, salesMessage, deliver, RESULTS_SLOT } from './sales.js';
 import { listingAction, listingMessage, WEBSITE_NEED } from './listing.js';
+import {
+  ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, cleanKey as boxyKey,
+  pickable, leaderboard, standings, csv as boxyCsv,
+  STAFF as BOXY_STAFF, ROSTER_AS_OF as BOXY_AS_OF,
+} from './boxy.js';
 import SCHEMA from './schema.sql';
 import SOCIAL_BACKFILL from '../backfill/social.json';
 
@@ -1217,6 +1222,138 @@ async function handleApi(request, env, url, who, ctx) {
   }
 
   const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+  // ── Boxy Bucks ────────────────────────────────────────────────────────
+
+  // Who may open the leaderboard and move a balance. Its own list, not the
+  // editor list: running an event and running the rewards are different
+  // jobs, and this one decides what people get. Falls back to the editors
+  // rather than to nobody, so an empty value cannot lock everybody out.
+  const boxyAdmins = () => {
+    const own = String(env.BOXY_ADMINS || '')
+      .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+    return own.length ? own : String(env.CALENDAR_EDITORS || '')
+      .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  };
+  const isBoxyAdmin = () => Boolean(who.email) && who.verified
+    && boxyAdmins().includes(String(who.email).toLowerCase());
+
+  const boxyPoints = () => pointsFromConfig(env.BOXY_POINTS);
+
+  const readAttendance = async (itemId) => {
+    const res = await db.prepare(
+      'SELECT person_key, role, points, note, added_by, added_at '
+      + 'FROM attendance WHERE item_id = ?').bind(itemId).all();
+    return (res.results || []).map((r) => ({
+      person: r.person_key, role: r.role, points: r.points, note: r.note || '',
+      by: r.added_by, at: r.added_at,
+      // The name travels with the row so the page never has to hold the
+      // whole roster just to draw six names.
+      name: (BOXY_STAFF.find((p) => p.k === r.person_key) || {}).n || r.person_key,
+    }));
+  };
+
+  // Who was at one event. Readable by anybody signed in -- it is a list of
+  // colleagues, and the event page is where it belongs. Writing is editors,
+  // the same as everything else about an event.
+  const attMatchBoxy = path.match(new RegExp('^/api/items/(' + UUID + ')/attendance$', 'i'));
+  if (attMatchBoxy) {
+    const itemId = attMatchBoxy[1];
+
+    if (method === 'GET') {
+      return json({
+        attendance: await readAttendance(itemId),
+        staff: pickable(), roles: ROLES, points: boxyPoints(),
+      });
+    }
+
+    if (method === 'POST') {
+      const denied = requireEditor(); if (denied) return denied;
+      const body = await request.json().catch(() => null);
+      if (!body) return json({ error: 'Expected a JSON body.' }, 400);
+
+      const item = await db.prepare('SELECT id FROM items WHERE id = ?').bind(itemId).first();
+      if (!item) return json({ error: 'No calendar item with that id.' }, 404);
+
+      const out = cleanEntry(body, boxyPoints());
+      if (out.errors) return json({ errors: out.errors }, 400);
+      const r = out.row;
+      // One row per person per event: adding somebody twice corrects the
+      // first entry rather than paying them twice.
+      await db.prepare(
+        'INSERT INTO attendance (item_id, person_key, role, points, note, added_by, added_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?, ?) '
+        + 'ON CONFLICT(item_id, person_key) DO UPDATE SET role = excluded.role, '
+        + 'points = excluded.points, note = excluded.note, '
+        + 'added_by = excluded.added_by, added_at = excluded.added_at')
+        .bind(itemId, r.person, r.role, r.points, r.note,
+              who.email, new Date().toISOString()).run();
+      return json({ ok: true, attendance: await readAttendance(itemId) });
+    }
+
+    if (method === 'DELETE') {
+      const denied = requireEditor(); if (denied) return denied;
+      const key = boxyKey(url.searchParams.get('person'));
+      if (!key) return json({ error: 'Which person?' }, 400);
+      await db.prepare('DELETE FROM attendance WHERE item_id = ? AND person_key = ?')
+        .bind(itemId, key).run();
+      return json({ ok: true, attendance: await readAttendance(itemId) });
+    }
+    return json({ error: 'Method not allowed.' }, 405);
+  }
+
+  // The leaderboard. Not linked from anywhere on the calendar.
+  if (path === '/api/boxy' && method === 'GET') {
+    if (!isBoxyAdmin()) {
+      // 404 rather than 403: somebody not on the list has no business
+      // learning the page is here.
+      return json({ error: 'Unknown endpoint.' }, 404);
+    }
+    const earned = (await db.prepare(
+      'SELECT person_key AS person, role, points FROM attendance').all()).results || [];
+    const moved = (await db.prepare(
+      'SELECT person_key AS person, points FROM boxy_ledger').all()).results || [];
+    const board = leaderboard(earned, moved);
+
+    if (url.searchParams.get('format') === 'csv') {
+      return new Response(boxyCsv(board), {
+        headers: {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': 'attachment; filename="boxy-bucks.csv"',
+          'cache-control': 'no-store',
+        },
+      });
+    }
+    return json({
+      board, standings: standings(board), roles: ROLES,
+      points: boxyPoints(), rosterAsOf: BOXY_AS_OF, you: who.email,
+    });
+  }
+
+  // Spending, and corrections. Never an edit: a mistake is fixed with
+  // another row, so the history of a balance stays readable.
+  if (path === '/api/boxy/ledger' && method === 'POST') {
+    if (!isBoxyAdmin()) return json({ error: 'Unknown endpoint.' }, 404);
+    const body = await request.json().catch(() => null);
+    if (!body) return json({ error: 'Expected a JSON body.' }, 400);
+
+    const out = cleanLedger(body);
+    if (out.errors) return json({ errors: out.errors }, 400);
+    const r = out.row;
+    await db.prepare(
+      'INSERT INTO boxy_ledger (id, person_key, kind, points, note, added_by, added_at) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(crypto.randomUUID(), r.person, r.kind, r.points, r.note,
+            who.email, new Date().toISOString()).run();
+
+    const earned = (await db.prepare(
+      'SELECT person_key AS person, role, points FROM attendance').all()).results || [];
+    const moved = (await db.prepare(
+      'SELECT person_key AS person, points FROM boxy_ledger').all()).results || [];
+    const board = leaderboard(earned, moved);
+    return json({ ok: true, board, standings: standings(board) });
+  }
+
 
   // Post the sales report now, because somebody asked.
   //

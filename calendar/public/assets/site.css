@@ -17,6 +17,12 @@
   color:rgba(255,255,255,.76);white-space:nowrap;
 }
 
+/* A link in the header bar. There was no rule for this, so it took the
+   browser's default link colour on a dark surface -- 1.24:1, which is not
+   text anybody can read. */
+.site-who .back{color:#fff;text-decoration:none;border-bottom:1px solid rgba(255,255,255,.45)}
+.site-who .back:hover{border-bottom-color:#fff}
+
 .site-main{max-width:1400px;margin:0 auto;padding:32px}
 
 .site-note{

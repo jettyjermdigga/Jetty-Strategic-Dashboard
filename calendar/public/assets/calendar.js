@@ -33,6 +33,11 @@
     slack: { configured: false, status: null },
     places: [],
     mentions: { unread: 0, seenAt: '', list: [] },
+    // Who was at the event currently open, and the two handles the
+    // once-attached click handler needs to reach back into it.
+    who: { rows: [], staff: [], roles: [], points: {} },
+    openId: '',
+    paintWho: null,
   };
 
   // ── remembered preferences ─────────────────────────────────────────────
@@ -1021,6 +1026,13 @@
       // Anyone who can open the calendar can post: a comment changes no event
       // data, and a calendar only seven people may ask a question on is a
       // noticeboard rather than a conversation.
+      // Who was there. Above the comments because it is a fact about the
+      // event rather than a conversation about it.
+      + '<div class="who-wrap" id="whoWrap">'
+      + '<h4 class="cmt-h">Who was there</h4>'
+      + '<div id="whoList"><span class="muted">Loading\u2026</span></div>'
+      + (state.me.canEdit ? '<div class="who-add" id="whoAdd"></div>' : '')
+      + '</div>'
       + '<div class="cmt-wrap">'
       + '<h4 class="cmt-h">Comments</h4>'
       + '<div class="cmt-list" id="cmtList"><span class="muted">Loading\u2026</span></div>'
@@ -1057,6 +1069,89 @@
       : '<div class="grow"></div><button class="cal-btn" data-act="close">Close</button>';
 
     openModal('Event', body, foot);
+
+    // ── who was there ────────────────────────────────────────────────────
+
+    state.who = { rows: [], staff: [], roles: [], points: {} };
+
+    function whoHtml() {
+      var a = state.who;
+      if (!a.rows.length) {
+        return '<p class="hint">Nobody recorded yet.</p>';
+      }
+      var label = function (k) {
+        var r = a.roles.filter(function (x) { return x.key === k; })[0];
+        return r ? r.label : k;
+      };
+      return '<div class="who-rows">' + a.rows.map(function (r) {
+        return '<div class="who-row">'
+          + '<span class="who-n">' + esc(r.name) + '</span>'
+          + '<span class="who-r">' + esc(label(r.role)) + '</span>'
+          + '<span class="who-p">' + esc(r.points) + '</span>'
+          + (state.me.canEdit
+              ? '<button type="button" class="who-x" data-person="' + esc(r.person)
+                + '" aria-label="Take ' + esc(r.name) + ' off this event">\u00d7</button>'
+              : '<span></span>')
+          + '</div>';
+      }).join('') + '</div>';
+    }
+
+    function whoAddHtml() {
+      var a = state.who;
+      if (!a.staff.length) return '';
+      // Only people not already on the event, so adding somebody twice is
+      // not something the form invites.
+      var on = {};
+      a.rows.forEach(function (r) { on[r.person] = true; });
+      var left = a.staff.filter(function (p) { return !on[p.k]; });
+      if (!left.length) return '<p class="hint">Everybody on staff is on this event.</p>';
+      return '<select id="whoPick" aria-label="Who">'
+        + '<option value="">Add somebody\u2026</option>'
+        + left.map(function (p) {
+            return '<option value="' + esc(p.k) + '">' + esc(p.n)
+              + (p.d && p.d !== 'Unassigned' ? ' \u2014 ' + esc(p.d) : '') + '</option>';
+          }).join('') + '</select>'
+        + '<select id="whoRole" aria-label="How were they involved">'
+        + a.roles.map(function (r) {
+            return '<option value="' + esc(r.key) + '">' + esc(r.label) + '</option>';
+          }).join('') + '</select>'
+        + '<input id="whoPts" type="text" inputmode="numeric" maxlength="4" '
+        + 'aria-label="Boxy Bucks" placeholder="' + esc(a.points[a.roles[0].key]) + '">'
+        + '<button type="button" class="cal-btn small" id="whoGo">Add</button>'
+        + '<span class="hint who-hint">Leave the number blank for the usual '
+        + 'amount for that role.</span>';
+    }
+
+    // Published on state because the click handler lives in wire(), attached
+    // once -- attaching it here instead would add another listener to the
+    // same element every time an event is opened.
+    state.openId = id;
+    state.paintWho = paintWho;
+
+    function paintWho() {
+      var box = $('#whoList');
+      if (box) box.innerHTML = whoHtml();
+      var add = $('#whoAdd');
+      if (add) add.innerHTML = whoAddHtml();
+      var pts = $('#whoPts');
+      var role = $('#whoRole');
+      if (pts && role) {
+        // The placeholder follows the role, so the default on offer is the
+        // one that will actually be used.
+        role.addEventListener('change', function () {
+          pts.placeholder = state.who.points[role.value];
+        });
+      }
+    }
+
+    api('/api/items/' + id + '/attendance').then(function (r) {
+      state.who = { rows: r.attendance || [], staff: r.staff || [],
+                    roles: r.roles || [], points: r.points || {} };
+      paintWho();
+    }).catch(function () {
+      var box = $('#whoList');
+      if (box) box.innerHTML = '<p class="hint">Could not load who was there.</p>';
+    });
 
     state.comments = [];
     function paintComments() {
@@ -2541,6 +2636,34 @@
     $('#modalX').addEventListener('click', closeModal);
     $('#modal').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+
+    $('#modalBody').addEventListener('click', function (e) {
+      var x = e.target.closest ? e.target.closest('.who-x') : null;
+      if (x) {
+        api('/api/items/' + (state.openId || '') + '/attendance?person='
+            + encodeURIComponent(x.dataset.person), { method: 'DELETE' })
+          .then(function (r) { state.who.rows = r.attendance || []; if (state.paintWho) state.paintWho(); })
+          .catch(function () {});
+        return;
+      }
+      if (!e.target.closest || !e.target.closest('#whoGo')) return;
+      var who = document.querySelector('#whoPick');
+      var role = document.querySelector('#whoRole');
+      var pts = document.querySelector('#whoPts');
+      if (!who || !who.value) return;
+      api('/api/items/' + (state.openId || '') + '/attendance', {
+        method: 'POST',
+        body: JSON.stringify({ person: who.value, role: role.value,
+                               points: pts.value }),
+      }).then(function (r) {
+        state.who.rows = r.attendance || [];
+        if (state.paintWho) state.paintWho();
+      }).catch(function (err) {
+        var box = document.querySelector('#whoList');
+        if (box) box.insertAdjacentHTML('beforeend',
+          '<p class="hint who-err">' + esc(err.message || 'That did not save.') + '</p>');
+      });
+    });
 
     $('#modalFoot').addEventListener('click', function (e) {
       var b = e.target.closest('button[data-act]');

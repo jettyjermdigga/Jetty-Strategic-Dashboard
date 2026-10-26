@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Boxy Bucks</title>
+<link rel="icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/assets/fonts.css">
+<link rel="stylesheet" href="/assets/rc_system.css">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/calendar.css">
+<link rel="stylesheet" href="/assets/boxy.css">
+<!-- Not linked from the calendar, and not worth a search engine's time
+     even behind Access. -->
+<meta name="robots" content="noindex,nofollow">
+</head>
+<body>
+
+<header class="site-top">
+  <div class="brand">
+    <img src="/assets/logo.png" alt="Jetty">
+    <div class="divider"></div>
+    <div>
+      <div class="title-main">Boxy Bucks</div>
+      <div class="title-sub" id="sub">Loading</div>
+    </div>
+  </div>
+  <div class="site-who"><a class="back" href="/">&larr; Back to the calendar</a></div>
+</header>
+
+<main class="cal-shell bx-shell">
+  <div id="notice"></div>
+
+  <div class="bx-bar" id="bar" hidden>
+    <span class="bx-lbl">Show</span>
+    <select id="filter" class="bx-sel" aria-label="Which people to show">
+      <option value="earning">On the board</option>
+      <option value="all">Everybody</option>
+      <option value="owed">With a balance</option>
+    </select>
+    <input id="q" class="bx-q" type="search" placeholder="Search a name&hellip;"
+           autocomplete="off" aria-label="Search by name">
+    <button class="bx-btn" id="spend" type="button">Record a spend</button>
+    <span class="bx-grow"></span>
+    <a class="bx-dl" id="dl" href="/api/boxy?format=csv" download>Download CSV</a>
+  </div>
+
+  <div class="bx-strip" id="strip" hidden></div>
+  <p class="bx-rc" id="rc"></p>
+
+  <div class="bx-wrap" id="wrap" hidden><table class="bx-t" id="t"></table></div>
+</main>
+
+<script src="/assets/boxy.js"></script>
+</body>
+</html>

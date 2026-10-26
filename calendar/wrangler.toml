@@ -133,3 +133,24 @@ SALES_REPORT_CHANNEL = "CHDDD4GTE"
 # still goes to the channel, just without the ping.
 WEBSITE_CHANNEL = "C4V064MQA"
 WEBSITE_WATCHER = "k.hehl@jettylife.com"
+
+# ── Boxy Bucks ───────────────────────────────────────────────────────────
+
+# Who may open the leaderboard at /boxy.html and move a balance.
+#
+# Its own list rather than the editor list: running an event and running the
+# rewards are different jobs, and this one decides what people get. Recording
+# who was at an event is NOT gated on this -- any editor can do that, because
+# it is part of running the event.
+#
+# Left empty it falls back to CALENDAR_EDITORS, so it can never be
+# accidentally empty and lock everybody out.
+BOXY_ADMINS = "jeremy@jettylife.com"
+
+# What each role is worth by default. Every event can override it when
+# somebody is added, and the number used is written onto that row -- so
+# changing this never rewrites what an event was already worth.
+#
+# Anything unparseable here keeps the built-in value rather than becoming
+# zero. "worked:0" does mean zero; "worked:" is a typo and is ignored.
+BOXY_POINTS = "worked:3,volunteered:2,attended:1"

@@ -97,7 +97,22 @@ let slackStatus = null;
 const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], deleted: [],
                deletedComments: [], commented: null, savedFilters: null, resets: 0,
                mentionsSeen: 0, announced: [], announceFails: false,
-               announceNoFile: false };
+               announceNoFile: false, attAdded: [], attDeleted: [] };
+
+// Who was at the open event, and the roster the picker offers.
+const BOXY_ROLES = [
+  { key: 'worked', label: 'Worked', points: 3 },
+  { key: 'volunteered', label: 'Volunteered', points: 2 },
+  { key: 'attended', label: 'Attended', points: 1 },
+];
+const BOXY_STAFF = [
+  { k: 'troy-taylor', n: 'Troy Taylor', d: 'Production (INK)' },
+  { k: 'katie-hehl', n: 'Katie Hehl', d: 'Marketing' },
+  { k: 'joe-mangino', n: 'Joe Mangino', d: 'Sales (Mobile)' },
+];
+let ATT = [
+  { person: 'troy-taylor', name: 'Troy Taylor', role: 'worked', points: 3, note: '' },
+];
 let feedRow = { url: 'https://feed.test/calendar.ics?token=' + 'a'.repeat(64), filters: {} };
 
 const browser = await chromium.launch();
@@ -159,6 +174,40 @@ await page.route('**/*', async (route) => {
           start_date: ITEMS[0].start_date, author: 'amy@jettylife.com',
           body: 'Can you confirm the spend?', created_at: '2026-09-01T10:00:00.000Z' },
       ],
+    } });
+  }
+  if (p === '/api/boxy') {
+    return route.fulfill({ json: {
+      board: BOXY_STAFF.map((p2, i) => ({
+        k: p2.k, name: p2.n, dept: p2.d, division: 'BRAND', loc: '176 E Bay',
+        earned: [12, 7, 0][i], spent: [4, 0, 0][i], balance: [8, 7, 0][i],
+        events: [3, 2, 0][i],
+        byRole: { worked: [2, 1, 0][i], volunteered: [1, 0, 0][i], attended: [0, 1, 0][i] },
+      })),
+      standings: { people: 3, onTheBoard: 2, earned: 19, spent: 4, outstanding: 15 },
+      roles: BOXY_ROLES, points: { worked: 3, volunteered: 2, attended: 1 },
+      rosterAsOf: '2026-10-26', you: 'jeremy@jettylife.com',
+    } });
+  }
+  if (/\/attendance$/.test(p)) {
+    if (method === 'DELETE') {
+      seen.attDeleted.push(url.searchParams.get('person'));
+      ATT = ATT.filter((r) => r.person !== url.searchParams.get('person'));
+      return route.fulfill({ json: { ok: true, attendance: ATT } });
+    }
+    if (method === 'POST') {
+      return req.postDataJSON ? (() => {
+        const b = req.postDataJSON();
+        seen.attAdded.push(b);
+        if (!b.person) return route.fulfill({ status: 400, json: { errors: ['Pick somebody.'] } });
+        ATT = ATT.concat([{ person: b.person, name: 'Katie Hehl', role: b.role,
+                            points: b.points === '' ? 3 : Number(b.points), note: '' }]);
+        return route.fulfill({ json: { ok: true, attendance: ATT } });
+      })() : route.fulfill({ json: { ok: true, attendance: ATT } });
+    }
+    return route.fulfill({ json: {
+      attendance: ATT, staff: BOXY_STAFF, roles: BOXY_ROLES,
+      points: { worked: 3, volunteered: 2, attended: 1 },
     } });
   }
   if (p === '/api/places') {
@@ -811,6 +860,43 @@ await t('reset issues a new link', async () => {
 });
 await page.locator('button[data-act="close"]').click();
 
+console.log('who was there');
+await page.locator('.chip:has-text("Coquina Jam")').click();
+await page.waitForSelector('.who-row');
+await t('lists who was at the event, with role and points', async () => {
+  const row = page.locator('.who-row').first();
+  return (await row.locator('.who-n').textContent()) === 'Troy Taylor'
+    && (await row.locator('.who-r').textContent()) === 'Worked'
+    && (await row.locator('.who-p').textContent()) === '3';
+});
+// Adding somebody twice is not something the form should invite.
+await t('offers only the people not already on it', async () => {
+  const opts = await page.locator('#whoPick option').allTextContents();
+  return opts.length === 3 && !opts.some((o) => o.includes('Troy'));
+});
+// Blank means "the usual amount for that role", and the placeholder has to
+// say which amount that is or it is not an offer anybody can act on.
+await t('shows the default for the role it is about to use', async () => {
+  const before = await page.locator('#whoPts').getAttribute('placeholder');
+  await page.selectOption('#whoRole', 'attended');
+  const after = await page.locator('#whoPts').getAttribute('placeholder');
+  return before === '3' && after === '1';
+});
+await t('adds somebody, sending the blank points through as blank', async () => {
+  await page.selectOption('#whoRole', 'worked');
+  await page.selectOption('#whoPick', 'katie-hehl');
+  await page.locator('#whoGo').click();
+  await page.waitForFunction(() => document.querySelectorAll('.who-row').length === 2);
+  const sent = seen.attAdded[seen.attAdded.length - 1];
+  return sent.person === 'katie-hehl' && sent.role === 'worked' && sent.points === '';
+});
+await t('takes somebody off again', async () => {
+  await page.locator('.who-x').last().click();
+  await page.waitForFunction(() => document.querySelectorAll('.who-row').length === 1);
+  return seen.attDeleted[0] === 'katie-hehl';
+});
+await page.locator('button[data-act="close"]').click();
+
 console.log('posting a sales report');
 await page.locator('.chip:has-text("Asbury Halloween")').click();
 await page.waitForSelector('.det-title');
@@ -1177,9 +1263,17 @@ console.log('dark mode');
 const contrastSweep = async () => await page.evaluate(() => {
   const srgb = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
   const parse = (c) => {
-    const m = (c || '').match(/[\d.]+/g);
+    const str = c || '';
+    const m = str.match(/[\d.]+/g);
     if (!m) return null;
-    return { r: +m[0], g: +m[1], b: +m[2], a: m.length > 3 ? Number(m[3]) : 1 };
+    // Chromium serialises color-mix() as `color(srgb 0.95 0.89 0.88)` --
+    // components 0-1, not 0-255. Read as 0-255 those are all but black, so
+    // every color-mix background was being measured against the wrong
+    // colour, and this check was passing and failing on numbers it had made
+    // up. The dash's sweep had the same hole.
+    const k = /^color\(/.test(str) ? 255 : 1;
+    return { r: +m[0] * k, g: +m[1] * k, b: +m[2] * k,
+             a: m.length > 3 ? Number(m[3]) : 1 };
   };
   const over = (f, b) => ({
     r: f.r * f.a + b.r * (1 - f.a), g: f.g * f.a + b.g * (1 - f.a),
@@ -1248,6 +1342,35 @@ await t('does not leave out-of-month cells painted white', async () =>
     const cell = document.querySelector('.mo-cell.out');
     return Number(getComputedStyle(cell).backgroundColor.match(/\d+/g)[0]) < 120;
   }));
+
+// The event modal is where "who was there" lives, and it is not open on the
+// month grid -- so the sweep above never saw a line of it.
+await page.locator('.chip:has-text("Coquina Jam")').click();
+await page.waitForSelector('.who-row');
+await t('keeps who-was-there readable in the dark', async () => {
+  const bad = await contrastSweep();
+  if (bad.length) console.log('         ' + bad.slice(0, 8).join(', '));
+  return bad.length === 0;
+});
+await page.locator('button[data-act="close"]').click();
+
+// And the leaderboard, which is a page of its own.
+await page.goto('http://local.test/boxy.html');
+await page.waitForSelector('.bx-t tbody tr');
+await t('keeps the leaderboard readable in the dark', async () => {
+  const bad = await contrastSweep();
+  if (bad.length) console.log('         ' + bad.slice(0, 8).join(', '));
+  return bad.length === 0;
+});
+await page.emulateMedia({ colorScheme: 'light' });
+await page.waitForTimeout(200);
+await t('and the leaderboard in light mode', async () => {
+  const bad = await contrastSweep();
+  if (bad.length) console.log('         ' + bad.slice(0, 8).join(', '));
+  return bad.length === 0;
+});
+await page.goto('http://local.test/');
+await page.waitForSelector('.mo-grid');
 
 await page.emulateMedia({ colorScheme: 'light' });
 await t('and the same holds in light mode', async () => {

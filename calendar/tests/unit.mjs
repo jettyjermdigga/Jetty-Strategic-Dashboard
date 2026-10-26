@@ -26,6 +26,11 @@ import { rollPlaces, placeKey, placeLabel, hasPlace,
          FIELDS as PLACE_FIELDS } from '../worker/places.js';
 import { listingAction, listingMessage, needed, LISTING_FIELDS,
          WEBSITE_NEED } from '../worker/listing.js';
+import {
+  ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, staffMember,
+  pickable, leaderboard, standings, csv as boxyCsv, STAFF as BOXY_STAFF,
+  ROSTER_AS_OF as BOXY_AS_OF,
+} from '../worker/boxy.js';
 import { noticeBody, summarise, countUnread, isAutomatic,
          CALENDAR_AUTHOR } from '../worker/notices.js';
 import { aov, netOfFee, hasReport, readyToPost, money, salesMessage, deliver,
@@ -1764,6 +1769,256 @@ describe('the website watch is wired the way it is meant to be', () => {
   });
   it('never makes the save wait on Slack', () => {
     ok(/ctx\.waitUntil\(run\)/.test(body), 'the post is not deferred');
+  });
+});
+
+// Two features wrote into the same box.
+//
+// The file-attachments list has owned .att-row, .att-name and #attList
+// since attachments were added. "Who was there" arrived calling its rows
+// .att-row too, so it rendered into the attachments box and its CSS
+// restyled the attachment list -- in a page where both appear on the same
+// modal. Caught by a browser test that could not find .att-n inside the
+// .att-row it had matched, which is a confusing way to learn it.
+describe('the event modal does not have two things sharing a class', () => {
+  const page = fs.readFileSync(root('public/assets/calendar.js'), 'utf8');
+  const css = fs.readFileSync(root('public/assets/calendar.css'), 'utf8');
+
+  // Attachments own att-, who-was-there owns who-. Neither may use the
+  // other's prefix.
+  const ids = (src) => new Set([...src.matchAll(/id="([A-Za-z][\w-]*)"/g)].map((m) => m[1]));
+
+  it('gives the two lists different element ids', () => {
+    const all = [...ids(page)];
+    const att = all.filter((x) => /^att/.test(x));
+    const who = all.filter((x) => /^who/.test(x));
+    ok(att.length && who.length, 'one of the two lists has no ids at all: '
+       + JSON.stringify({ att, who }));
+    for (const x of who) {
+      ok(!att.includes(x), x + ' is used by both lists');
+    }
+  });
+  it('gives who-was-there its own class prefix', () => {
+    for (const c of ['who-row', 'who-n', 'who-r', 'who-p', 'who-x', 'who-add']) {
+      ok(page.includes('class="' + c + '"') || page.includes("'." + c + "'"),
+         'the page no longer uses ' + c);
+      ok(new RegExp('\\.' + c + '[{,: ]').test(css), c + ' is drawn by nothing');
+    }
+  });
+  // The one that actually bit: a selector that matches both lists.
+  it('does not style attachment rows from the attendance rules', () => {
+    const block = css.slice(css.indexOf('/* ── Who was there ──'));
+    ok(block.length > 200, 'the attendance CSS block has moved or gone');
+    ok(!/\.att-/.test(block), 'the attendance CSS reaches into the attachments list');
+  });
+  it('keeps the attachments list on the names it has always had', () => {
+    ok(/class="att-row"/.test(page), 'the attachments list lost its class');
+    ok(/id="attList"/.test(page), 'the attachments list lost its id');
+  });
+});
+
+// ── Boxy Bucks ──────────────────────────────────────────────────────────
+
+describe('the staff roster it runs on', () => {
+  it('is the Employee Headcount view, with nobody duplicated', () => {
+    ok(BOXY_STAFF.length > 50, 'only ' + BOXY_STAFF.length + ' people came across');
+    eq(new Set(BOXY_STAFF.map((p) => p.k)).size, BOXY_STAFF.length, 'duplicate keys');
+    ok(/^\d{4}-\d{2}-\d{2}$/.test(BOXY_AS_OF), BOXY_AS_OF);
+  });
+  it('gives everybody a name and a key the Worker will accept back', () => {
+    for (const p of BOXY_STAFF) {
+      ok(p.n && p.n.trim(), p.k + ' has no name');
+      ok(staffMember(p.k), p.k + ' is not findable by its own key');
+    }
+  });
+  // Most of this roster signs in with gmail or icloud. None of it is needed:
+  // they are the subjects of the leaderboard, not its users.
+  it('carries no email addresses', () => {
+    ok(!JSON.stringify(BOXY_STAFF).includes('@'), 'an address got into the seed');
+  });
+  it('strips the org-chart numbering off a name', () => {
+    for (const p of BOXY_STAFF) {
+      ok(!/^\d+\s*-/.test(p.n), p.n + ' still carries its org-chart prefix');
+    }
+  });
+  it('offers the picker an alphabetical list', () => {
+    const names = pickable().map((p) => p.n.toLowerCase());
+    eq(names, [...names].sort());
+  });
+});
+
+describe('what a role is worth', () => {
+  it('has a default for every role', () => {
+    for (const r of ROLES) ok(Number.isInteger(r.points) && r.points > 0, r.key);
+  });
+  it('reads overrides out of config', () => {
+    eq(pointsFromConfig('worked:5,attended:2'),
+       { worked: 5, volunteered: 2, attended: 2 });
+  });
+  // A typo in config should not silently stop an event being worth anything.
+  it('keeps the built-in value for anything it cannot read', () => {
+    eq(pointsFromConfig('worked:abc,bogus:9,volunteered:'),
+       { worked: 3, volunteered: 2, attended: 1 });
+    eq(pointsFromConfig(''), { worked: 3, volunteered: 2, attended: 1 });
+    eq(pointsFromConfig(null), { worked: 3, volunteered: 2, attended: 1 });
+  });
+  it('refuses a negative default', () => {
+    eq(pointsFromConfig('worked:-5').worked, 3);
+  });
+});
+
+describe('adding somebody to an event', () => {
+  const who = BOXY_STAFF[0].k;
+  const pts = { worked: 5, volunteered: 2, attended: 1 };
+
+  // An event costed when Worked was worth 3 must not silently become worth
+  // 5 because the default changed a month afterwards, so the number is
+  // written onto the row rather than looked up later.
+  it('writes the default onto the row rather than leaving it to be looked up', () => {
+    eq(cleanEntry({ person: who, role: 'worked' }, pts).row.points, 5);
+    eq(cleanEntry({ person: who, role: 'attended' }, pts).row.points, 1);
+  });
+  it('takes an override for this one event', () => {
+    eq(cleanEntry({ person: who, role: 'worked', points: '12' }, pts).row.points, 12);
+    eq(cleanEntry({ person: who, role: 'worked', points: 0 }, pts).row.points, 0,
+       'a deliberate zero was overwritten by the default');
+  });
+  it('refuses somebody who is not on the staff list', () => {
+    ok(cleanEntry({ person: 'nobody-at-all', role: 'worked' }, pts).errors);
+    ok(cleanEntry({ role: 'worked' }, pts).errors);
+  });
+  it('refuses a role that does not exist', () => {
+    ok(cleanEntry({ person: who, role: 'helped' }, pts).errors);
+    ok(cleanEntry({ person: who }, pts).errors);
+  });
+  it('refuses points that are not a plausible number', () => {
+    ok(cleanEntry({ person: who, role: 'worked', points: '-5' }, pts).errors);
+    ok(cleanEntry({ person: who, role: 'worked', points: 'lots' }, pts).errors);
+    ok(cleanEntry({ person: who, role: 'worked', points: '99999' }, pts).errors);
+  });
+});
+
+describe('spending and corrections', () => {
+  const who = BOXY_STAFF[0].k;
+
+  // Entered positive, stored as a debit, so nobody has to remember a minus.
+  it('stores a spend as a debit however it was typed', () => {
+    eq(cleanLedger({ person: who, kind: 'spend', points: '12', note: 'Hoodie' }).row.points, -12);
+    eq(cleanLedger({ person: who, kind: 'spend', points: '-12', note: 'Hoodie' }).row.points, -12);
+  });
+  // A correction can go either way.
+  it('signs a correction however it was typed', () => {
+    eq(cleanLedger({ person: who, kind: 'adjust', points: '5' }).row.points, 5);
+    eq(cleanLedger({ person: who, kind: 'adjust', points: '-5' }).row.points, -5);
+  });
+  // A balance nobody can explain in three months is worse than no balance.
+  it('will not take a spend with nothing written against it', () => {
+    ok(cleanLedger({ person: who, kind: 'spend', points: '12' }).errors);
+    ok(cleanLedger({ person: who, kind: 'spend', points: '12', note: '  ' }).errors);
+  });
+  it('does not require a note on a correction', () => {
+    ok(!cleanLedger({ person: who, kind: 'adjust', points: '5' }).errors);
+  });
+  it('refuses zero, which moves nothing', () => {
+    ok(cleanLedger({ person: who, kind: 'adjust', points: '0' }).errors);
+  });
+  it('refuses a kind it does not know', () => {
+    ok(cleanLedger({ person: who, kind: 'earn', points: '5' }).errors);
+  });
+});
+
+describe('the leaderboard', () => {
+  const [a, b] = BOXY_STAFF.map((p) => p.k);
+  const build = (earned, moved) => leaderboard(earned, moved);
+
+  // A board that lists only the people already on it cannot be used to
+  // notice who is being left out of events, which is half of what it is for.
+  it('lists everybody, including people on nothing yet', () => {
+    eq(build([], []).length, BOXY_STAFF.length);
+  });
+  it('adds up what somebody earned, and counts their events', () => {
+    const row = build([{ person: a, role: 'worked', points: 3 },
+                       { person: a, role: 'attended', points: 1 }], [])
+      .find((r) => r.k === a);
+    eq([row.earned, row.events, row.byRole.worked, row.byRole.attended], [4, 2, 1, 1]);
+  });
+  it('takes spending off the balance and leaves earned alone', () => {
+    const row = build([{ person: a, role: 'worked', points: 10 }],
+                      [{ person: a, points: -4 }]).find((r) => r.k === a);
+    eq([row.earned, row.spent, row.balance], [10, 4, 6]);
+  });
+  // "Spent" reading higher than what they actually took would be the
+  // confusing half.
+  it('counts an upward correction as earned, not as un-spent', () => {
+    const row = build([], [{ person: a, points: 5 }]).find((r) => r.k === a);
+    eq([row.earned, row.spent, row.balance], [5, 0, 5]);
+  });
+  it('ignores a row for somebody no longer on the roster', () => {
+    const board = build([{ person: 'left-the-company', role: 'worked', points: 9 }], []);
+    eq(board.length, BOXY_STAFF.length);
+    eq(standings(board).earned, 0);
+  });
+  // The board is about turning up; ordering by balance would put whoever
+  // has spent least on top.
+  it('ranks by what was earned, not by what is left', () => {
+    const board = build([{ person: a, role: 'worked', points: 10 },
+                         { person: b, role: 'worked', points: 4 }],
+                        [{ person: a, points: -9 }]);
+    eq(board[0].k, a, 'the biggest spender fell down the board');
+    eq([board[0].balance, board[1].balance], [1, 4]);
+  });
+  it('totals the strip above the table', () => {
+    const board = build([{ person: a, role: 'worked', points: 10 },
+                         { person: b, role: 'attended', points: 1 }],
+                        [{ person: a, points: -4 }]);
+    eq(standings(board), { people: BOXY_STAFF.length, onTheBoard: 2,
+                           earned: 11, spent: 4, outstanding: 7 });
+  });
+  it('copes with nothing at all', () => {
+    eq(standings(build([], [])).earned, 0);
+    eq(build(null, null).length, BOXY_STAFF.length);
+  });
+  it('downloads with a row per person and a column per role', () => {
+    const out = boxyCsv(build([], []));
+    const lines = out.trim().split('\n');
+    eq(lines.length, BOXY_STAFF.length + 1);
+    for (const r of ROLES) ok(lines[0].includes(r.label), r.label + ' is not a column');
+  });
+});
+
+// The leaderboard decides what people get, which is a different job from
+// running an event -- so it is not the editor list.
+describe('who can open Boxy Bucks', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+
+  it('is its own list, falling back to the editors rather than to nobody', () => {
+    ok(/env\.BOXY_ADMINS/.test(idx), 'there is no list of its own');
+    const fn = idx.slice(idx.indexOf('const boxyAdmins'));
+    ok(/env\.CALENDAR_EDITORS/.test(fn.slice(0, 500)),
+       'an empty BOXY_ADMINS would lock everybody out');
+  });
+  it('gates the leaderboard and the ledger, and 404s rather than 403s', () => {
+    for (const route of ["path === '/api/boxy' && method === 'GET'",
+                         "path === '/api/boxy/ledger' && method === 'POST'"]) {
+      const at = idx.indexOf(route);
+      ok(at > 0, 'route missing: ' + route);
+      const body = idx.slice(at, at + 400);
+      ok(/if \(!isBoxyAdmin\(\)\)/.test(body), route + ' is not gated');
+      ok(/'Unknown endpoint\.' \}, 404\)/.test(body), route + ' answers 403, which confirms it exists');
+    }
+  });
+  it('wants a verified Access identity, not just an address', () => {
+    ok(/const isBoxyAdmin = \(\) => Boolean\(who\.email\) && who\.verified/.test(idx),
+       'isBoxyAdmin ignores verification');
+  });
+  // Running an event and running the rewards are different jobs, but adding
+  // people to an event is part of running one.
+  it('lets any editor record who was there', () => {
+    const at = idx.indexOf('const attMatchBoxy');
+    const body = idx.slice(at, idx.indexOf('// The leaderboard', at));
+    ok(/const denied = requireEditor\(\); if \(denied\) return denied;/.test(body),
+       'recording attendance is not gated on editors');
+    ok(!/isBoxyAdmin/.test(body), 'recording attendance needs the rewards list');
   });
 });
 

@@ -135,3 +135,43 @@ CREATE TABLE IF NOT EXISTS seen (
   email       TEXT PRIMARY KEY,
   mentions_at TEXT
 );
+
+-- Who was at an event, and in what capacity.
+--
+-- Worth having for its own sake -- "who worked Chowderfest" is a question
+-- somebody asks -- and it is also where Boxy Bucks are earned.
+--
+-- The points are stored on the row rather than looked up from the role
+-- later. An event costed when Worked was worth 3 must not silently become
+-- worth 5 because the default changed a month afterwards.
+CREATE TABLE IF NOT EXISTS attendance (
+  item_id     TEXT NOT NULL,
+  person_key  TEXT NOT NULL,          -- from boxy-seed.js, not an address
+  role        TEXT NOT NULL,          -- worked | volunteered | attended
+  points      INTEGER NOT NULL DEFAULT 0,
+  note        TEXT NOT NULL DEFAULT '',
+  added_by    TEXT,
+  added_at    TEXT,
+  PRIMARY KEY (item_id, person_key)
+);
+CREATE INDEX IF NOT EXISTS idx_att_person ON attendance(person_key);
+
+-- Everything else that moves a Boxy Bucks balance: merch and samples taken,
+-- and corrections.
+--
+-- Kept apart from attendance so that taking somebody off an event removes
+-- what they earned for it and leaves what they have already spent alone --
+-- which is what anybody would expect, and would be fiddly in one table.
+--
+-- A spend is stored negative. Nothing is ever edited here; a mistake is
+-- corrected with another row, so the history of a balance stays readable.
+CREATE TABLE IF NOT EXISTS boxy_ledger (
+  id          TEXT PRIMARY KEY,
+  person_key  TEXT NOT NULL,
+  kind        TEXT NOT NULL,          -- spend | adjust
+  points      INTEGER NOT NULL,       -- negative for a spend
+  note        TEXT NOT NULL DEFAULT '',
+  added_by    TEXT,
+  added_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_person ON boxy_ledger(person_key);
