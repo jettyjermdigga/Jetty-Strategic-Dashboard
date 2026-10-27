@@ -20,13 +20,19 @@ export { STAFF, ROSTER_AS_OF };
  * How somebody was involved, and what it is worth by default.
  *
  * Worked is a shift. Volunteered is turning up to something that was not
- * asked of you. Attended is being there. The defaults are a starting point
- * -- every event can override them, because a tent-sale weekend is not a
- * two-hour thing and pretending otherwise is how a reward scheme stops
- * meaning anything.
+ * asked of you. Attended is being there.
+ *
+ * Worked and volunteered are both worth 2, deliberately. Working an event
+ * is part of the job, so it is not worth more than volunteering for one --
+ * but most of these events are nights and weekends, and that is the thing
+ * being rewarded either way.
+ *
+ * These are a starting point. Every event can override them, because a
+ * tent-sale weekend is not a two-hour thing and pretending otherwise is how
+ * a reward scheme stops meaning anything.
  */
 export const ROLES = [
-  { key: 'worked', label: 'Worked', points: 3 },
+  { key: 'worked', label: 'Worked', points: 2 },
   { key: 'volunteered', label: 'Volunteered', points: 2 },
   { key: 'attended', label: 'Attended', points: 1 },
 ];

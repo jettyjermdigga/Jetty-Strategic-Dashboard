@@ -1858,12 +1858,22 @@ describe('what a role is worth', () => {
   // A typo in config should not silently stop an event being worth anything.
   it('keeps the built-in value for anything it cannot read', () => {
     eq(pointsFromConfig('worked:abc,bogus:9,volunteered:'),
-       { worked: 3, volunteered: 2, attended: 1 });
-    eq(pointsFromConfig(''), { worked: 3, volunteered: 2, attended: 1 });
-    eq(pointsFromConfig(null), { worked: 3, volunteered: 2, attended: 1 });
+       { worked: 2, volunteered: 2, attended: 1 });
+    eq(pointsFromConfig(''), { worked: 2, volunteered: 2, attended: 1 });
+    eq(pointsFromConfig(null), { worked: 2, volunteered: 2, attended: 1 });
+  });
+  it('agrees with the value actually shipped in wrangler.toml', () => {
+    const toml = fs.readFileSync(root('wrangler.toml'), 'utf8');
+    const m = toml.match(/^BOXY_POINTS = "([^"]*)"/m);
+    ok(m, 'BOXY_POINTS is missing from wrangler.toml');
+    const shipped = pointsFromConfig(m[1]);
+    const builtIn = Object.fromEntries(ROLES.map((r) => [r.key, r.points]));
+    eq(shipped, builtIn,
+       'config and fallback disagree, so an empty BOXY_POINTS would quietly '
+       + 'change what an event is worth');
   });
   it('refuses a negative default', () => {
-    eq(pointsFromConfig('worked:-5').worked, 3);
+    eq(pointsFromConfig('worked:-5').worked, 2);
   });
 });
 

@@ -153,4 +153,4 @@ BOXY_ADMINS = "jeremy@jettylife.com"
 #
 # Anything unparseable here keeps the built-in value rather than becoming
 # zero. "worked:0" does mean zero; "worked:" is a typo and is ignored.
-BOXY_POINTS = "worked:3,volunteered:2,attended:1"
+BOXY_POINTS = "worked:2,volunteered:2,attended:1"
