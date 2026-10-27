@@ -145,7 +145,10 @@ WEBSITE_WATCHER = "k.hehl@jettylife.com"
 #
 # Left empty it falls back to CALENDAR_EDITORS, so it can never be
 # accidentally empty and lock everybody out.
-BOXY_ADMINS = "jeremy@jettylife.com"
+#
+# Addresses, not names -- BOXY_CHECKOUT below holds names, and the two sit
+# close enough together to be easy to mix up. A name here lets nobody in.
+BOXY_ADMINS = "jeremy@jettylife.com,cory@jettylife.com,joem@jettylife.com,jjmckenna@jettylife.com"
 
 # What each role is worth by default. Every event can override it when
 # somebody is added, and the number used is written onto that row -- so

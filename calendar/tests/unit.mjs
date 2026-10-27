@@ -1967,6 +1967,22 @@ describe('spending and corrections', () => {
     eq(checkoutNames(' Ada Lovelace , Grace Hopper ,, '),
        ['Ada Lovelace', 'Grace Hopper']);
   });
+  it('keeps the two lists in the form each is read as', () => {
+    const toml = fs.readFileSync(root('wrangler.toml'), 'utf8');
+    const admins = toml.match(/^BOXY_ADMINS = "([^"]*)"/m);
+    ok(admins, 'BOXY_ADMINS is missing from wrangler.toml');
+    for (const who of admins[1].split(',').map((x) => x.trim()).filter(Boolean)) {
+      ok(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(who),
+         '"' + who + '" is not an address, so it lets nobody in');
+      eq(who, who.toLowerCase(), who + ' is not lower case');
+    }
+    for (const who of checkoutNames(
+      (toml.match(/^BOXY_CHECKOUT = "([^"]*)"/m) || ['', ''])[1])) {
+      ok(!who.includes('@'),
+         '"' + who + '" is an address, and this list is shown to people');
+    }
+  });
+
   it('ships a checkout list in wrangler.toml', () => {
     const toml = fs.readFileSync(root('wrangler.toml'), 'utf8');
     const m = toml.match(/^BOXY_CHECKOUT = "([^"]*)"/m);
