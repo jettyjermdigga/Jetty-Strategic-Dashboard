@@ -30,6 +30,7 @@ import { listingAction, listingMessage, WEBSITE_NEED } from './listing.js';
 import {
   ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, cleanKey as boxyKey,
   pickable, leaderboard, standings, csv as boxyCsv, personSummary, staffMember,
+  checkoutNames, SAMPLE_PER_POINT,
   STAFF as BOXY_STAFF, ROSTER_AS_OF as BOXY_AS_OF,
 } from './boxy.js';
 import SCHEMA from './schema.sql';
@@ -102,6 +103,10 @@ const ADDED_COLUMNS = [
 // Same idea, on the attachments table.
 const ADDED_ATTACHMENT_COLUMNS = ['slot TEXT'];
 
+// And on the Boxy Bucks ledger, which shipped before a spend recorded the
+// day the samples were taken or who handed them over.
+const ADDED_LEDGER_COLUMNS = ['on_date TEXT', 'checked_by TEXT'];
+
 async function ensureSchema(db) {
   if (schemaReady) return;
   // Statements are idempotent, so running them on each cold start is cheaper
@@ -109,7 +114,9 @@ async function ensureSchema(db) {
   for (const sql of sqlStatements(SCHEMA)) {
     await db.prepare(sql).run();
   }
-  for (const [table, cols] of [['items', ADDED_COLUMNS], ['attachments', ADDED_ATTACHMENT_COLUMNS]]) {
+  for (const [table, cols] of [['items', ADDED_COLUMNS],
+                               ['attachments', ADDED_ATTACHMENT_COLUMNS],
+                               ['boxy_ledger', ADDED_LEDGER_COLUMNS]]) {
     for (const col of cols) {
       try {
         await db.prepare('ALTER TABLE ' + table + ' ADD COLUMN ' + col).run();
@@ -1239,6 +1246,7 @@ async function handleApi(request, env, url, who, ctx) {
     && boxyAdmins().includes(String(who.email).toLowerCase());
 
   const boxyPoints = () => pointsFromConfig(env.BOXY_POINTS);
+  const boxyCheckout = () => checkoutNames(env.BOXY_CHECKOUT);
 
   const readAttendance = async (itemId) => {
     const res = await db.prepare(
@@ -1327,6 +1335,8 @@ async function handleApi(request, env, url, who, ctx) {
     return json({
       board, standings: standings(board), roles: ROLES,
       points: boxyPoints(), rosterAsOf: BOXY_AS_OF, you: who.email,
+      checkout: boxyCheckout(), samplePerPoint: SAMPLE_PER_POINT,
+      today: new Date().toISOString().slice(0, 10),
     });
   }
 
@@ -1346,10 +1356,12 @@ async function handleApi(request, env, url, who, ctx) {
       + 'WHERE a.person_key = ? ORDER BY i.start_date DESC').bind(key).all()).results || [];
 
     const ledger = ((await db.prepare(
-      'SELECT kind, points, note, added_at, added_by FROM boxy_ledger '
+      'SELECT kind, points, note, added_at, added_by, on_date, checked_by '
+      + 'FROM boxy_ledger '
       + 'WHERE person_key = ? ORDER BY added_at DESC').bind(key).all()).results || [])
       .map((r) => ({ kind: r.kind, points: r.points, note: r.note || '',
-                     at: r.added_at, by: r.added_by }));
+                     at: r.added_at, by: r.added_by,
+                     on: r.on_date || '', checkedBy: r.checked_by || '' }));
 
     return json({ person, ...personSummary(events, ledger), roles: ROLES });
   }
@@ -1361,14 +1373,16 @@ async function handleApi(request, env, url, who, ctx) {
     const body = await request.json().catch(() => null);
     if (!body) return json({ error: 'Expected a JSON body.' }, 400);
 
-    const out = cleanLedger(body);
+    const out = cleanLedger(body, env.BOXY_CHECKOUT);
     if (out.errors) return json({ errors: out.errors }, 400);
     const r = out.row;
     await db.prepare(
-      'INSERT INTO boxy_ledger (id, person_key, kind, points, note, added_by, added_at) '
-      + 'VALUES (?, ?, ?, ?, ?, ?, ?)')
+      'INSERT INTO boxy_ledger '
+      + '(id, person_key, kind, points, note, added_by, added_at, on_date, checked_by) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(crypto.randomUUID(), r.person, r.kind, r.points, r.note,
-            who.email, new Date().toISOString()).run();
+            who.email, new Date().toISOString(), r.onDate || null,
+            r.checkedBy || null).run();
 
     const earned = (await db.prepare(
       'SELECT person_key AS person, role, points FROM attendance').all()).results || [];

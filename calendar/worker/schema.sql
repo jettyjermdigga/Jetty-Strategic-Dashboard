@@ -171,6 +171,13 @@ CREATE TABLE IF NOT EXISTS boxy_ledger (
   kind        TEXT NOT NULL,          -- spend | adjust
   points      INTEGER NOT NULL,       -- negative for a spend
   note        TEXT NOT NULL DEFAULT '',
+  -- The day the samples were actually taken, which is not always the day
+  -- somebody got round to entering it. added_at is the latter.
+  on_date     TEXT,
+  -- Who handed them over, from BOXY_CHECKOUT. Not the same as added_by:
+  -- one of four people runs the cupboard, and any of them might be typed
+  -- in by whoever is at a keyboard.
+  checked_by  TEXT,
   added_by    TEXT,
   added_at    TEXT
 );

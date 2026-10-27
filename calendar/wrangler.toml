@@ -154,3 +154,12 @@ BOXY_ADMINS = "jeremy@jettylife.com"
 # Anything unparseable here keeps the built-in value rather than becoming
 # zero. "worked:0" does mean zero; "worked:" is a typo and is ignored.
 BOXY_POINTS = "worked:2,volunteered:2,attended:1"
+
+# Who can hand samples over. One Boxy Buck is one free sample, so a spend is
+# a checkout, and a checkout has somebody's name on it.
+#
+# Written out rather than derived from the staff roster: these four run the
+# cupboard, and the list should change when that changes, not when somebody
+# is hired. Empty means no spend can be recorded at all -- the safe failure
+# for a list that exists to put a name against stock going out the door.
+BOXY_CHECKOUT = "Jeremy DeFilippis,JJ McKenna,Joe Mangino,Cory Higgins"

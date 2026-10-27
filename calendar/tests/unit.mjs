@@ -29,6 +29,7 @@ import { listingAction, listingMessage, needed, LISTING_FIELDS,
 import {
   ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, staffMember,
   pickable, leaderboard, standings, csv as boxyCsv, personSummary,
+  checkoutNames, SAMPLE_PER_POINT,
   STAFF as BOXY_STAFF, ROSTER_AS_OF as BOXY_AS_OF,
 } from '../worker/boxy.js';
 import { noticeBody, summarise, countUnread, isAutomatic,
@@ -1910,30 +1911,149 @@ describe('adding somebody to an event', () => {
 
 describe('spending and corrections', () => {
   const who = BOXY_STAFF[0].k;
+  // The real list is in wrangler.toml; a test that used it would pass for
+  // the wrong reason the day somebody leaves.
+  const CO = 'Ada Lovelace,Grace Hopper';
+  const spend = (extra) => cleanLedger(
+    Object.assign({ person: who, kind: 'spend', points: '3',
+                    checkedBy: 'Grace Hopper' }, extra || {}), CO);
 
   // Entered positive, stored as a debit, so nobody has to remember a minus.
   it('stores a spend as a debit however it was typed', () => {
-    eq(cleanLedger({ person: who, kind: 'spend', points: '12', note: 'Hoodie' }).row.points, -12);
-    eq(cleanLedger({ person: who, kind: 'spend', points: '-12', note: 'Hoodie' }).row.points, -12);
+    eq(spend({ points: '12' }).row.points, -12);
+    eq(spend({ points: '-12' }).row.points, -12);
   });
   // A correction can go either way.
   it('signs a correction however it was typed', () => {
-    eq(cleanLedger({ person: who, kind: 'adjust', points: '5' }).row.points, 5);
-    eq(cleanLedger({ person: who, kind: 'adjust', points: '-5' }).row.points, -5);
-  });
-  // A balance nobody can explain in three months is worse than no balance.
-  it('will not take a spend with nothing written against it', () => {
-    ok(cleanLedger({ person: who, kind: 'spend', points: '12' }).errors);
-    ok(cleanLedger({ person: who, kind: 'spend', points: '12', note: '  ' }).errors);
-  });
-  it('does not require a note on a correction', () => {
-    ok(!cleanLedger({ person: who, kind: 'adjust', points: '5' }).errors);
+    eq(cleanLedger({ person: who, kind: 'adjust', points: '5' }, CO).row.points, 5);
+    eq(cleanLedger({ person: who, kind: 'adjust', points: '-5' }, CO).row.points, -5);
   });
   it('refuses zero, which moves nothing', () => {
-    ok(cleanLedger({ person: who, kind: 'adjust', points: '0' }).errors);
+    ok(cleanLedger({ person: who, kind: 'adjust', points: '0' }, CO).errors);
   });
   it('refuses a kind it does not know', () => {
-    ok(cleanLedger({ person: who, kind: 'earn', points: '5' }).errors);
+    ok(cleanLedger({ person: who, kind: 'earn', points: '5' }, CO).errors);
+  });
+
+  // ── A spend is a checkout: so many samples, on a day, by somebody ──
+  //
+  // One Boxy Buck is one free sample, so a spend is stock going out the
+  // door. The note used to be the only thing explaining it; now the date
+  // and the name do that, and better.
+  it('is one free sample per Boxy Buck', () => {
+    eq(SAMPLE_PER_POINT, 1);
+  });
+  it('records who handed the samples over', () => {
+    eq(spend({ checkedBy: 'Ada Lovelace' }).row.checkedBy, 'Ada Lovelace');
+  });
+  it('will not take a spend with nobody against it', () => {
+    ok(spend({ checkedBy: '' }).errors);
+    ok(spend({ checkedBy: '   ' }).errors);
+  });
+  // Otherwise the list is decoration: anything typed would be accepted,
+  // including a name nobody can be held to.
+  it('will not take a name that is not on the checkout list', () => {
+    ok(spend({ checkedBy: 'Somebody Else' }).errors);
+  });
+  // An empty list has to fail closed. Falling back to "anyone" would turn
+  // a missing config into an unaudited cupboard.
+  it('takes nobody at all when the checkout list is empty', () => {
+    ok(cleanLedger({ person: who, kind: 'spend', points: '3',
+                     checkedBy: 'Grace Hopper' }, '').errors);
+    eq(checkoutNames(''), []);
+    eq(checkoutNames(null), []);
+  });
+  it('reads the checkout list off config, trimming as it goes', () => {
+    eq(checkoutNames(' Ada Lovelace , Grace Hopper ,, '),
+       ['Ada Lovelace', 'Grace Hopper']);
+  });
+  it('ships a checkout list in wrangler.toml', () => {
+    const toml = fs.readFileSync(root('wrangler.toml'), 'utf8');
+    const m = toml.match(/^BOXY_CHECKOUT = "([^"]*)"/m);
+    ok(m, 'BOXY_CHECKOUT is missing from wrangler.toml');
+    ok(checkoutNames(m[1]).length >= 2,
+       'the shipped list would stop any spend being recorded');
+  });
+
+  // The day somebody got round to typing it in is not the day the samples
+  // went, and a Monday entry for a Saturday event should say Saturday.
+  it('takes the day the samples were actually taken', () => {
+    eq(spend({ onDate: '2026-10-24' }).row.onDate, '2026-10-24');
+  });
+  it('defaults to today when no day is given', () => {
+    eq(spend({}).row.onDate, new Date().toISOString().slice(0, 10));
+  });
+  it('refuses something that is not a date', () => {
+    ok(spend({ onDate: 'last tuesday' }).errors);
+    ok(spend({ onDate: '24/10/2026' }).errors);
+  });
+  it('counts samples whole', () => {
+    ok(spend({ points: '2.5' }).errors);
+  });
+
+  // The note carried the whole explanation when there was nothing else;
+  // date, count and name carry it now, so it is offered, not demanded.
+  it('no longer demands a note, now the checkout says who and when', () => {
+    ok(!spend({ note: '' }).errors);
+    eq(spend({ note: ' Sample pack ' }).row.note, 'Sample pack');
+  });
+  // A correction is bookkeeping, not a handover, so it asks for neither.
+  it('asks a correction for neither a name nor a day', () => {
+    const r = cleanLedger({ person: who, kind: 'adjust', points: '5' }, CO).row;
+    eq([r.checkedBy, r.onDate], ['', '']);
+  });
+});
+
+// A checkout that reached the page but not the database would be a form
+// that quietly throws two of its three fields away.
+describe('a checkout survives the round trip', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+  const schema = fs.readFileSync(root('worker/schema.sql'), 'utf8');
+  const ledger = schema.slice(schema.indexOf('CREATE TABLE IF NOT EXISTS boxy_ledger'));
+  const table = ledger.slice(0, ledger.indexOf(');'));
+
+  it('has somewhere to put the day and the name', () => {
+    for (const col of ['on_date', 'checked_by']) {
+      ok(new RegExp('\\b' + col + '\\s+TEXT').test(table),
+         col + ' is not a column on boxy_ledger');
+    }
+  });
+  // boxy_ledger already exists in production, and CREATE TABLE IF NOT
+  // EXISTS never revisits a table that is already there. This is the
+  // seventh time this has bitten; the test is cheaper than the eighth.
+  it('adds both columns to a database that already has the table', () => {
+    const at = idx.indexOf('const ADDED_LEDGER_COLUMNS');
+    ok(at > 0, 'there is no migration for the ledger at all');
+    const list = idx.slice(at, idx.indexOf('];', at));
+    for (const col of ['on_date TEXT', 'checked_by TEXT']) {
+      ok(list.includes("'" + col + "'"),
+         col + ' reaches schema.sql but never a live database');
+    }
+    ok(/\['boxy_ledger', ADDED_LEDGER_COLUMNS\]/.test(idx),
+       'the list exists but nothing runs it');
+  });
+  it('writes both of them on the way in', () => {
+    const at = idx.indexOf("path === '/api/boxy/ledger' && method === 'POST'");
+    const body = idx.slice(at, at + 1800);
+    ok(/INSERT INTO boxy_ledger[\s\S]*on_date, checked_by/.test(body),
+       'the insert does not name the new columns');
+    ok(/r\.onDate \|\| null/.test(body) && /r\.checkedBy \|\| null/.test(body),
+       'the cleaned values are not bound');
+    ok(/cleanLedger\(body, env\.BOXY_CHECKOUT\)/.test(body),
+       'the checkout list never reaches the validator, so any name would do');
+  });
+  it('reads both of them back out again', () => {
+    const at = idx.indexOf("path === '/api/boxy/person'");
+    const body = idx.slice(at, at + 1600);
+    ok(/on_date, checked_by/.test(body), 'the person query does not select them');
+    ok(/on: r\.on_date/.test(body) && /checkedBy: r\.checked_by/.test(body),
+       'they are selected but never returned');
+  });
+  it('hands the page the list it has to choose from', () => {
+    const at = idx.indexOf("path === '/api/boxy' && method === 'GET'");
+    const body = idx.slice(at, idx.indexOf("path === '/api/boxy/person'"));
+    ok(/checkout: boxyCheckout\(\)/.test(body), 'the page gets no checkout list');
+    ok(/today: new Date\(\)/.test(body), 'the page gets no date to default to');
   });
 });
 

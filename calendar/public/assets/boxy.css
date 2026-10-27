@@ -114,5 +114,46 @@
 .bx-d-role{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
   opacity:.8;width:110px;white-space:nowrap}
 .bx-d-p{font-family:var(--mono);font-size:12.5px;text-align:right;width:54px;white-space:nowrap}
-.bx-d-p.neg{color:var(--watch)}
+.bx-d-p.neg,.bx-f-err{color:#A33F28}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .bx-d-p.neg,
+  :root:not([data-theme="light"]) .bx-f-err{color:#F2B0A0}
+}
+:root[data-theme="dark"] .bx-d-p.neg,
+:root[data-theme="dark"] .bx-f-err{color:#F2B0A0}
+:root[data-theme="light"] .bx-d-p.neg,
+:root[data-theme="light"] .bx-f-err{color:#A33F28}
 .bx-d-st{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;opacity:.7}
+.bx-d-u{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;opacity:.7;margin-left:5px}
+
+/* ── Recording a checkout ─────────────────────────────────────────────────
+   In the row rather than in a dialog, for the same reason the detail is:
+   the balance being spent against is one line up, and a modal covers it. */
+.bx-frow td{background:var(--wash);padding:12px 16px}
+.bx-f{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.bx-f-who{
+  font-family:var(--display);font-weight:600;font-size:14px;
+  display:flex;flex-direction:column;padding-bottom:5px;
+}
+.bx-f-bal{font-family:var(--mono);font-size:10px;letter-spacing:.06em;opacity:.72;font-weight:400}
+.bx-f-l{
+  display:flex;flex-direction:column;gap:3px;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;opacity:.85;
+}
+.bx-f-l i{font-style:normal;opacity:.7;text-transform:none;letter-spacing:.04em}
+.bx-f-grow{flex:1 1 180px;min-width:140px;text-transform:none;letter-spacing:.04em}
+.bx-f-i{
+  font-family:var(--body);font-size:13.5px;padding:5px 8px;border-radius:7px;
+  border:1px solid var(--surface-alt);background:var(--cell);color:var(--ink);
+}
+.bx-f-n{width:76px;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.bx-f-go{display:flex;gap:8px;padding-bottom:1px}
+.bx-f-save,.bx-f-x{
+  font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  padding:7px 12px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--surface-alt);background:var(--cell);color:var(--ink);
+}
+.bx-f-save{background:var(--primary);border-color:var(--primary);color:#fff}
+.bx-f-save:hover{opacity:.9}
+.bx-f-x:hover{background:var(--cell)}
+.bx-f-err{flex:1 1 100%;font-family:var(--body);font-size:12.5px}

@@ -16,6 +16,11 @@
   // opening and closing the same person does not go back to the server.
   var open = '';
   var detail = {};
+  // Whose spend form is open, and what has been typed into it. Kept out
+  // here rather than read off the inputs, because every render rebuilds
+  // the table and would otherwise throw away a half-filled form.
+  var spendFor = '';
+  var form = {};
 
   var SIGNED_OUT = 'Your sign-in has expired. Reload the page.';
 
@@ -89,11 +94,23 @@
 
     var led = d.ledger.length
       ? '<table class="bx-d-t"><tbody>' + d.ledger.map(function (m) {
+          // The day the samples were taken, when we have it. Rows written
+          // before that was asked for fall back to the day they were typed.
+          var on = m.on || when(m.at);
+          var hands = m.checkedBy
+            ? 'Checked out by ' + m.checkedBy
+            : (m.note || (m.kind === 'spend' ? 'Spent' : 'Correction'));
           return '<tr>'
-            + '<td class="bx-d-when">' + esc(when(m.at)) + '</td>'
-            + '<td>' + esc(m.note || (m.kind === 'spend' ? 'Spent' : 'Correction'))
-            + (m.by ? ' <span class="bx-d-st">' + esc(m.by) + '</span>' : '') + '</td>'
-            + '<td class="bx-d-role">' + esc(m.kind === 'spend' ? 'Spent' : 'Correction')
+            + '<td class="bx-d-when">' + esc(on) + '</td>'
+            + '<td>' + esc(hands)
+            + (m.checkedBy && m.note
+                ? ' <span class="bx-d-st">' + esc(m.note) + '</span>' : '')
+            + (m.by ? ' <span class="bx-d-st">entered by ' + esc(m.by) + '</span>' : '')
+            + '</td>'
+            + '<td class="bx-d-role">'
+            + esc(m.kind === 'spend'
+                  ? Math.abs(m.points) + (Math.abs(m.points) === 1 ? ' sample' : ' samples')
+                  : 'Correction')
             + '</td>'
             + '<td class="bx-d-p' + (m.points < 0 ? ' neg' : '') + '">'
             + (m.points > 0 ? '+' : '\u2212') + esc(Math.abs(m.points)) + '</td></tr>';
@@ -110,7 +127,8 @@
       + '<div class="bx-d-tally">' + tally
       + '<span class="bx-d-k">Earned <b>' + d.earned + '</b></span>'
       + '<span class="bx-d-k">Spent <b>' + d.spent + '</b></span>'
-      + '<span class="bx-d-k">Balance <b>' + d.balance + '</b></span></div>'
+      + '<span class="bx-d-k">Balance <b>' + d.balance + '</b>'
+      + '<span class="bx-d-u">free samples</span></span></div>'
       + '<h4 class="bx-d-h">Where they turned up</h4>' + ev
       + (led ? '<h4 class="bx-d-h">What has moved the balance</h4>' + led : '')
       + '</div>';
@@ -125,6 +143,45 @@
         if (open === k) render();
       });
     render();
+  }
+
+  // The spend form. One Boxy Buck is one free sample, so this asks the
+  // three things a checkout actually has: how many went out, the day they
+  // went, and who handed them over.
+  function formHtml(k, name, span) {
+    var f = form[k] || {};
+    var people = D.checkout || [];
+    var bal = ((D.board || []).filter(function (r) { return r.k === k; })[0] || {}).balance;
+    var opts = ['<option value="">Checked out by\u2026</option>'].concat(
+      people.map(function (p) {
+        return '<option value="' + esc(p) + '"'
+          + (f.by === p ? ' selected' : '') + '>' + esc(p) + '</option>';
+      })).join('');
+
+    return '<tr class="bx-frow"><td colspan="' + span + '">'
+      + '<form class="bx-f" data-for="' + esc(k) + '">'
+      + '<span class="bx-f-who">' + esc(name)
+      + '<span class="bx-f-bal">' + (bal == null ? '' : bal + ' to spend') + '</span></span>'
+      + '<label class="bx-f-l">Date'
+      + '<input class="bx-f-i" type="date" name="on" value="'
+      + esc(f.on == null ? (D.today || '') : f.on) + '"></label>'
+      + '<label class="bx-f-l">Samples'
+      + '<input class="bx-f-i bx-f-n" type="number" name="n" min="1" step="1" '
+      + 'inputmode="numeric" value="' + esc(f.n == null ? '1' : f.n) + '"></label>'
+      + '<label class="bx-f-l">Checked out by'
+      + '<select class="bx-f-i" name="by"' + (people.length ? '' : ' disabled')
+      + '>' + opts + '</select></label>'
+      + '<label class="bx-f-l bx-f-grow">What they took <i>(optional)</i>'
+      + '<input class="bx-f-i" type="text" name="note" maxlength="200" '
+      + 'value="' + esc(f.note || '') + '" placeholder="Samples"></label>'
+      + '<span class="bx-f-go">'
+      + '<button class="bx-f-save" type="submit">Record</button>'
+      + '<button class="bx-f-x" type="button" data-cancel="1">Cancel</button></span>'
+      + (people.length ? ''
+         : '<span class="bx-f-err">Nobody is set up to check samples out. '
+           + 'Set BOXY_CHECKOUT.</span>')
+      + (f.error ? '<span class="bx-f-err">' + esc(f.error) + '</span>' : '')
+      + '</form></td></tr>';
   }
 
   function render() {
@@ -160,6 +217,8 @@
             + '<td class="bx-bal' + (r.balance ? '' : ' bx-zero') + '">' + r.balance + '</td>'
             + '<td><button class="bx-give" type="button" data-person="' + esc(r.k) + '"'
             + ' data-name="' + esc(r.name) + '">Spend</button></td></tr>'
+            + (spendFor === r.k
+                ? formHtml(r.k, r.name, roles.length + 7) : '')
             + (open === r.k
                 ? '<tr class="bx-drow"><td colspan="' + (roles.length + 7) + '">'
                   + detailHtml(r.k) + '</td></tr>'
@@ -190,39 +249,67 @@
     $('#rc').textContent = 'Staff from the Employee Headcount view as of '
       + D.rosterAsOf + ' · ' + (D.roles || []).map(function (r) {
         return r.label + ' ' + (pts[r.key] == null ? r.points : pts[r.key]);
-      }).join(' · ') + ' by default, overridable per event';
+      }).join(' · ') + ' by default, overridable per event · '
+      + '1 Boxy Buck = ' + (D.samplePerPoint || 1) + ' free sample';
     $('#sub').textContent = s.onTheBoard + ' on the board · '
       + s.outstanding + ' outstanding';
   }
 
   // ── Spending ──────────────────────────────────────────────────────────
 
-  function record(personKey, personName) {
-    var what = window.prompt('What did ' + personName + ' take?\n\n'
-      + 'A note is required — a balance nobody can explain in three months '
-      + 'is worse than no balance.');
-    if (what == null || !what.trim()) return;
+  // Opening the form on somebody the current view is hiding would put it
+  // nowhere, so the view gives way to the form rather than the other way round.
+  function openForm(k) {
+    spendFor = k;
+    var visible = rows().some(function (r) { return r.k === k; });
+    if (!visible) {
+      show = 'all'; q = '';
+      $('#filter').value = 'all';
+      $('#q').value = '';
+    }
+    render();
+    var el = document.querySelector('.bx-f [name="n"]');
+    if (el) el.focus();
+  }
 
-    var n = window.prompt('How many Boxy Bucks?\n\n'
-      + 'Enter it as a positive number; it is recorded as a debit.');
-    if (n == null || !String(n).trim()) return;
-
+  function record(personKey) {
+    var f = form[personKey] || {};
     api('/api/boxy/ledger', {
       method: 'POST',
-      body: JSON.stringify({ person: personKey, kind: 'spend',
-                             points: n, note: what.trim() }),
+      body: JSON.stringify({
+        person: personKey, kind: 'spend', points: f.n,
+        onDate: f.on == null ? (D.today || '') : f.on,
+        checkedBy: f.by, note: (f.note || '').trim(),
+      }),
     }).then(function (r) {
       D.board = r.board;
       D.standings = r.standings;
+      spendFor = '';
+      delete form[personKey];
+      // A balance that just moved is worth re-reading, not re-showing stale.
+      delete detail[personKey];
+      if (open === personKey) load(personKey);
       $('#notice').innerHTML = '';
       render();
-    }).catch(function (err) { say(err.message || 'That did not save.'); });
+    }).catch(function (err) {
+      form[personKey] = Object.assign({}, f,
+        { error: err.message || 'That did not save.' });
+      render();
+    });
   }
 
   function bind() {
     $('#t').addEventListener('click', function (e) {
       var b = e.target.closest('.bx-give');
-      if (b) { record(b.dataset.person, b.dataset.name); return; }
+      if (b) {
+        var pk = b.dataset.person;
+        if (spendFor === pk) { spendFor = ''; render(); return; }
+        openForm(pk);
+        return;
+      }
+      if (e.target.closest('[data-cancel]')) {
+        spendFor = ''; render(); return;
+      }
       var o = e.target.closest('.bx-open');
       if (!o) return;
       var k = o.dataset.open;
@@ -230,6 +317,27 @@
       // list of detail panels, which is not what anybody came for.
       open = open === k ? '' : k;
       if (open) load(open); else render();
+    });
+    // Typing into the form has to survive the next render, so each keystroke
+    // is kept rather than read back off the inputs later.
+    $('#t').addEventListener('input', function (e) {
+      var f = e.target.closest('.bx-f');
+      if (!f || !e.target.name) return;
+      var k = f.dataset.for;
+      form[k] = form[k] || {};
+      form[k][e.target.name] = e.target.value;
+    });
+    $('#t').addEventListener('change', function (e) {
+      var f = e.target.closest('.bx-f');
+      if (!f || e.target.name !== 'by') return;
+      form[f.dataset.for] = form[f.dataset.for] || {};
+      form[f.dataset.for].by = e.target.value;
+    });
+    $('#t').addEventListener('submit', function (e) {
+      var f = e.target.closest('.bx-f');
+      if (!f) return;
+      e.preventDefault();
+      record(f.dataset.for);
     });
     $('#spend').addEventListener('click', function () {
       var name = window.prompt('Whose balance?\n\nType part of their name.');
@@ -244,15 +352,15 @@
           + hits.slice(0, 6).map(function (r) { return r.name; }).join(', ')
           + '. Be more specific, or use the Spend button on their row.');
       }
-      record(hits[0].k, hits[0].name);
+      openForm(hits[0].k);
     });
     // Filtering or searching away the open person would leave their detail
     // attached to nothing.
     $('#filter').addEventListener('change', function (e) {
-      show = e.target.value; open = ''; render();
+      show = e.target.value; open = ''; spendFor = ''; render();
     });
     $('#q').addEventListener('input', function (e) {
-      q = e.target.value.trim(); open = ''; render();
+      q = e.target.value.trim(); open = ''; spendFor = ''; render();
     });
   }
 

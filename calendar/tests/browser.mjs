@@ -98,7 +98,10 @@ const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], delete
                deletedComments: [], commented: null, savedFilters: null, resets: 0,
                mentionsSeen: 0, announced: [], announceFails: false,
                announceNoFile: false, attAdded: [], attDeleted: [],
-               personLoaded: [] };
+               personLoaded: [], spent: [] };
+
+// The four who run the sample cupboard, as the Worker hands them over.
+const BOXY_CHECKOUT = ['Jeremy DeFilippis', 'JJ McKenna', 'Joe Mangino', 'Cory Higgins'];
 
 // Who was at the open event, and the roster the picker offers.
 const BOXY_ROLES = [
@@ -126,7 +129,8 @@ page.on('console', (m) => {
   // That is the point of those tests rather than a fault.
   if (m.type() === 'error'
       && !/net::ERR_FAILED/.test(m.text())
-      && !/502 \(Bad Gateway\)/.test(m.text())) {
+      && !/502 \(Bad Gateway\)/.test(m.text())
+      && !/400 \(Bad Request\)/.test(m.text())) {
     errors.push('console: ' + m.text());
   }
 });
@@ -193,7 +197,11 @@ await page.route('**/*', async (route) => {
       ],
       ledger: [
         { kind: 'spend', points: -4, note: 'Hoodie', at: '2026-10-10T00:00:00.000Z',
-          by: 'jeremy@jettylife.com' },
+          by: 'jeremy@jettylife.com', on: '2026-10-08', checkedBy: 'Joe Mangino' },
+        // Written before a spend recorded either, which is what every row
+        // already in the live database looks like.
+        { kind: 'spend', points: -1, note: 'Sample', at: '2026-09-02T00:00:00.000Z',
+          by: 'jeremy@jettylife.com', on: '', checkedBy: '' },
       ],
     } });
   }
@@ -208,6 +216,25 @@ await page.route('**/*', async (route) => {
       standings: { people: 3, onTheBoard: 2, earned: 19, spent: 4, outstanding: 15 },
       roles: BOXY_ROLES, points: { worked: 3, volunteered: 2, attended: 1 },
       rosterAsOf: '2026-10-26', you: 'jeremy@jettylife.com',
+      checkout: BOXY_CHECKOUT, samplePerPoint: 1, today: '2026-10-27',
+    } });
+  }
+  if (p === '/api/boxy/ledger' && method === 'POST') {
+    const b = req.postDataJSON();
+    seen.spent.push(b);
+    if (!b.checkedBy) {
+      return route.fulfill({ status: 400,
+        json: { errors: ['Who checked them out?'] } });
+    }
+    return route.fulfill({ json: {
+      board: BOXY_STAFF.map((p2, i) => ({
+        k: p2.k, name: p2.n, dept: p2.d, division: 'BRAND', loc: '176 E Bay',
+        earned: [12, 7, 0][i], spent: [4 + (i ? 0 : Number(b.points)), 0, 0][i],
+        balance: [8 - (i ? 0 : Number(b.points)), 7, 0][i], events: [3, 2, 0][i],
+        byRole: { worked: [2, 1, 0][i], volunteered: [1, 0, 0][i], attended: [0, 1, 0][i] },
+      })),
+      standings: { people: 3, onTheBoard: 2, earned: 19,
+                   spent: 4 + Number(b.points), outstanding: 15 - Number(b.points) },
     } });
   }
   if (/\/attendance$/.test(p)) {
@@ -1322,6 +1349,79 @@ await t('does not spring back open when the filter is cleared', async () => {
   await page.waitForSelector('.bx-open');
   return whileHidden === 0 && (await page.locator('.bx-drow').count()) === 0;
 });
+
+// A spend used to be two window.prompt boxes. One Boxy Buck is one free
+// sample, so a spend is stock going out the door, and a checkout needs the
+// day, the count and the name of whoever handed it over.
+console.log('recording a checkout');
+await page.locator('.bx-open').first().click();
+await page.waitForSelector('.bx-d-t');
+await t('shows the day the samples went, not just the day it was typed', async () => {
+  const when = await page.locator('.bx-drow .bx-d-when').allTextContents();
+  // Two events, then the ledger: the dated spend, then the one from before
+  // the column existed, which falls back to when it was entered.
+  return when.includes('2026-10-08') && when.includes('2026-09-02');
+});
+await t('says who handed them over', async () =>
+  (await page.locator('.bx-drow .bx-d').textContent()).includes('Checked out by Joe Mangino'));
+await t('counts the debit in samples', async () =>
+  (await page.locator('.bx-drow .bx-d-role').allTextContents())
+    .some((x) => x === '4 samples'));
+
+await t('opens a form on the row rather than a prompt box', async () => {
+  await page.locator('.bx-give').first().click();
+  await page.waitForSelector('.bx-f');
+  return (await page.locator('.bx-f [name="on"]').count()) === 1
+    && (await page.locator('.bx-f [name="n"]').count()) === 1
+    && (await page.locator('.bx-f [name="by"]').count()) === 1;
+});
+await t('defaults the date to today, from the server rather than the browser', async () =>
+  (await page.locator('.bx-f [name="on"]').inputValue()) === '2026-10-27');
+// Typed names are how a cupboard ends up with "jeremy", "Jeremy D" and
+// "JD" all meaning the same person and none of them meaning anybody.
+await t('offers the four who can check samples out, and nothing else', async () => {
+  const opts = await page.locator('.bx-f [name="by"] option').allTextContents();
+  return opts.length === BOXY_CHECKOUT.length + 1
+    && BOXY_CHECKOUT.every((n) => opts.includes(n));
+});
+await t('shows what is there to spend', async () =>
+  (await page.locator('.bx-f-bal').textContent()).includes('8'));
+// Every keystroke re-renders the table underneath the form.
+await t('keeps what has been typed across a re-render', async () => {
+  await page.fill('.bx-f [name="n"]', '3');
+  await page.selectOption('.bx-f [name="by"]', 'Cory Higgins');
+  await page.fill('.bx-f [name="note"]', 'Two tees and a hat');
+  return (await page.locator('.bx-f [name="n"]').inputValue()) === '3'
+    && (await page.locator('.bx-f [name="by"]').inputValue()) === 'Cory Higgins'
+    && (await page.locator('.bx-f [name="note"]').inputValue()) === 'Two tees and a hat';
+});
+await t('sends all four fields', async () => {
+  await page.locator('.bx-f-save').click();
+  await page.waitForFunction(() => !document.querySelector('.bx-f'));
+  const b = seen.spent[seen.spent.length - 1];
+  return b.person === 'troy-taylor' && b.kind === 'spend' && b.points === '3'
+    && b.onDate === '2026-10-27' && b.checkedBy === 'Cory Higgins'
+    && b.note === 'Two tees and a hat';
+});
+await t('moves the balance on the board without a reload', async () =>
+  (await page.locator('.bx-t tbody tr').first().locator('.bx-bal').textContent()) === '5');
+// It used to say "That did not save" in the notice strip above the table,
+// a long way from the form that failed.
+await t('puts a refusal next to the form, and keeps the form open', async () => {
+  await page.locator('.bx-give').first().click();
+  await page.waitForSelector('.bx-f');
+  await page.fill('.bx-f [name="n"]', '2');
+  await page.locator('.bx-f-save').click();
+  await page.waitForSelector('.bx-f-err');
+  return (await page.locator('.bx-f-err').textContent()).includes('checked them out')
+    && (await page.locator('.bx-f [name="n"]').inputValue()) === '2';
+});
+await t('cancels without recording anything', async () => {
+  const before = seen.spent.length;
+  await page.locator('.bx-f-x').click();
+  await page.waitForFunction(() => !document.querySelector('.bx-f'));
+  return seen.spent.length === before;
+});
 await page.goto('http://local.test/');
 await page.waitForSelector('.mo-grid');
 
@@ -1430,6 +1530,12 @@ await page.locator('button[data-act="close"]').click();
 // And the leaderboard, which is a page of its own.
 await page.goto('http://local.test/boxy.html');
 await page.waitForSelector('.bx-t tbody tr');
+// Both panels are drawn on demand, so a sweep of the bare table never sees
+// a line of either -- which is how five modal rules stayed unreadable.
+await page.locator('.bx-open').first().click();
+await page.waitForSelector('.bx-d-t');
+await page.locator('.bx-give').first().click();
+await page.waitForSelector('.bx-f');
 await t('keeps the leaderboard readable in the dark', async () => {
   const bad = await contrastSweep();
   if (bad.length) console.log('         ' + bad.slice(0, 8).join(', '));

@@ -122,8 +122,34 @@ export function cleanEntry(input, defaults) {
   };
 }
 
-/** A spend or a correction. Spends arrive positive and are stored negative. */
-export function cleanLedger(input) {
+/**
+ * One Boxy Buck is one free sample. So a balance is not an abstract score --
+ * it is how many samples somebody may take, and a spend is a checkout: how
+ * many, on what day, handed over by whom.
+ */
+export const SAMPLE_PER_POINT = 1;
+
+/** Who may hand samples over, from config. Falls back to nobody, not to
+ *  everybody: an empty list should stop a checkout being recorded against a
+ *  name nobody can be held to, rather than let any name through. */
+export function checkoutNames(raw) {
+  return String(raw || '').split(',').map((x) => x.trim())
+    .filter(Boolean).slice(0, 20);
+}
+
+export function cleanDate(v) {
+  const d = String(v || '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '';
+}
+
+/**
+ * A spend or a correction. Spends arrive positive and are stored negative.
+ *
+ * A spend now carries the day the samples were taken and who handed them
+ * over, which between them explain the entry better than a free-text note
+ * ever did -- so the note is no longer required, only offered.
+ */
+export function cleanLedger(input, checkout) {
   const errors = [];
   const key = cleanKey(input && input.person);
   if (!key || !staffMember(key)) errors.push('Pick somebody on the staff list.');
@@ -132,13 +158,33 @@ export function cleanLedger(input) {
   if (kind !== 'spend' && kind !== 'adjust') errors.push('That is not a kind of entry.');
 
   const n = Number(String((input && input.points) != null ? input.points : '').replace(/[,\s]/g, ''));
-  if (!Number.isFinite(n) || n === 0) errors.push('How many Boxy Bucks?');
-  else if (Math.abs(n) > 100000) errors.push('That is not a plausible number.');
+  if (!Number.isFinite(n) || n === 0) {
+    errors.push(kind === 'spend' ? 'How many samples?' : 'How many Boxy Bucks?');
+  } else if (!Number.isInteger(n)) {
+    errors.push('Samples come whole.');
+  } else if (Math.abs(n) > 100000) {
+    errors.push('That is not a plausible number.');
+  }
+
+  const names = checkoutNames(checkout);
+  const by = String((input && input.checkedBy) || '').trim();
+  // Only on a spend: a correction is bookkeeping, not a handover.
+  if (kind === 'spend') {
+    if (!by) errors.push('Who checked them out?');
+    else if (!names.includes(by)) errors.push('"' + by.slice(0, 40) + '" is not on the checkout list.');
+  }
+
+  // Defaults to today, because that is the answer nearly every time -- but
+  // it is a field rather than a stamp, so a checkout entered on Monday for
+  // something taken on Saturday says Saturday.
+  const on = kind === 'spend'
+    ? (cleanDate(input && input.onDate) || new Date().toISOString().slice(0, 10))
+    : '';
+  if (kind === 'spend' && input && input.onDate && !cleanDate(input.onDate)) {
+    errors.push('That is not a date.');
+  }
 
   const note = String((input && input.note) || '').trim().slice(0, 200);
-  // A spend with nothing written against it is a balance nobody can explain
-  // in three months, and explaining it is the whole job of this field.
-  if (kind === 'spend' && !note) errors.push('Say what they took.');
 
   if (errors.length) return { errors };
   return {
@@ -150,6 +196,8 @@ export function cleanLedger(input) {
       // however it was typed, because it can go either way.
       points: kind === 'spend' ? -Math.abs(Math.round(n)) : Math.round(n),
       note,
+      onDate: on,
+      checkedBy: kind === 'spend' ? by : '',
     },
   };
 }
