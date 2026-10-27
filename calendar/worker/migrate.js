@@ -80,18 +80,55 @@ export function planMigration(row) {
 
 // Sub-types that turned out to name the same thing, folded onto one key.
 //
-// Email and SMS carry the same products, categories, SKUs and promotions and
-// differ only in which day of the week they land on. A promotion is how a
-// campaign reaches people rather than a different kind of item.
+// A promotion is how a campaign reaches people rather than a different kind
+// of item.
+//
+// Email and SMS were in here too, and are not any more: they were split back
+// apart in October (see planEmailSplit) once Email got a deadline that SMS
+// does not have. Leaving the pair here would have been the whole bug -- every
+// function that folds a sub-type would have quietly turned a live 'email' key
+// back into a dead 'email-sms' one.
 //
 // Every merged key maps to itself, which is what makes this idempotent: a
 // second pass over an already-migrated row writes back what is already there
 // instead of duplicating it. Add a pair here and the migration picks it up.
 export const SUB_TYPE_MERGES = {
-  email: 'email-sms', sms: 'email-sms', 'email-sms': 'email-sms',
   campaign: 'campaign-promotion', promotion: 'campaign-promotion',
   'campaign-promotion': 'campaign-promotion',
 };
+
+// The key those two were merged onto, and are now split off again. Nothing
+// stores it any more; it is here so the split can find what still does.
+export const MERGED_EMAIL_SMS = 'email-sms';
+
+/**
+ * What becomes of one row still carrying the merged Email/SMS key.
+ *
+ * A send that has already gone out gets both keys on the one row: it really
+ * was both, nothing is lost, and splitting history into two items would
+ * invent a second send that never existed.
+ *
+ * A send still to come becomes two items, because that is the point of the
+ * split -- each gets its own date, its own deadline, and can be cancelled
+ * without the other. The original id stays with the Email half: it is the one
+ * that carries a deadline, and keeping the id keeps its attachments, its
+ * comments and its place in anybody's subscribed calendar.
+ *
+ * Pure, and idempotent: a row with neither key comes back null.
+ */
+export function planEmailSplit(row, today) {
+  const subs = splitList(row && row.sub_types);
+  if (!subs.includes(MERGED_EMAIL_SMS)) return null;
+  const rest = subs.filter((k) => k !== MERGED_EMAIL_SMS && k !== 'email' && k !== 'sms');
+  // Taxonomy order, the same as a normal write produces, so a split row and
+  // a typed one that carry the same sub-types store the same string.
+  const ordered = (...keys) => rest.concat(keys)
+    .sort((a, b) => SUB_TYPE_KEYS.indexOf(a) - SUB_TYPE_KEYS.indexOf(b))
+    .join(',');
+  const future = String((row && row.start_date) || '') > String(today || '');
+  if (!future) return { keep: ordered('email', 'sms'), copy: null };
+  return { keep: ordered('email'), copy: ordered('sms') };
+}
 
 export function mergeSubTypes(subTypes) {
   const out = [];
@@ -145,7 +182,11 @@ export function promoteSocial(row) {
 // Deadlines are not guessed at. Nothing stored says which meetings were really
 // deadlines, and inventing it from a title would be worse than leaving them
 // where they are for somebody to re-tag.
-const MARKETING_SUBS = ['campaign-promotion', 'email-sms', 'paid-advo', 'photo-video',
+// Still names the merged key as well as the two it split into: this decides
+// where an UNMIGRATED row goes, and an unmigrated row is exactly the one that
+// has not been split yet.
+const MARKETING_SUBS = ['campaign-promotion', 'email-sms', 'email', 'sms',
+                        'paid-advo', 'photo-video',
                         'collab', 'ambassador', 'influencer', 'website'];
 
 export function splitKind(row) {

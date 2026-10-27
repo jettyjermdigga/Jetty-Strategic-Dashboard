@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS items (
                                           -- id, division, category, sku, url. See
                                           -- worker/products.js. An example image is an
                                           -- ordinary attachment whose slot is the row id.
+  -- Set on a Deadline item the Worker made for itself, naming the item it
+  -- is the deadline for. See worker/deadlines.js. NULL on a deadline somebody
+  -- typed in, which is what keeps those from being moved or deleted under
+  -- them when an unrelated Paid Advo item changes.
+  deadline_for TEXT,
   results_posted_at TEXT,                 -- when the sales report was announced in
                                           -- Slack. Set once; it is what stops the
                                           -- announcement firing again on every

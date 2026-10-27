@@ -28,12 +28,16 @@ export const MARKETING_BLANKS = ['needs', 'staff_count', 'vehicles'];
 // Reported after the fact, and only on something that actually sold.
 export const RESULTS_ONLY = ['event_fee', 'orders', 'net_revenue'];
 
-// The one sub-type that clears anything, and only on a Marketing item.
+// The sub-types that clear anything, and only on a Marketing item.
 //
-// Scoped to the kind on purpose. An Event can carry an Email/SMS sub-type
-// because there is a campaign about it -- HopSauce and Coquina Jam both do --
-// and that festival still happens at a real beach. An earlier version of this
-// rule keyed on the sub-type alone and wiped both of their venues.
+// Scoped to the kind on purpose. An Event can carry an Email sub-type because
+// there is a campaign about it -- HopSauce and Coquina Jam both do -- and that
+// festival still happens at a real beach. An earlier version of this rule
+// keyed on the sub-type alone and wiped both of their venues.
+//
+// Both halves of the old Email/SMS key, because a text message has no venue
+// either; splitting the key was about deadlines, not about places.
+export const SENDS = ['email', 'sms'];
 export const EMAIL_SMS_BLANKS = ['venue', 'address', 'city', 'state', 'zip', 'products'];
 
 // Mutates `out` in place and returns it, which is how the caller uses it.
@@ -47,7 +51,7 @@ export function applyBlanks(out, subs) {
   if (kind === 'marketing') for (const k of MARKETING_BLANKS) out[k] = null;
   // Marketing only -- see EMAIL_SMS_BLANKS. This mirrors exactly what the form
   // stops asking, so no row holds what its own form never showed.
-  if (kind === 'marketing' && (subs || []).includes('email-sms')) {
+  if (kind === 'marketing' && (subs || []).some((k) => SENDS.includes(k))) {
     for (const k of EMAIL_SMS_BLANKS) out[k] = null;
   }
   // Only an Event takes money at the door.

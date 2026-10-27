@@ -137,15 +137,21 @@ export const DIVISIONS = [
 
 export const SUB_TYPES = [
   { key: 'tradeshow',   label: 'Tradeshow',   department: 'wholesale' },
-  // Same reasoning as Email/SMS below: a promotion is how a campaign reaches
-  // people, not a different kind of thing to put on a calendar.
+  // A promotion is how a campaign reaches people, not a different kind of
+  // thing to put on a calendar.
   { key: 'campaign-promotion', label: 'Campaign/Promo', department: 'marketing',
     sheetValues: ['Campaign', 'Promotion', 'Promo', 'Campaign/Promo', 'Campaign/Promotion'] },
-  // One axis value, not two. The same products, categories, SKUs and
-  // promotions go out on both -- they are staggered across the week, which is
-  // scheduling, not a difference in what the item is about.
-  { key: 'email-sms',   label: 'Email/SMS',   department: 'marketing',
-    sheetValues: ['Email', 'SMS', 'Email/SMS', 'Email / SMS'] },
+  // Two axis values, not one. These were merged in October on the reasoning
+  // that the same products and promotions go out on both and they differ only
+  // in which day they land on. That held until Email got a deadline of its own
+  // -- 10 days ahead, where SMS has none -- and a single key cannot carry a
+  // rule that applies to half of what it names.
+  //
+  // Named, because the Worker watches Email: see DEADLINE_LEADS.
+  { key: 'email',       label: 'Email',       department: 'marketing',
+    sheetValues: ['Email'] },
+  { key: 'sms',         label: 'SMS',         department: 'marketing',
+    sheetValues: ['SMS'] },
   // Paid media, kept apart from Campaign/Promo because the question "what did
   // we spend money placing?" is a different one from "what were we running".
   // A campaign can be entirely organic and a paid push can carry no campaign.
@@ -242,6 +248,11 @@ export const TAXONOMY = {
 
 // The sub-type SunnySide is pinged about. See PAID_ADVO_WATCHERS.
 export const PAID_ADVO = 'paid-advo';
+
+// The sub-type that gets a 10-day deadline. See deadlines.js. Spelled once
+// here for the same reason PAID_ADVO is: a key written out by hand at the
+// watch site goes quietly dead the day this one is renamed.
+export const EMAIL = 'email';
 
 // The need that asks for an event to go on the website. See listing.js.
 export const WEBSITE_LISTING = 'website-listing';

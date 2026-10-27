@@ -60,9 +60,9 @@ const ITEMS = [
        department: 'long-branch-store', departments: 'marketing', sub_types: 'campaign-promotion',
        status: 'Pending', start_date: dayThis(10), end_date: dayThis(10) }),
   // A Marketing item, which is what an email blast actually is -- and the
-  // kind the Email/SMS rule is scoped to.
+  // kind the Email rule is scoped to.
   ev({ id: '33333333-3333-4333-8333-333333333333', title: 'Fall Email',
-       event_type: 'marketing', department: 'marketing', sub_types: 'email-sms',
+       event_type: 'marketing', department: 'marketing', sub_types: 'email',
        start_date: dayThis(14), end_date: dayThis(14) }),
   ev({ id: '44444444-4444-4444-8444-444444444444', title: 'Buy Plan Meeting',
        event_type: 'meeting', department: '',
@@ -448,7 +448,7 @@ await t('finds the events with no department at all', async () => {
 });
 await t('names every active filter, removably', async () => {
   await clearAll();
-  await page.locator('.fchip[data-key="email-sms"]').click();
+  await page.locator('.fchip[data-key="email"]').click();
   await page.locator('.fchip[data-key="Pending"]').click();
   const toks = await page.locator('.fs-tok').allTextContents();
   return toks.length === 2;
@@ -604,7 +604,7 @@ await page.locator('.f-extra[value="marketing"]').check();
 await page.locator('button[data-act="next"]').click();
 await t('offers sub-types from every department on the event', async () => {
   const vals = await page.locator('.f-sub').evaluateAll((els) => els.map((e) => e.value));
-  return vals.includes('email-sms') && !vals.includes('tradeshow');
+  return vals.includes('email') && !vals.includes('tradeshow');
 });
 await page.locator('button[data-act="next"]').click();
 await t('derives the retail week on screen', async () =>
@@ -885,7 +885,7 @@ await page.waitForSelector('#syncBox .sub-url');
 await t('hands out one stable link', async () =>
   (await page.locator('#feedUrl').textContent()).includes('token=' + 'a'.repeat(64)));
 await t('warns that nothing ticked means all of it', async () =>
-  (await page.locator('.sub-scope.warn').textContent()).includes('every Email/SMS send'));
+  (await page.locator('.sub-scope.warn').textContent()).includes('every Email and SMS send'));
 // Counted off the taxonomy rather than written out, so adding a sub-type or a
 // department is not a test failure.
 await t('offers every axis to choose from', async () =>
@@ -1201,7 +1201,7 @@ await t('opens the event the DM pointed at', async () =>
   (await page.locator('.det-title').textContent()).includes('Surf Expo'));
 
 console.log('product highlights on a marketing item');
-// Email/SMS carries no product list of its own, so step 9 drops the section
+// Email carries no product list of its own, so step 9 drops the section
 // rather than showing one nobody fills in.
 const toFinal = async (sub) => {
   await page.goto('http://local.test/');
@@ -1215,7 +1215,7 @@ const toFinal = async (sub) => {
   await page.locator('button[data-act="next"]').click();   // extras
   await page.locator('button[data-act="next"]').click();   // to subs
   if (sub) await page.locator('.f-sub[value="' + sub + '"]').check();
-  // Next until the last step, rather than a fixed count: Email/SMS drops the
+  // Next until the last step, rather than a fixed count: Email drops the
   // where step, so the number of clicks is part of what is under test.
   for (let i = 0; i < 6; i++) {
     if (await page.locator('.step[data-step="final"]:not([hidden])').count()) break;
@@ -1224,8 +1224,8 @@ const toFinal = async (sub) => {
   await page.waitForSelector('.step[data-step="final"]:not([hidden])');
 };
 
-await toFinal('email-sms');
-await t('drops the highlights section on Email/SMS', async () =>
+await toFinal('email');
+await t('drops the highlights section on Email', async () =>
   await page.locator('#prodWrap').isHidden());
 await t('and never asks where an email happens', async () => {
   // Gone from the step count as well as from view -- "Step 6 of 6", not a
@@ -1248,13 +1248,13 @@ await t('keeps it on a sub-type that does carry products', async () =>
   await page.locator('#prodWrap').isVisible());
 await t('and still asks a shoot where it is', async () =>
   (await page.locator('.trail-n').textContent()).includes('of 8'));
-await t('and drops it the moment Email/SMS is ticked as well', async () => {
+await t('and drops it the moment Email is ticked as well', async () => {
   // Back to the sub-types by the step it is on, not by a count of clicks.
   for (let i = 0; i < 6; i++) {
     if (await page.locator('.step[data-step="subs"]:not([hidden])').count()) break;
     await page.locator('button[data-act="back"]').click();
   }
-  await page.locator('.f-sub[value="email-sms"]').check();
+  await page.locator('.f-sub[value="email"]').check();
   for (let i = 0; i < 6; i++) {
     if (await page.locator('.step[data-step="final"]:not([hidden])').count()) break;
     await page.locator('button[data-act="next"]').click();
@@ -1264,8 +1264,8 @@ await t('and drops it the moment Email/SMS is ticked as well', async () => {
 });
 await page.locator('button[data-act="close"]').click().catch(() => {});
 
-// An Event with an Email/SMS campaign on it is still an event in a place.
-await t('leaves an Event with an Email/SMS campaign its where step', async () => {
+// An Event with an Email campaign on it is still an event in a place.
+await t('leaves an Event with an Email campaign its where step', async () => {
   await page.goto('http://local.test/');
   await page.waitForSelector('.mo-grid');
   if (await page.locator('#fltReset').count()) await clearAll();
@@ -1277,7 +1277,7 @@ await t('leaves an Event with an Email/SMS campaign its where step', async () =>
   await page.locator('.f-dept[value="marketing"]').check();
   await page.locator('button[data-act="next"]').click();
   await page.locator('button[data-act="next"]').click();   // to subs
-  await page.locator('.f-sub[value="email-sms"]').check();
+  await page.locator('.f-sub[value="email"]').check();
   for (let i = 0; i < 8; i++) {
     if (await page.locator('.step[data-step="final"]:not([hidden])').count()) break;
     await page.locator('button[data-act="next"]').click();
@@ -1287,7 +1287,7 @@ await t('leaves an Event with an Email/SMS campaign its where step', async () =>
 });
 await page.locator('button[data-act="close"]').click().catch(() => {});
 
-await t('and is gone when an existing Email/SMS item is opened to edit', async () => {
+await t('and is gone when an existing Email item is opened to edit', async () => {
   await page.goto('http://local.test/');
   await page.waitForSelector('.mo-grid');
   // Filters are remembered across reloads, and earlier tests left some on.
@@ -1297,6 +1297,43 @@ await t('and is gone when an existing Email/SMS item is opened to edit', async (
   await page.locator('#modalFoot button[data-act="edit"]').click();
   await page.waitForSelector('#prodWrap', { state: 'attached' });
   return await page.locator('#prodWrap').isHidden();
+});
+await page.locator('button[data-act="close"]').click().catch(() => {});
+
+// ── Email and SMS as two categories ────────────────────────────
+console.log('Email and SMS, split apart');
+await page.goto('http://local.test/');
+await page.waitForSelector('.mo-grid');
+await t('offers both as filter chips, and the merged one not at all', async () =>
+  (await page.locator('.fchip[data-key="email"]').count()) === 1
+  && (await page.locator('.fchip[data-key="sms"]').count()) === 1
+  && (await page.locator('.fchip[data-key="email-sms"]').count()) === 0);
+
+// A browser that remembers the merged key should come back showing both
+// halves, not neither. Dropping an unknown key is right for one that was
+// merged away and wrong for one that was split.
+await t('turns a remembered Email/SMS filter into both chips', async () => {
+  await page.evaluate(() => window.localStorage.setItem(
+    'jetty-calendar-prefs-v3',
+    // A key that was split, and one that never existed: the first should
+    // come back as both halves, the second should still be dropped.
+    JSON.stringify({ sel: { subs: ['email-sms', 'not-a-key'] } })));
+  await page.reload();
+  await page.waitForSelector('.mo-grid');
+  const on = await page.locator('.fchip[data-axis="subs"]').evaluateAll(
+    (els) => els.filter((e) => e.className.split(/\s+/).indexOf('on') >= 0)
+      .map((e) => e.dataset.key).sort());
+  await page.evaluate(() => window.localStorage.clear());
+  return JSON.stringify(on) === JSON.stringify(['email', 'sms']);
+});
+await page.reload();
+await page.waitForSelector('.mo-grid');
+
+// Splitting the key was about deadlines; a text message has no product list
+// either way.
+await t('drops the highlights section on SMS as well as Email', async () => {
+  await toFinal('sms');
+  return (await page.locator('#prodWrap').isHidden());
 });
 await page.locator('button[data-act="close"]').click().catch(() => {});
 

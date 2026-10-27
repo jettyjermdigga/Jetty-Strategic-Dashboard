@@ -17,7 +17,7 @@ import { TAXONOMY, EVENT_TYPES, EVENT_TYPE_KEYS, DEPARTMENTS, DEPARTMENT_KEYS,
 import { retailWeek, retailWeekStart } from './retail.js';
 import { sqlStatements } from './sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
-         splitKind } from './migrate.js';
+         splitKind, planEmailSplit, MERGED_EMAIL_SMS } from './migrate.js';
 import { applyBlanks } from './blanks.js';
 import { normaliseProducts } from './products.js';
 import { commentMessage, dmMentions, displayName, eventUrl,
@@ -27,6 +27,7 @@ import { rollPlaces, FIELDS as PLACE_FIELDS } from './places.js';
 import { noticeBody, countUnread, CALENDAR_AUTHOR } from './notices.js';
 import { readyToPost, salesMessage, deliver, RESULTS_SLOT } from './sales.js';
 import { listingAction, listingMessage, WEBSITE_NEED } from './listing.js';
+import { deadlineFor, deadlineAction, PREFIX as DEADLINE_PREFIX } from './deadlines.js';
 import {
   ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, cleanKey as boxyKey,
   pickable, leaderboard, standings, csv as boxyCsv, personSummary, staffMember,
@@ -98,6 +99,8 @@ const ADDED_COLUMNS = [
   // IF NOT EXISTS does not revisit a table that exists -- so a column added
   // to schema.sql alone reaches every database except the live one.
   'results_posted_at TEXT',
+  // Same again for the deadlines the Worker sets for itself.
+  'deadline_for TEXT',
 ];
 
 // Same idea, on the attachments table.
@@ -131,6 +134,7 @@ async function ensureSchema(db) {
   await migrateSubTypeMerges(db);
   await migrateSocialKind(db);
   await migrateKindSplit(db);
+  await migrateEmailSmsSplit(db);
   await backfillSocial(db);
   schemaReady = true;
 }
@@ -273,6 +277,75 @@ async function migrateSocialKind(db) {
   await db.prepare(
     'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
     .bind(SOCIAL_KIND_KEY, JSON.stringify({ items: batch.length, feeds: feedBatch.length }),
+          new Date().toISOString()).run();
+}
+
+// One-time: Email/SMS back into Email and SMS. See planEmailSplit for which
+// rows are duplicated and which carry both keys. Guarded by meta, and safe to
+// re-run -- a row that has moved no longer carries the merged key.
+const EMAIL_SPLIT_KEY = 'email-sms-split-2026-10';
+
+async function migrateEmailSmsSplit(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?')
+    .bind(EMAIL_SPLIT_KEY).first();
+  if (done) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const res = await db.prepare(
+    "SELECT * FROM items WHERE sub_types LIKE '%' || ? || '%'")
+    .bind(MERGED_EMAIL_SMS).all();
+
+  // The copy is a whole row rather than a handful of fields: an SMS send
+  // split off an Email one should arrive carrying the same caption, notes,
+  // products and department, because until this moment it WAS that item.
+  // Attachments and comments deliberately do not come along -- they belong to
+  // one send, and the original keeps them.
+  const copyCols = COLS.filter((c) => c !== 'sub_types');
+  const insert = db.prepare(
+    'INSERT INTO items (id, sub_types,' + copyCols.join(',')
+    + ',created_by,created_at,updated_by,updated_at) '
+    + 'VALUES (?,?' + ',?'.repeat(copyCols.length + 4) + ')');
+  const update = db.prepare('UPDATE items SET sub_types = ? WHERE id = ?');
+
+  const now = new Date().toISOString();
+  const batch = [];
+  const counts = { both: 0, split: 0 };
+  for (const row of res.results || []) {
+    const plan = planEmailSplit(row, today);
+    if (!plan) continue;
+    batch.push(update.bind(plan.keep, row.id));
+    if (!plan.copy) { counts.both += 1; continue; }
+    counts.split += 1;
+    batch.push(insert.bind(crypto.randomUUID(), plan.copy,
+                           ...copyCols.map((c) => (row[c] === undefined ? null : row[c])),
+                           row.created_by, row.created_at, row.updated_by || null, now));
+  }
+  const BATCH = 100;
+  for (let i = 0; i < batch.length; i += BATCH) {
+    await db.batch(batch.slice(i, i + BATCH));
+  }
+
+  // A saved sync asking for Email/SMS should keep getting both halves rather
+  // than quietly receiving nothing.
+  const feeds = await db.prepare('SELECT token, filters FROM feeds').all();
+  const feedStmt = db.prepare('UPDATE feeds SET filters = ? WHERE token = ?');
+  const feedBatch = [];
+  for (const f of feeds.results || []) {
+    let parsed;
+    try { parsed = JSON.parse(f.filters || '{}'); } catch (e) { continue; }
+    if (!parsed || !Array.isArray(parsed.sub) || !parsed.sub.includes(MERGED_EMAIL_SMS)) continue;
+    const sub = [];
+    for (const k of parsed.sub) {
+      if (k === MERGED_EMAIL_SMS) { if (!sub.includes('email')) sub.push('email', 'sms'); }
+      else if (!sub.includes(k)) sub.push(k);
+    }
+    feedBatch.push(feedStmt.bind(JSON.stringify({ ...parsed, sub }), f.token));
+  }
+  if (feedBatch.length) await db.batch(feedBatch);
+
+  await db.prepare(
+    'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(EMAIL_SPLIT_KEY, JSON.stringify({ ...counts, feeds: feedBatch.length }),
           new Date().toISOString()).run();
 }
 
@@ -1163,6 +1236,54 @@ async function handleApi(request, env, url, who, ctx) {
     if (ctx && ctx.waitUntil) ctx.waitUntil(run);
   };
 
+  // Keep the Deadline item that belongs to this one in step: made with it,
+  // moved when it moves, renamed when it is renamed, and taken away when the
+  // sub-type comes off or the item goes. See worker/deadlines.js for the
+  // rules; this is only the writing.
+  //
+  // Awaited rather than deferred, unlike the Slack watchers. Those are
+  // messages, and a message that arrives a second late is fine; this is a row
+  // the caller is about to re-read, and a calendar that does not show the
+  // deadline until the next refresh looks broken.
+  const keepDeadline = async (after) => {
+    const had = await db.prepare(
+      'SELECT * FROM items WHERE deadline_for = ?').bind(after ? after.id : '').first();
+    const act = deadlineAction(after, had);
+    if (!act) return null;
+
+    if (act === 'delete') {
+      await db.prepare('DELETE FROM items WHERE id = ? AND deadline_for IS NOT NULL')
+        .bind(had.id).run();
+      return { deadline: null };
+    }
+
+    // Through normalise() rather than straight into SQL, so a deadline the
+    // Worker writes is blanked by exactly the same rules as one somebody
+    // types -- and so an unknown department or a bad date is caught here
+    // rather than becoming a row nothing can open.
+    const want = deadlineFor(after);
+    const { row, errors } = normalise(coerceKeys(want), null);
+    if (errors.length) return null;
+
+    const now = new Date().toISOString();
+    if (act === 'create') {
+      const did = crypto.randomUUID();
+      await db.prepare(
+        'INSERT INTO items (id,' + COLS.join(',')
+        + ',deadline_for,created_by,created_at,updated_by,updated_at) '
+        + 'VALUES (?' + ',?'.repeat(COLS.length + 5) + ')',
+      ).bind(did, ...COLS.map((c) => row[c]), after.id,
+             who.email, now, who.email, now).run();
+      return { deadline: withRetail({ id: did, ...row, deadline_for: after.id }) };
+    }
+
+    await db.prepare(
+      'UPDATE items SET ' + COLS.map((c) => c + ' = ?').join(', ')
+      + ', updated_by = ?, updated_at = ? WHERE id = ?',
+    ).bind(...COLS.map((c) => row[c]), who.email, now, had.id).run();
+    return { deadline: withRetail({ id: had.id, ...row, deadline_for: after.id }) };
+  };
+
   const requireEditor = () => (who.canEdit
     ? null
     : json({ error: who.email
@@ -1186,7 +1307,9 @@ async function handleApi(request, env, url, who, ctx) {
 
     tellWatchers('created', null, { id, ...row });
     tellWebsite(null, { id, ...row });
-    return json({ item: withRetail({ id, ...row, created_by: who.email, created_at: now }) }, 201);
+    const made = await keepDeadline({ id, ...row });
+    return json({ item: withRetail({ id, ...row, created_by: who.email, created_at: now }),
+                  ...(made || {}) }, 201);
   }
 
   // Your own calendar sync: the link, and what it carries. Never anybody
@@ -1649,6 +1772,10 @@ async function handleApi(request, env, url, who, ctx) {
       await db.prepare('DELETE FROM attachments WHERE item_id = ?').bind(id).run();
       await db.prepare('DELETE FROM comments WHERE item_id = ?').bind(id).run();
       await db.prepare('DELETE FROM items WHERE id = ?').bind(id).run();
+      // And the deadline that existed only to serve it. Scoped to rows the
+      // Worker made: a deadline somebody typed is theirs, whatever it happens
+      // to be about.
+      await db.prepare('DELETE FROM items WHERE deadline_for = ?').bind(id).run();
       // A paid placement that is cancelled is the change most worth hearing
       // about, and the one a watcher would otherwise never learn of.
       tellWatchers('deleted', existing, null);
@@ -1672,7 +1799,9 @@ async function handleApi(request, env, url, who, ctx) {
       tellWebsite(existing, { id, ...row });
       // The other one.
       announceResults(id);
-      return json({ item: withRetail({ id, ...row, updated_by: who.email, updated_at: now }) });
+      const moved = await keepDeadline({ id, ...row });
+      return json({ item: withRetail({ id, ...row, updated_by: who.email, updated_at: now }),
+                    ...(moved || {}) });
     }
 
     return json({ error: 'Method not allowed.' }, 405);

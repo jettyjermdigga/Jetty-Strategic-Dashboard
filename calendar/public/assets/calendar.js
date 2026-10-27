@@ -78,11 +78,16 @@
     } catch (e) { /* storage unavailable; the calendar still works */ }
   }
 
+  // Keys that have been renamed or split, and what they became. Dropping an
+  // unknown key is right for one that was merged away; it is wrong for one
+  // that was split, because a browser filtered to Email/SMS would come back
+  // showing neither half rather than both.
+  var MOVED_KEYS = { subs: { 'email-sms': ['email', 'sms'] } };
+
   // Every key the taxonomy still recognises on an axis. Saved selections are
-  // checked against this: when a value is merged away or renamed -- Email and
-  // SMS becoming Email/SMS -- a browser that remembers the old key would
-  // otherwise come back to a calendar filtered to nothing, with a chip lit for
-  // a category that no longer exists.
+  // checked against this: when a value is merged away or renamed, a browser
+  // that remembers the old key would otherwise come back to a calendar
+  // filtered to nothing, with a chip lit for a category that no longer exists.
   function axisKeys(axis) {
     if (axis === 'kinds') return tax('eventTypes').map(function (x) { return x.key; });
     if (axis === 'subs') return tax('subTypes').map(function (x) { return x.key; });
@@ -98,7 +103,14 @@
       var saved = p.sel && p.sel[axis];
       if (!Array.isArray(saved)) return;
       var known = axisKeys(axis);
-      state.sel[axis] = saved.filter(function (k) { return known.indexOf(k) >= 0; });
+      var moved = MOVED_KEYS[axis] || {};
+      var want = [];
+      saved.forEach(function (k) {
+        (moved[k] || [k]).forEach(function (x) {
+          if (known.indexOf(x) >= 0 && want.indexOf(x) < 0) want.push(x);
+        });
+      });
+      state.sel[axis] = want;
     });
   }
 
@@ -1558,7 +1570,7 @@
       if (k === 'marketing') {
         out.push('when');
         // Inside the marketing branch, so the sub-type alone is the question
-        // here -- an Event with an Email/SMS campaign on it never reaches this.
+        // here -- an Event with a send campaign on it never reaches this.
         if (!isEmailSms()) out.push('where');
         out.push('final');
         return out;
@@ -2068,21 +2080,25 @@
     paint();
   }
 
-  // A meeting and a deadline store no product highlights at all. Email/SMS
+  // A meeting and a deadline store no product highlights at all. A send
   // stores none either, by choice: those go out against the week's promo
   // rather than carrying a product list of their own, so the section was
   // being skipped every time it appeared.
   //
+  // Both halves of the old Email/SMS key: splitting it was about deadlines,
+  // and a text message has no product list either way.
+  //
   // Read off the form rather than passed in, because both callers want the
   // live answer: paint() to hide the section, readForm() to drop the rows. One
   // function so "not shown" and "not stored" cannot drift apart.
+  var SENDS = ['email', 'sms'];
   function isEmailSms() {
     return Array.prototype.some.call(document.querySelectorAll('.f-sub:checked'),
-      function (el) { return el.value === 'email-sms'; });
+      function (el) { return SENDS.indexOf(el.value) >= 0; });
   }
 
-  // Marketing only. An Event can carry an Email/SMS sub-type because there is
-  // a campaign about it, and that event still happens somewhere and can still
+  // Marketing only. An Event can carry a send sub-type because there is a
+  // campaign about it, and that event still happens somewhere and can still
   // highlight product.
   function isMarketingEmailSms() {
     var k = document.querySelector('.f-kind:checked');
@@ -2412,7 +2428,7 @@
       + (any
           ? ''
           : '<p class="sub-scope warn"><strong>Nothing ticked means everything</strong> &mdash; all '
-            + state.items.length + ' events, including every Email/SMS send. That is a lot to '
+            + state.items.length + ' events, including every Email and SMS send. That is a lot to '
             + 'put in a personal calendar. Tick the departments you work in.</p>')
       + '<p class="hint">Nothing ticked in a section means that section does not narrow anything. '
       + 'Ticking Box Truck and Meetings gives you both.</p>'

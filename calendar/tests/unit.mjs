@@ -15,7 +15,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const root = (p) => path.join(HERE, '..', p);
 
 import { sqlStatements } from '../worker/sql.js';
-import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial, splitKind,
+import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
+         planEmailSplit, MERGED_EMAIL_SMS, splitKind,
          SUB_TYPE_MERGES } from '../worker/migrate.js';
 import { normaliseProducts, readProducts, MAX_PRODUCTS } from '../worker/products.js';
 import { applyBlanks } from '../worker/blanks.js';
@@ -32,6 +33,8 @@ import {
   checkoutNames, SAMPLE_PER_POINT,
   STAFF as BOXY_STAFF, ROSTER_AS_OF as BOXY_AS_OF,
 } from '../worker/boxy.js';
+import { deadlineFor, deadlineAction, leadFor, minusDays, deadlineTitle,
+         PREFIX, WATCHED_SUBS } from '../worker/deadlines.js';
 import { noticeBody, summarise, countUnread, isAutomatic,
          CALENDAR_AUTHOR } from '../worker/notices.js';
 import { aov, netOfFee, hasReport, readyToPost, money, salesMessage, deliver,
@@ -133,7 +136,8 @@ describe('planMigration', () => {
   it('drops the retired sub-types and keeps the rest', () => {
     eq(planMigration({ event_types: 'jrf', sub_types: 'event,meeting,blog-post,seasonal' }).sub_types,
        null);
-    eq(planMigration({ event_types: 'marketing', sub_types: 'email,sms' }).sub_types, 'email-sms');
+    // Both are live keys again since the split, so neither is folded away.
+    eq(planMigration({ event_types: 'marketing', sub_types: 'email,sms' }).sub_types, 'email,sms');
     eq(planMigration({ event_types: 'marketing', sub_types: 'campaign,promotion' }).sub_types,
        'campaign-promotion');
   });
@@ -176,26 +180,29 @@ describe('vehicle bookings', () => {
 
 describe('merging the sub-types that said the same thing', () => {
   it('folds either half of a pair onto one key', () => {
-    eq(mergeSubTypes('email'), 'email-sms');
-    eq(mergeSubTypes('sms'), 'email-sms');
     eq(mergeSubTypes('campaign'), 'campaign-promotion');
     eq(mergeSubTypes('promotion'), 'campaign-promotion');
   });
   it('does not leave two copies on an item that had both', () => {
-    eq(mergeSubTypes('email,sms'), 'email-sms');
     eq(mergeSubTypes('campaign,promotion'), 'campaign-promotion');
   });
-  it('folds both pairs on one item', () => {
-    eq(mergeSubTypes('campaign,email,promotion,sms'), 'campaign-promotion,email-sms');
-  });
   it('leaves the other sub-types alone, in order', () => {
-    eq(mergeSubTypes('social,sms,website'), 'social,email-sms,website');
+    eq(mergeSubTypes('social,campaign,website'), 'social,campaign-promotion,website');
   });
   it('is idempotent, so a second run changes nothing', () => {
-    const once = mergeSubTypes('email,sms,campaign,promotion');
+    const once = mergeSubTypes('campaign,promotion');
     eq(mergeSubTypes(once), once);
-    eq(mergeSubTypes('email-sms'), 'email-sms');
     eq(mergeSubTypes('campaign-promotion'), 'campaign-promotion');
+  });
+  // Email and SMS were in this map until they were split back apart. Leaving
+  // them would have been the whole bug: every fold would have turned a live
+  // key back into a dead one, silently, on write.
+  it('no longer folds Email and SMS, which are live keys again', () => {
+    eq(mergeSubTypes('email'), 'email');
+    eq(mergeSubTypes('sms'), 'sms');
+    eq(mergeSubTypes('email,sms'), 'email,sms');
+    ok(!Object.keys(SUB_TYPE_MERGES).includes('email'), 'email is still in the merge map');
+    ok(!Object.keys(SUB_TYPE_MERGES).includes('sms'), 'sms is still in the merge map');
   });
   it('gives null for an item with no sub-type', () => {
     eq(mergeSubTypes(''), null);
@@ -213,7 +220,12 @@ describe('merging the sub-types that said the same thing', () => {
     ok(m, 'MARKETING_SUBS not found in migrate.js');
     const inMigration = (m[1].match(/'([a-z0-9-]+)'/g) || []).map((q) => q.slice(1, -1));
     const inTaxonomy = SUB_TYPES.filter((s) => s.department === 'marketing').map((s) => s.key);
-    eq([...inMigration].sort(), [...inTaxonomy].sort());
+    // The merged key is still named there on purpose -- that list places an
+    // UNMIGRATED row, and an unmigrated row is the one still carrying it.
+    eq([...inMigration].filter((k) => k !== MERGED_EMAIL_SMS).sort(),
+       [...inTaxonomy].sort());
+    ok(inMigration.includes(MERGED_EMAIL_SMS),
+       'a legacy Email/SMS row would now be filed as an Event');
   });
   it('only ever produces keys the taxonomy knows', () => {
     const keys = SUB_TYPES.map((s) => s.key);
@@ -223,10 +235,8 @@ describe('merging the sub-types that said the same thing', () => {
   });
 
   it('rewrites a calendar sync that asked for the old keys', () => {
-    eq(mergeFeedFilters('{"sub":["email","sms"],"dept":["marketing"]}'),
-       '{"sub":["email-sms"],"dept":["marketing"]}');
-    eq(mergeFeedFilters('{"sub":["campaign","promotion"]}'),
-       '{"sub":["campaign-promotion"]}');
+    eq(mergeFeedFilters('{"sub":["campaign","promotion"],"dept":["marketing"]}'),
+       '{"sub":["campaign-promotion"],"dept":["marketing"]}');
   });
   it('leaves a sync that never mentioned them untouched', () => {
     eq(mergeFeedFilters('{"sub":["tradeshow"]}'), null);
@@ -655,13 +665,13 @@ describe('applyBlanks', () => {
     state: 'NJ', zip: '08736', products: [{ division: 'mens' }],
     needs: 'sound', staff_count: '3', vehicles: 'box-truck',
     social_type: 'reel', channels: 'ig', pillar: null, production: null,
-    caption: null, tags: null, sub_types: 'email-sms',
+    caption: null, tags: null, sub_types: 'email',
     event_fee: '100', orders: '4', net_revenue: '50',
     start_date: '2026-10-01', end_date: '2026-10-03',
   }, o);
 
-  it('clears the place and the highlights on Email/SMS', () => {
-    const out = applyBlanks(row({ event_type: 'marketing' }), ['email-sms']);
+  it('clears the place and the highlights on a send', () => {
+    const out = applyBlanks(row({ event_type: 'marketing' }), ['email']);
     eq([out.venue, out.address, out.city, out.state, out.zip, out.products],
        [null, null, null, null, null, null]);
   });
@@ -673,19 +683,19 @@ describe('applyBlanks', () => {
   // and Coquina Jam: both are Events that carry an Email/SMS sub-type because
   // there is a campaign about them, and both happen at a real beach.
   it('leaves an Event alone even when a campaign about it is Email/SMS', () => {
-    const out = applyBlanks(row({ event_type: 'event' }), ['email-sms']);
+    const out = applyBlanks(row({ event_type: 'event' }), ['email']);
     eq([out.venue, out.city, out.zip], ['The Shop', 'Manasquan', '08736']);
     eq(out.products.length, 1);
   });
   it('leaves a post alone for the same reason', () => {
-    eq(applyBlanks(row({ event_type: 'social' }), ['email-sms']).products.length, 1);
+    eq(applyBlanks(row({ event_type: 'social' }), ['email']).products.length, 1);
   });
   it('still takes the staff and the van off anything Marketing', () => {
     const out = applyBlanks(row({ event_type: 'marketing' }), ['campaign-promotion']);
     eq([out.needs, out.staff_count, out.vehicles], [null, null, null]);
   });
   it('still empties a meeting, and does not fight the Email/SMS rule', () => {
-    const out = applyBlanks(row({ event_type: 'meeting' }), ['email-sms']);
+    const out = applyBlanks(row({ event_type: 'meeting' }), ['email']);
     eq([out.sub_types, out.venue, out.products], [null, null, null]);
   });
   it('still ends a deadline on the day it falls', () => {
@@ -1818,6 +1828,224 @@ describe('the event modal does not have two things sharing a class', () => {
   });
 });
 
+// ── Deadlines the calendar sets for itself ──────────────────────
+
+describe('when a deadline falls', () => {
+  const item = (x) => ({ id: 'i1', title: 'Spring Launch', department: 'marketing',
+                         status: 'Booked', start_date: '2026-06-01', ...x });
+
+  it('is three weeks before a Paid Advo', () => {
+    eq(deadlineFor(item({ sub_types: 'paid-advo' })).start_date, '2026-05-11');
+    eq(leadFor(item({ sub_types: 'paid-advo' })), 21);
+  });
+  it('is ten days before an Email', () => {
+    eq(deadlineFor(item({ sub_types: 'email' })).start_date, '2026-05-22');
+    eq(leadFor(item({ sub_types: 'email' })), 10);
+  });
+  // SMS was split off Email precisely because it does not carry one.
+  it('does not exist for an SMS', () => {
+    eq(deadlineFor(item({ sub_types: 'sms' })), null);
+    eq(leadFor(item({ sub_types: 'sms' })), 0);
+    eq(leadFor(item({ sub_types: 'campaign-promotion,sms,website' })), 0);
+  });
+  // Two items with the same name on two dates is the thing somebody works
+  // to the wrong one of.
+  it('is one deadline at the longer lead when an item is both', () => {
+    eq(leadFor(item({ sub_types: 'email,paid-advo' })), 21);
+    eq(leadFor(item({ sub_types: 'paid-advo,email' })), 21);
+  });
+  it('carries the source item name behind the prefix', () => {
+    eq(deadlineFor(item({ sub_types: 'email' })).title,
+       'Sunnyside Deadline: Spring Launch');
+    eq(PREFIX, 'Sunnyside Deadline: ');
+  });
+  // The title column takes 200, and the prefix has to be inside that.
+  it('does not build a title longer than the column takes', () => {
+    eq(deadlineTitle('x'.repeat(400)).length, 200);
+  });
+  it('is a point, not a span', () => {
+    const d = deadlineFor(item({ sub_types: 'email' }));
+    eq(d.start_date, d.end_date);
+    eq(d.event_type, 'deadline');
+    eq(d.all_day, 1);
+  });
+  it('lands on the source department, not on Marketing by assumption', () => {
+    eq(deadlineFor(item({ sub_types: 'paid-advo', department: 'jrf' })).department, 'jrf');
+  });
+  // A deadline still showing Booked for a placement that was called off is
+  // the thing somebody keeps working to.
+  it('follows the item into Cancelled', () => {
+    eq(deadlineFor(item({ sub_types: 'email', status: 'Cancelled' })).status, 'Cancelled');
+    eq(deadlineFor(item({ sub_types: 'email', status: 'Pending' })).status, 'Booked');
+  });
+  it('points back at the item it belongs to', () => {
+    eq(deadlineFor(item({ sub_types: 'email' })).deadline_for, 'i1');
+  });
+
+  // new Date('2026-01-01') is UTC midnight and lands on the previous day
+  // west of Greenwich, which is where this calendar is.
+  it('counts back across a month and a year end', () => {
+    eq(minusDays('2026-03-02', 10), '2026-02-20');
+    eq(minusDays('2026-01-05', 21), '2025-12-15');
+    eq(minusDays('2028-03-05', 10), '2028-02-24', 'a leap year was miscounted');
+  });
+  it('gives nothing for a date it cannot read', () => {
+    eq(minusDays('', 10), '');
+    eq(minusDays('next tuesday', 10), '');
+    eq(deadlineFor(item({ sub_types: 'email', start_date: '' })), null);
+  });
+});
+
+describe('keeping a deadline in step', () => {
+  const item = (x) => ({ id: 'i1', title: 'Spring Launch', department: 'marketing',
+                         status: 'Booked', start_date: '2026-06-01',
+                         sub_types: 'paid-advo', ...x });
+  const its = (x) => deadlineFor(item(x));
+
+  it('makes one that is not there', () => {
+    eq(deadlineAction(item(), null), 'create');
+  });
+  // Most saves touch none of what a deadline is built from, and rewriting
+  // the row on each of them would bury the real changes in its history.
+  it('does nothing when nothing it reads has changed', () => {
+    eq(deadlineAction(item(), its()), '');
+    eq(deadlineAction(item({ notes: 'Confirmed' }), its()), '');
+  });
+  it('moves one when the item moves', () => {
+    eq(deadlineAction(item({ start_date: '2026-07-01' }), its()), 'update');
+  });
+  it('renames one when the item is renamed', () => {
+    eq(deadlineAction(item({ title: 'Autumn Launch' }), its()), 'update');
+  });
+  it('cancels one when the item is cancelled', () => {
+    eq(deadlineAction(item({ status: 'Cancelled' }), its()), 'update');
+  });
+  // The one that would otherwise be left pointing at a date nothing
+  // happens on.
+  it('takes one away when the sub-type comes off', () => {
+    eq(deadlineAction(item({ sub_types: 'campaign-promotion' }), its()), 'delete');
+    eq(deadlineAction(null, its()), 'delete');
+  });
+  it('does not try to delete one that was never there', () => {
+    eq(deadlineAction(item({ sub_types: 'sms' }), null), '');
+    eq(deadlineAction(null, null), '');
+  });
+  // The keys are spelled once in the taxonomy and read here, so renaming one
+  // cannot leave this watching a sub-type nothing carries.
+  it('watches keys the taxonomy actually has', () => {
+    for (const k of WATCHED_SUBS) {
+      ok(SUB_TYPES.some((x) => x.key === k), k + ' is not a sub-type');
+    }
+    eq(WATCHED_SUBS.includes('sms'), false, 'SMS is not meant to have one');
+  });
+});
+
+describe('the Worker writes the deadline it worked out', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+  const at = idx.indexOf('const keepDeadline');
+  const body = idx.slice(at, idx.indexOf('const requireEditor'));
+
+  it('exists, and is reached from all three write paths', () => {
+    ok(at > 0, 'there is no deadline writer');
+    const calls = [...idx.matchAll(/keepDeadline\(/g)].map((m) => m.index);
+    eq(calls.length, 2, 'called somewhere other than the create and the edit');
+    const post = idx.indexOf("path === '/api/items' && method === 'POST'");
+    const patch = idx.indexOf("if (method === 'PATCH' || method === 'PUT')");
+    ok(calls.some((c) => c > post && c < patch), 'nothing happens on a create');
+    ok(calls.some((c) => c > patch), 'nothing happens on an edit');
+    ok(/DELETE FROM items WHERE deadline_for = \?'\)\.bind\(id\)/.test(idx),
+       'deleting an item leaves its deadline behind');
+  });
+  // The same blanking rules as a typed deadline, and the same validation.
+  it('goes through normalise rather than straight into SQL', () => {
+    ok(/normalise\(coerceKeys\(want\), null\)/.test(body),
+       'the row is assembled by hand, so the blanking rules can drift');
+  });
+  // A deadline somebody typed is theirs, whatever it happens to be about.
+  it('only ever touches rows it made', () => {
+    ok(/deadline_for IS NOT NULL/.test(body),
+       'the delete would take a hand-typed deadline with it');
+    ok(/WHERE deadline_for = \?/.test(body), 'it does not find its own row by the link');
+  });
+  // Deferring it would mean the caller re-reads the calendar before the
+  // deadline exists, which reads as the feature not working.
+  it('finishes before the response goes back', () => {
+    ok(/await keepDeadline\(/.test(idx), 'the write is not awaited');
+    ok(!/waitUntil\([^)]*keepDeadline/.test(idx), 'it was deferred');
+  });
+  // CREATE TABLE IF NOT EXISTS never revisits a table that exists.
+  it('adds its column to a database that already exists', () => {
+    const added = idx.slice(idx.indexOf('const ADDED_COLUMNS'));
+    ok(/'deadline_for TEXT'/.test(added.slice(0, added.indexOf('];'))),
+       'the column reaches schema.sql but never the live database');
+  });
+  // deadline_for is not in COLS on purpose: COLS is what a normal save
+  // writes, and a save that wrote it would blank the link on every edit.
+  it('keeps the link out of the ordinary write columns', () => {
+    const cols = idx.slice(idx.indexOf('const COLS = ['), idx.indexOf('];', idx.indexOf('const COLS = [')));
+    ok(!/deadline_for/.test(cols),
+       'an ordinary edit of a deadline would cut it loose from its item');
+  });
+});
+
+// ── Email and SMS, split apart again ─────────────────────────────
+
+describe('splitting Email/SMS back into two', () => {
+  const TODAY = '2026-10-27';
+  const row = (date, subs) => ({ start_date: date, sub_types: subs });
+
+  // It really was both. Splitting history in two would invent a send that
+  // never went out.
+  it('leaves a send that has gone out as one item carrying both', () => {
+    eq(planEmailSplit(row('2026-09-01', 'email-sms'), TODAY),
+       { keep: 'email,sms', copy: null });
+  });
+  it('counts today as already gone', () => {
+    eq(planEmailSplit(row(TODAY, 'email-sms'), TODAY).copy, null);
+  });
+  it('splits a send still to come into two', () => {
+    eq(planEmailSplit(row('2026-12-01', 'email-sms'), TODAY),
+       { keep: 'email', copy: 'sms' });
+  });
+  it('keeps the other sub-types on both halves, in taxonomy order', () => {
+    eq(planEmailSplit(row('2026-12-01', 'email-sms,campaign-promotion'), TODAY),
+       { keep: 'campaign-promotion,email', copy: 'campaign-promotion,sms' });
+  });
+  it('leaves a row that never carried the key alone', () => {
+    eq(planEmailSplit(row('2026-12-01', 'paid-advo'), TODAY), null);
+    eq(planEmailSplit(row('2026-12-01', ''), TODAY), null);
+    eq(planEmailSplit({}, TODAY), null);
+  });
+  // A second pass must not make a third item.
+  it('is idempotent: an already split row plans nothing', () => {
+    eq(planEmailSplit(row('2026-12-01', 'email'), TODAY), null);
+    eq(planEmailSplit(row('2026-09-01', 'email,sms'), TODAY), null);
+  });
+  it('never leaves a key on both sides of the split', () => {
+    const p = planEmailSplit(row('2026-12-01', 'email-sms,email,sms'), TODAY);
+    eq([p.keep, p.copy], ['email', 'sms']);
+  });
+  it('only ever produces keys the taxonomy knows', () => {
+    for (const d of ['2026-09-01', '2026-12-01']) {
+      const p = planEmailSplit(row(d, 'email-sms,website'), TODAY);
+      for (const k of (p.keep + ',' + (p.copy || '')).split(',').filter(Boolean)) {
+        ok(SUB_TYPES.some((x) => x.key === k), k + ' is not a sub-type');
+      }
+    }
+  });
+  it('is applied by a migration that records having run', () => {
+    const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+    ok(/const EMAIL_SPLIT_KEY = /.test(idx), 'the migration is not guarded');
+    ok(/await migrateEmailSmsSplit\(db\)/.test(idx), 'nothing ever calls it');
+    const at = idx.indexOf('async function migrateEmailSmsSplit');
+    const body = idx.slice(at, idx.indexOf('// One-time: Event and Marketing', at));
+    ok(/INSERT OR REPLACE INTO meta/.test(body), 'it would run on every request');
+    ok(/planEmailSplit\(row, today\)/.test(body), 'it decides this for itself');
+    // Somebody subscribed to the sends should keep getting them.
+    ok(/UPDATE feeds SET filters/.test(body), 'a saved sync would go quiet');
+  });
+});
+
 // ── Boxy Bucks ──────────────────────────────────────────────────────────
 
 describe('the staff roster it runs on', () => {
@@ -2134,6 +2362,35 @@ describe('the leaderboard', () => {
 
 // The leaderboard decides what people get, which is a different job from
 // running an event -- so it is not the editor list.
+describe('who the calendar lets edit', () => {
+  const toml = fs.readFileSync(root('wrangler.toml'), 'utf8');
+  const list = (name) => ((toml.match(new RegExp('^' + name + ' = "([^"]*)"', 'm')) || ['', ''])[1])
+    .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+
+  // An editor on a domain Access blocks is a line of config that looks right
+  // and does nothing: they meet a sign-in wall, not a permissions message,
+  // and nothing on the calendar says who to ask.
+  it('only names people Cloudflare Access will let in', () => {
+    const domains = list('ACCESS_DOMAINS');
+    ok(domains.length, 'ACCESS_DOMAINS is missing from wrangler.toml');
+    const editors = list('CALENDAR_EDITORS');
+    ok(editors.length > 5, 'only ' + editors.length + ' editors');
+    for (const who of editors) {
+      ok(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(who), '"' + who + '" is not an address');
+      ok(domains.includes(who.split('@')[1]),
+         who + ' is on a domain Access does not admit');
+    }
+  });
+  // She is told about every Paid Advo change and is expected to act on it,
+  // which she cannot do read-only.
+  it('lets the SunnySide watcher edit, not only watch', () => {
+    for (const who of list('PAID_ADVO_WATCHERS')) {
+      ok(list('CALENDAR_EDITORS').includes(who),
+         who + ' is pinged about Paid Advo changes but cannot make one');
+    }
+  });
+});
+
 describe('who can open Boxy Bucks', () => {
   const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
 
