@@ -80,3 +80,39 @@
   .bx-shell{padding-left:14px;padding-right:14px}
   .bx-t th:nth-child(n+4):nth-child(-n+6),.bx-t td:nth-child(n+4):nth-child(-n+6){display:none}
 }
+
+/* ── One person's detail ──────────────────────────────────────────────────
+   Opened under their row rather than over the page: the point of a
+   leaderboard is the standing around it, and a modal hides exactly that. */
+.bx-open{
+  display:block;width:100%;text-align:left;cursor:pointer;
+  background:none;border:0;padding:0;color:inherit;font:inherit;
+}
+.bx-open .bx-name{display:block}
+.bx-open .bx-who{display:block}
+.bx-open:hover .bx-name{text-decoration:underline}
+.bx-open:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:4px}
+
+.bx-drow td{background:var(--wash);padding:0}
+.bx-d{padding:14px 16px 18px}
+.bx-d-load,.bx-d-none{font-family:var(--body);font-size:13.5px;opacity:.8;margin:0}
+.bx-d-tally{display:flex;gap:18px;flex-wrap:wrap;margin:0 0 12px}
+.bx-d-k{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;opacity:.8}
+.bx-d-k b{font-size:13px;opacity:1}
+.bx-d-h{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  margin:14px 0 6px;opacity:.75;font-weight:600;
+}
+.bx-d-t{border-collapse:collapse;width:100%;max-width:720px}
+.bx-d-t td{
+  padding:5px 10px 5px 0;border-bottom:1px solid var(--surface-alt);
+  font-family:var(--body);font-size:13.5px;text-align:left;white-space:normal;
+}
+.bx-d-t tr:last-child td{border-bottom:0}
+.bx-d-t a{color:inherit}
+.bx-d-when{font-family:var(--mono);font-size:11px;width:92px;white-space:nowrap}
+.bx-d-role{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  opacity:.8;width:110px;white-space:nowrap}
+.bx-d-p{font-family:var(--mono);font-size:12.5px;text-align:right;width:54px;white-space:nowrap}
+.bx-d-p.neg{color:var(--watch)}
+.bx-d-st{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;opacity:.7}

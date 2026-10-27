@@ -29,7 +29,7 @@ import { readyToPost, salesMessage, deliver, RESULTS_SLOT } from './sales.js';
 import { listingAction, listingMessage, WEBSITE_NEED } from './listing.js';
 import {
   ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, cleanKey as boxyKey,
-  pickable, leaderboard, standings, csv as boxyCsv,
+  pickable, leaderboard, standings, csv as boxyCsv, personSummary, staffMember,
   STAFF as BOXY_STAFF, ROSTER_AS_OF as BOXY_AS_OF,
 } from './boxy.js';
 import SCHEMA from './schema.sql';
@@ -1328,6 +1328,30 @@ async function handleApi(request, env, url, who, ctx) {
       board, standings: standings(board), roles: ROLES,
       points: boxyPoints(), rosterAsOf: BOXY_AS_OF, you: who.email,
     });
+  }
+
+  // One person: what they turned up to, and what has moved their balance.
+  // Behind the same list as the board -- it is the same data, one row at a
+  // time, and gating the summary but not the detail would be theatre.
+  if (path === '/api/boxy/person' && method === 'GET') {
+    if (!isBoxyAdmin()) return json({ error: 'Unknown endpoint.' }, 404);
+    const key = boxyKey(url.searchParams.get('key'));
+    const person = key ? staffMember(key) : null;
+    if (!person) return json({ error: 'No such person.' }, 404);
+
+    const events = (await db.prepare(
+      'SELECT a.item_id, a.role, a.points, a.note, a.added_at, '
+      + 'i.title, i.start_date, i.status '
+      + 'FROM attendance a JOIN items i ON i.id = a.item_id '
+      + 'WHERE a.person_key = ? ORDER BY i.start_date DESC').bind(key).all()).results || [];
+
+    const ledger = ((await db.prepare(
+      'SELECT kind, points, note, added_at, added_by FROM boxy_ledger '
+      + 'WHERE person_key = ? ORDER BY added_at DESC').bind(key).all()).results || [])
+      .map((r) => ({ kind: r.kind, points: r.points, note: r.note || '',
+                     at: r.added_at, by: r.added_by }));
+
+    return json({ person, ...personSummary(events, ledger), roles: ROLES });
   }
 
   // Spending, and corrections. Never an edit: a mistake is fixed with

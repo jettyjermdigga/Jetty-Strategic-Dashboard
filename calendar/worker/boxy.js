@@ -212,6 +212,45 @@ export function standings(board) {
   };
 }
 
+/**
+ * One person's story: what they turned up to, and what has moved their
+ * balance since.
+ *
+ * Both halves, because the question "why is this number 14" is not answered
+ * by the events alone the moment anybody has spent anything.
+ *
+ * Events come back newest first. A leaderboard is about recent effort, and
+ * scrolling to the bottom to find out what somebody did last month is the
+ * wrong way round.
+ */
+export function personSummary(events, ledger) {
+  const evs = (events || []).slice().sort((a, b) =>
+    (String(b.start_date || '') < String(a.start_date || '') ? -1
+      : String(b.start_date || '') > String(a.start_date || '') ? 1 : 0));
+
+  const byRole = Object.fromEntries(ROLE_KEYS.map((r) => [r, { events: 0, points: 0 }]));
+  let earned = 0;
+  for (const e of evs) {
+    const pts = Number(e.points) || 0;
+    earned += pts;
+    if (byRole[e.role]) { byRole[e.role].events++; byRole[e.role].points += pts; }
+  }
+
+  const moves = (ledger || []).slice().sort((a, b) =>
+    (String(b.at || '') < String(a.at || '') ? -1
+      : String(b.at || '') > String(a.at || '') ? 1 : 0));
+
+  let spent = 0;
+  for (const m of moves) {
+    const pts = Number(m.points) || 0;
+    // Same rule as the board: an upward correction is earned, not un-spent.
+    if (pts < 0) spent += -pts;
+    else earned += pts;
+  }
+
+  return { events: evs, ledger: moves, byRole, earned, spent, balance: earned - spent };
+}
+
 // ── Download ────────────────────────────────────────────────────────────
 
 const cell = (v) => {

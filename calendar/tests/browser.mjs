@@ -97,7 +97,8 @@ let slackStatus = null;
 const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], deleted: [],
                deletedComments: [], commented: null, savedFilters: null, resets: 0,
                mentionsSeen: 0, announced: [], announceFails: false,
-               announceNoFile: false, attAdded: [], attDeleted: [] };
+               announceNoFile: false, attAdded: [], attDeleted: [],
+               personLoaded: [] };
 
 // Who was at the open event, and the roster the picker offers.
 const BOXY_ROLES = [
@@ -173,6 +174,26 @@ await page.route('**/*', async (route) => {
         { id: 'm2', item_id: ITEMS[0].id, title: ITEMS[0].title,
           start_date: ITEMS[0].start_date, author: 'amy@jettylife.com',
           body: 'Can you confirm the spend?', created_at: '2026-09-01T10:00:00.000Z' },
+      ],
+    } });
+  }
+  if (p === '/api/boxy/person') {
+    seen.personLoaded.push(url.searchParams.get('key'));
+    return route.fulfill({ json: {
+      person: { k: 'troy-taylor', n: 'Troy Taylor', d: 'Production (INK)' },
+      roles: BOXY_ROLES,
+      byRole: { worked: { events: 2, points: 4 }, volunteered: { events: 1, points: 2 },
+                attended: { events: 0, points: 0 } },
+      earned: 12, spent: 4, balance: 8,
+      events: [
+        { item_id: '11111111-1111-4111-8111-111111111111', title: 'Coquina Jam',
+          start_date: '2026-10-04', role: 'worked', points: 2, status: 'Booked' },
+        { item_id: '22222222-2222-4222-8222-222222222222', title: 'Clam Jam',
+          start_date: '2026-07-11', role: 'volunteered', points: 2, status: 'Cancelled' },
+      ],
+      ledger: [
+        { kind: 'spend', points: -4, note: 'Hoodie', at: '2026-10-10T00:00:00.000Z',
+          by: 'jeremy@jettylife.com' },
       ],
     } });
   }
@@ -1251,6 +1272,58 @@ await t('and is gone when an existing Email/SMS item is opened to edit', async (
   return await page.locator('#prodWrap').isHidden();
 });
 await page.locator('button[data-act="close"]').click().catch(() => {});
+
+console.log('one person on the leaderboard');
+await page.goto('http://local.test/boxy.html');
+await page.waitForSelector('.bx-t tbody tr');
+await t('opens a person from their name', async () => {
+  await page.locator('.bx-open').first().click();
+  await page.waitForSelector('.bx-drow');
+  return seen.personLoaded[0] === 'troy-taylor';
+});
+await t('says where they turned up, newest first, with the role', async () => {
+  await page.waitForSelector('.bx-d-t');
+  const when = await page.locator('.bx-d-when').allTextContents();
+  const roles = await page.locator('.bx-d-role').allTextContents();
+  return when[0] === '2026-10-04' && when[1] === '2026-07-11'
+    && roles[0] === 'Worked' && roles[1] === 'Volunteered';
+});
+// The whole point of the detail: each line goes back to the event.
+await t('links each event back to the calendar', async () =>
+  (await page.locator('.bx-d-t a').first().getAttribute('href'))
+    === '/?event=11111111-1111-4111-8111-111111111111');
+await t('marks an event that is not going ahead', async () =>
+  (await page.locator('.bx-d-st').first().textContent()) === 'Cancelled');
+// "Why is this number 8" is not answered by the events alone once anybody
+// has spent anything.
+await t('shows what has moved the balance as well', async () => {
+  const txt = await page.locator('.bx-d').textContent();
+  return txt.includes('Hoodie') && txt.includes('\u22124') && txt.includes('Balance');
+});
+await t('closes again on a second click, and asks the server once', async () => {
+  await page.locator('.bx-open').first().click();
+  await page.waitForFunction(() => !document.querySelector('.bx-drow'));
+  await page.locator('.bx-open').first().click();
+  await page.waitForSelector('.bx-d-t');
+  return seen.personLoaded.length === 1;
+});
+// One at a time: several open turns a leaderboard into a list of panels.
+await t('opens one at a time', async () => {
+  await page.locator('.bx-open').nth(1).click();
+  await page.waitForFunction(() => document.querySelectorAll('.bx-drow').length === 1);
+  return (await page.locator('.bx-drow').count()) === 1;
+});
+// Filtering the open person off screen would leave their detail attached
+// to nothing.
+await t('does not spring back open when the filter is cleared', async () => {
+  await page.fill('#q', 'zzzz');
+  const whileHidden = await page.locator('.bx-drow').count();
+  await page.fill('#q', '');
+  await page.waitForSelector('.bx-open');
+  return whileHidden === 0 && (await page.locator('.bx-drow').count()) === 0;
+});
+await page.goto('http://local.test/');
+await page.waitForSelector('.mo-grid');
 
 console.log('dark mode');
 // Three separate rules put near-white text on a near-white surface here: a

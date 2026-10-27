@@ -28,8 +28,8 @@ import { listingAction, listingMessage, needed, LISTING_FIELDS,
          WEBSITE_NEED } from '../worker/listing.js';
 import {
   ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, staffMember,
-  pickable, leaderboard, standings, csv as boxyCsv, STAFF as BOXY_STAFF,
-  ROSTER_AS_OF as BOXY_AS_OF,
+  pickable, leaderboard, standings, csv as boxyCsv, personSummary,
+  STAFF as BOXY_STAFF, ROSTER_AS_OF as BOXY_AS_OF,
 } from '../worker/boxy.js';
 import { noticeBody, summarise, countUnread, isAutomatic,
          CALENDAR_AUTHOR } from '../worker/notices.js';
@@ -2029,6 +2029,87 @@ describe('who can open Boxy Bucks', () => {
     ok(/const denied = requireEditor\(\); if \(denied\) return denied;/.test(body),
        'recording attendance is not gated on editors');
     ok(!/isBoxyAdmin/.test(body), 'recording attendance needs the rewards list');
+  });
+});
+
+// Clicking a name on the leaderboard: what they turned up to, and what has
+// moved their balance since.
+describe('one person on the leaderboard', () => {
+  const evs = [
+    { item_id: '1', title: 'Clam Jam', start_date: '2026-07-11', role: 'volunteered', points: 2 },
+    { item_id: '2', title: 'Chowderfest', start_date: '2026-10-04', role: 'worked', points: 2 },
+    { item_id: '3', title: 'Tent Sale', start_date: '2026-11-07', role: 'worked', points: 5 },
+  ];
+  const led = [
+    { kind: 'spend', points: -3, note: 'Hoodie', at: '2026-10-10T00:00:00Z' },
+    { kind: 'adjust', points: 2, note: 'Missed one', at: '2026-10-12T00:00:00Z' },
+  ];
+
+  // A leaderboard is about recent effort; scrolling to the bottom to find
+  // out what somebody did last month is the wrong way round.
+  it('puts the most recent event first', () => {
+    eq(personSummary(evs, []).events.map((e) => e.start_date),
+       ['2026-11-07', '2026-10-04', '2026-07-11']);
+  });
+  it('puts the most recent balance movement first', () => {
+    eq(personSummary([], led).ledger.map((m) => m.note), ['Missed one', 'Hoodie']);
+  });
+  it('counts events and points per role', () => {
+    const out = personSummary(evs, []);
+    eq(out.byRole.worked, { events: 2, points: 7 });
+    eq(out.byRole.volunteered, { events: 1, points: 2 });
+    eq(out.byRole.attended, { events: 0, points: 0 });
+  });
+  // "Why is this number 8" is not answered by the events alone the moment
+  // anybody has spent anything.
+  it('adds the ledger into the totals the same way the board does', () => {
+    const out = personSummary(evs, led);
+    eq([out.earned, out.spent, out.balance], [11, 3, 8]);
+  });
+  it('counts an upward correction as earned, matching the board', () => {
+    const one = personSummary([], [{ kind: 'adjust', points: 5, at: 'x' }]);
+    eq([one.earned, one.spent, one.balance], [5, 0, 5]);
+  });
+  // The person panel and the board are two renderings of the same numbers.
+  // They disagreeing is the kind of thing somebody notices as "the maths is
+  // wrong" without being able to say where.
+  it('agrees with the board for the same person', () => {
+    const k = BOXY_STAFF[0].k;
+    const row = leaderboard(evs.map((e) => ({ ...e, person: k })),
+                            led.map((m) => ({ ...m, person: k })))
+      .find((r) => r.k === k);
+    const one = personSummary(evs, led);
+    eq([one.earned, one.spent, one.balance], [row.earned, row.spent, row.balance]);
+    eq(one.byRole.worked.events, row.byRole.worked);
+  });
+  it('copes with somebody on nothing at all', () => {
+    const out = personSummary([], []);
+    eq([out.earned, out.spent, out.balance, out.events.length], [0, 0, 0, 0]);
+    eq(personSummary(null, null).balance, 0);
+  });
+  it('does not reorder the caller’s own arrays', () => {
+    const mine = evs.slice();
+    personSummary(mine, []);
+    eq(mine.map((e) => e.item_id), ['1', '2', '3'], 'the input was sorted in place');
+  });
+});
+
+describe('the person endpoint is gated like the board', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+  const at = idx.indexOf("path === '/api/boxy/person'");
+
+  it('exists', () => ok(at > 0, 'there is no person endpoint'));
+  it('refuses anybody not on the rewards list, with a 404', () => {
+    const body = idx.slice(at, at + 300);
+    ok(/if \(!isBoxyAdmin\(\)\) return json\(\{ error: 'Unknown endpoint\.' \}, 404\);/.test(body),
+       'the detail is readable by people who cannot read the summary');
+  });
+  // The key comes off the query string, so it has to be cleaned and checked
+  // against the roster before it reaches a query.
+  it('only answers for somebody on the roster', () => {
+    const body = idx.slice(at, at + 600);
+    ok(/boxyKey\(url\.searchParams\.get\('key'\)\)/.test(body), 'the key is not cleaned');
+    ok(/staffMember\(key\)/.test(body), 'any key would be queried for');
   });
 });
 
