@@ -18,6 +18,7 @@ import { retailWeek, retailWeekStart } from './retail.js';
 import { sqlStatements } from './sql.js';
 import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
          splitKind, planEmailSplit, MERGED_EMAIL_SMS } from './migrate.js';
+import { planSmsDedupe } from './repair.js';
 import { applyBlanks } from './blanks.js';
 import { normaliseProducts } from './products.js';
 import { commentMessage, dmMentions, displayName, eventUrl,
@@ -135,8 +136,46 @@ async function ensureSchema(db) {
   await migrateSocialKind(db);
   await migrateKindSplit(db);
   await migrateEmailSmsSplit(db);
+  await repairDoubledSms(db);
   await backfillSocial(db);
   schemaReady = true;
+}
+
+/**
+ * Take a migration, or find somebody else already has it.
+ *
+ * The pattern everywhere above is: read meta, do the work, write meta. That
+ * is a check and then an act with nothing holding the two together, and the
+ * flag in front of it is per isolate -- so several isolates can read the
+ * same empty meta table and all decide the work is theirs.
+ *
+ * It never showed, because every migration before the Email/SMS split only
+ * UPDATEd rows to a fixed value: doing that twice is doing it once. The split
+ * INSERTs, and doing that twice doubled every future SMS send.
+ *
+ * key is the primary key of meta, so INSERT OR IGNORE is atomic and exactly
+ * one caller sees a row change. The value is filled in afterwards with what
+ * the work actually did.
+ *
+ * The trade: a migration that claims and then fails is recorded as done
+ * without having run. For an INSERT that is the better way to fail -- rows
+ * nobody asked for are far harder to undo than a migration that has to be
+ * re-keyed and run again.
+ */
+async function claim(db, key) {
+  const res = await db.prepare(
+    'INSERT OR IGNORE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(key, '"claimed"', new Date().toISOString()).run();
+  const changed = res && res.meta
+    ? (res.meta.changes != null ? res.meta.changes : res.meta.changed_db)
+    : null;
+  // An older D1 that reports nothing: fall back to the read, which is still
+  // better than refusing to migrate at all.
+  if (changed == null) {
+    return Boolean(await db.prepare(
+      'SELECT value FROM meta WHERE key = ? AND value = \'"claimed"\'').bind(key).first());
+  }
+  return Boolean(changed);
 }
 
 // One-time: move every stored row off the old no-primary "Event Type" axis onto
@@ -286,9 +325,7 @@ async function migrateSocialKind(db) {
 const EMAIL_SPLIT_KEY = 'email-sms-split-2026-10';
 
 async function migrateEmailSmsSplit(db) {
-  const done = await db.prepare('SELECT value FROM meta WHERE key = ?')
-    .bind(EMAIL_SPLIT_KEY).first();
-  if (done) return;
+  if (!(await claim(db, EMAIL_SPLIT_KEY))) return;
 
   const today = new Date().toISOString().slice(0, 10);
   const res = await db.prepare(
@@ -343,10 +380,35 @@ async function migrateEmailSmsSplit(db) {
   }
   if (feedBatch.length) await db.batch(feedBatch);
 
-  await db.prepare(
-    'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
-    .bind(EMAIL_SPLIT_KEY, JSON.stringify({ ...counts, feeds: feedBatch.length }),
-          new Date().toISOString()).run();
+  await db.prepare('UPDATE meta SET value = ? WHERE key = ?')
+    .bind(JSON.stringify({ ...counts, feeds: feedBatch.length }), EMAIL_SPLIT_KEY).run();
+}
+
+// One-time: take away the SMS rows the split wrote twice. See repair.js for
+// how a surplus copy is told from a send somebody typed.
+const SMS_DEDUPE_KEY = 'sms-dedupe-2026-10';
+
+async function repairDoubledSms(db) {
+  if (!(await claim(db, SMS_DEDUPE_KEY))) return;
+
+  // The counts come along so a copy with a file or a comment on it is never
+  // the one taken away -- the split attached neither, so a copy that has
+  // them is not a copy.
+  const res = await db.prepare(
+    'SELECT id, title, start_date, department, sub_types, deadline_for, '
+    + '(SELECT COUNT(*) FROM attachments a WHERE a.item_id = items.id) AS attachment_count, '
+    + '(SELECT COUNT(*) FROM comments c WHERE c.item_id = items.id) AS comment_count '
+    + "FROM items WHERE sub_types LIKE '%sms%' OR sub_types LIKE '%email%'").all();
+
+  const ids = planSmsDedupe(res.results || []);
+  const stmt = db.prepare('DELETE FROM items WHERE id = ?');
+  const BATCH = 100;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    await db.batch(ids.slice(i, i + BATCH).map((id) => stmt.bind(id)));
+  }
+
+  await db.prepare('UPDATE meta SET value = ? WHERE key = ?')
+    .bind(JSON.stringify({ deleted: ids.length }), SMS_DEDUPE_KEY).run();
 }
 
 // One-time: Event and Marketing were one kind, Meeting and Deadline another.

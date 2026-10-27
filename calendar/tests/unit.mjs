@@ -35,6 +35,7 @@ import {
 } from '../worker/boxy.js';
 import { deadlineFor, deadlineAction, leadFor, minusDays, deadlineTitle,
          PREFIX, WATCHED_SUBS } from '../worker/deadlines.js';
+import { planSmsDedupe } from '../worker/repair.js';
 import { noticeBody, summarise, countUnread, isAutomatic,
          CALENDAR_AUTHOR } from '../worker/notices.js';
 import { aov, netOfFee, hasReport, readyToPost, money, salesMessage, deliver,
@@ -1828,6 +1829,104 @@ describe('the event modal does not have two things sharing a class', () => {
   });
 });
 
+// ── Undoing the split that ran twice ─────────────────────────
+
+describe('taking away the SMS rows that were written twice', () => {
+  const row = (id, subs, x) => ({ id, title: 'Jetty Rewards', start_date: '2026-11-02',
+                                  department: 'marketing', sub_types: subs, ...x });
+  const email = (id, x) => row(id, 'email', x);
+  const sms = (id, x) => row(id, 'sms', x);
+
+  it('leaves one copy where the split wrote two', () => {
+    eq(planSmsDedupe([email('a'), sms('b'), sms('c')]), ['c']);
+  });
+  it('copes with three isolates, not just two', () => {
+    eq(planSmsDedupe([email('a'), sms('b'), sms('c'), sms('d')]), ['c', 'd']);
+  });
+  it('does nothing to a send that came out right', () => {
+    eq(planSmsDedupe([email('a'), sms('b')]), []);
+    eq(planSmsDedupe([]), []);
+    eq(planSmsDedupe(null), []);
+  });
+  // Two real sends of the same thing on the same day have two Email rows
+  // between them, so neither copy is surplus.
+  it('counts one copy per original, not one per group', () => {
+    eq(planSmsDedupe([email('a'), email('a2'), sms('b'), sms('c')]), []);
+  });
+  // Deleting an unaccompanied send because it is unaccompanied would be the
+  // worse bug by far.
+  it('never touches an SMS with no Email twin', () => {
+    eq(planSmsDedupe([sms('b'), sms('c'), sms('d')]), []);
+  });
+  it('tells sends apart by name, day and department', () => {
+    eq(planSmsDedupe([email('a'), sms('b'), { ...sms('c'), start_date: '2026-11-09' }]), []);
+    eq(planSmsDedupe([email('a'), sms('b'), { ...sms('c'), title: 'Something else' }]), []);
+    eq(planSmsDedupe([email('a'), sms('b'), { ...sms('c'), department: 'jrf' }]), []);
+  });
+  // A send that had already gone out was never duplicated; it carries both
+  // keys on one row, which makes it an original rather than a copy.
+  it('reads a row carrying both keys as the original', () => {
+    eq(planSmsDedupe([row('a', 'email,sms'), sms('b')]), []);
+    eq(planSmsDedupe([row('a', 'email,sms')]), []);
+    eq(planSmsDedupe([row('a', 'email,sms'), sms('b'), sms('c')]), ['c'],
+       'the row carrying both was counted as a copy of itself');
+  });
+  // The split attached neither, so a copy that has them is not a copy.
+  it('keeps a copy somebody has put a file or a comment on', () => {
+    eq(planSmsDedupe([email('a'), sms('b', { attachment_count: 1 }), sms('c')]), ['c']);
+    eq(planSmsDedupe([email('a'), sms('b', { comment_count: 2 }), sms('c')]), ['c']);
+    eq(planSmsDedupe([email('a'), sms('b', { attachment_count: 1 }),
+                      sms('c', { comment_count: 1 })]), [],
+       'it deleted something somebody had added to');
+  });
+  it('is not a deadline cleanup', () => {
+    eq(planSmsDedupe([email('a'), sms('b'),
+                      { ...sms('c'), deadline_for: 'a' }]), []);
+  });
+  // Two isolates reading the same rows back in different orders must reach
+  // the same answer, or one deletes what the other kept.
+  it('does not depend on the order the rows came back in', () => {
+    const rows = [email('a'), sms('b'), sms('c'), sms('d')];
+    eq(planSmsDedupe([...rows].reverse()).sort(), planSmsDedupe(rows).sort());
+  });
+  it('keeps the other sub-types out of it', () => {
+    eq(planSmsDedupe([row('a', 'paid-advo'), row('b', 'paid-advo')]), []);
+  });
+});
+
+describe('a migration takes its key before it works', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+
+  // Read meta, do the work, write meta is a check and then an act with
+  // nothing holding the two together -- and the flag in front of it is per
+  // isolate. It never showed until a migration INSERTed.
+  it('claims with an atomic insert rather than a read', () => {
+    const at = idx.indexOf('async function claim(db, key)');
+    ok(at > 0, 'there is no claim at all');
+    const body = idx.slice(at, idx.indexOf('\n}', at));
+    ok(/INSERT OR IGNORE INTO meta/.test(body), 'the claim is not atomic');
+    ok(/changes/.test(body), 'nothing checks whether this caller won');
+  });
+  // The two that write rows. The older ones only ever update to a fixed
+  // value, so running them twice is running them once.
+  it('is used by every migration that creates or deletes rows', () => {
+    for (const fn of ['migrateEmailSmsSplit', 'repairDoubledSms']) {
+      const at = idx.indexOf('async function ' + fn);
+      ok(at > 0, fn + ' is missing');
+      const body = idx.slice(at, idx.indexOf('\n}', at));
+      ok(/if \(!\(await claim\(db, [A-Z_]+\)\)\) return;/.test(body),
+         fn + ' still reads meta and then acts on it');
+      ok(!/SELECT value FROM meta WHERE key = \?/.test(body),
+         fn + ' still has the old check-then-act guard');
+    }
+  });
+  it('is wired in, and after the split it is undoing', () => {
+    ok(/await repairDoubledSms\(db\)/.test(idx), 'the repair never runs');
+    ok(idx.indexOf('await migrateEmailSmsSplit(db)') < idx.indexOf('await repairDoubledSms(db)'),
+       'the repair runs before the thing it repairs');
+  });
+});
+
 // ── Deadlines the calendar sets for itself ──────────────────────
 
 describe('when a deadline falls', () => {
@@ -2039,7 +2138,8 @@ describe('splitting Email/SMS back into two', () => {
     ok(/await migrateEmailSmsSplit\(db\)/.test(idx), 'nothing ever calls it');
     const at = idx.indexOf('async function migrateEmailSmsSplit');
     const body = idx.slice(at, idx.indexOf('// One-time: Event and Marketing', at));
-    ok(/INSERT OR REPLACE INTO meta/.test(body), 'it would run on every request');
+    ok(/UPDATE meta SET value = \?/.test(body),
+       'it does not record what it did');
     ok(/planEmailSplit\(row, today\)/.test(body), 'it decides this for itself');
     // Somebody subscribed to the sends should keep getting them.
     ok(/UPDATE feeds SET filters/.test(body), 'a saved sync would go quiet');

@@ -52,7 +52,10 @@ function d1(db) {
       bind: (...xs) => make(xs),
       _sql: sql,
       _binds: binds,
-      run() { db.prepare(sql).run(...binds); return { success: true }; },
+      run() {
+        const r = db.prepare(sql).run(...binds);
+        return { success: true, meta: { changes: Number(r.changes) } };
+      },
       first() { return db.prepare(sql).get(...binds) ?? null; },
       all() { return { results: db.prepare(sql).all(...binds) }; },
     });
@@ -284,6 +287,97 @@ await t('records that it ran, so it never runs twice', async () => {
 // Nothing stores the merged key any more, so nothing should answer to it.
 await t('leaves no row still carrying the merged key', async () =>
   preRows("SELECT * FROM items WHERE sub_types LIKE '%email-sms%'").length === 0);
+
+
+// ── The split that ran twice ─────────────────────────────────
+//
+// Seeded the way the live database came out of it: every future send with an
+// Email row and two identical SMS rows, which is what two isolates running
+// the same unclaimed migration produces.
+console.log('');
+console.log('undoing a doubled SMS split');
+
+const dup = new DatabaseSync(':memory:');
+for (const stmt of sqlStatements(fs.readFileSync(path.join(ROOT, 'worker', 'schema.sql'), 'utf8'))) {
+  dup.exec(stmt);
+}
+const put = (id, title, date, subs) => dup.prepare(
+  'INSERT INTO items (id, title, event_type, department, sub_types, status, '
+  + "start_date, end_date, all_day) VALUES (?,?,'marketing','marketing',?,'Booked',?,?,1)")
+  .run(id, title, subs, date, date);
+
+// A future send, split and then split again.
+put('f-email', 'Jetty Rewards Program', ymd(30), 'email');
+put('f-sms-1', 'Jetty Rewards Program', ymd(30), 'sms');
+put('f-sms-2', 'Jetty Rewards Program', ymd(30), 'sms');
+// One that came out right.
+put('g-email', 'The Oyster Shooter Collection', ymd(31), 'email');
+put('g-sms', 'The Oyster Shooter Collection', ymd(31), 'sms');
+// A send that has already gone out: one row, both keys, never duplicated.
+put('past', 'September send', ymd(-50), 'email,sms');
+// An SMS somebody typed by hand, with no Email twin anywhere.
+put('typed', 'A text on its own', ymd(20), 'sms');
+// A surplus copy that somebody has since put a file on.
+put('h-email', 'BFCM Asset Approval', ymd(32), 'email');
+put('h-sms-1', 'BFCM Asset Approval', ymd(32), 'sms');
+put('h-sms-2', 'BFCM Asset Approval', ymd(32), 'sms');
+dup.prepare("INSERT INTO attachments (id, item_id, name, r2_key) VALUES ('at1','h-sms-2','brief.pdf','k')")
+  .run();
+
+const dupWorker = await freshWorker();
+await dupWorker.fetch(new Request('https://cal.test/api/items', {
+  headers: { 'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' },
+}), { ...ENV, DB: d1(dup) }, { waitUntil() {} });
+
+const dupRows = (sql, ...b) => dup.prepare(sql).all(...b);
+const kept = (title) => dupRows(
+  "SELECT id FROM items WHERE title = ? AND sub_types = 'sms'", title).map((r) => r.id);
+
+await t('leaves one SMS where there were two', async () =>
+  kept('Jetty Rewards Program').length === 1);
+await t('leaves the Email row where it was', async () =>
+  dupRows("SELECT id FROM items WHERE id = 'f-email'").length === 1);
+await t('does not touch a send that came out right', async () =>
+  kept('The Oyster Shooter Collection').length === 1
+  && dupRows("SELECT id FROM items WHERE id = 'g-sms'").length === 1);
+await t('does not touch a send that has already gone out', async () =>
+  dupRows("SELECT sub_types FROM items WHERE id = 'past'")[0].sub_types === 'email,sms');
+// Deleting an unaccompanied send because it is unaccompanied would be the
+// worse bug by far.
+await t('leaves a hand-typed SMS with no Email twin alone', async () =>
+  dupRows("SELECT id FROM items WHERE id = 'typed'").length === 1);
+// The split attached no files, so a copy that has one is not a copy.
+await t('keeps the copy somebody has put a file on, and drops the bare one', async () => {
+  const left = kept('BFCM Asset Approval');
+  return left.length === 1 && left[0] === 'h-sms-2';
+});
+await t('records what it deleted', async () => {
+  const m = dupRows("SELECT value FROM meta WHERE key = 'sms-dedupe-2026-10'");
+  return m.length === 1 && JSON.parse(m[0].value).deleted === 2;
+});
+// It is a delete, so a second pass has to be a no-op.
+await t('does nothing at all on a second run', async () => {
+  const before = dupRows('SELECT COUNT(*) AS n FROM items')[0].n;
+  const again = await freshWorker();
+  await again.fetch(new Request('https://cal.test/api/items', {
+    headers: { 'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' },
+  }), { ...ENV, DB: d1(dup) }, { waitUntil() {} });
+  return dupRows('SELECT COUNT(*) AS n FROM items')[0].n === before;
+});
+
+// The cause, not the symptom: two isolates racing the same unclaimed key.
+await t('lets exactly one caller claim a migration', async () => {
+  const fresh = new DatabaseSync(':memory:');
+  for (const stmt of sqlStatements(
+    fs.readFileSync(path.join(ROOT, 'worker', 'schema.sql'), 'utf8'))) fresh.exec(stmt);
+  const shim = d1(fresh);
+  const take = () => shim.prepare(
+    'INSERT OR IGNORE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind('a-key', '"claimed"', 'now').run();
+  const first = take();
+  const second = take();
+  return first.meta.changes === 1 && second.meta.changes === 0;
+});
 
 console.log('');
 console.log(ran + ' checks, ' + (failed ? failed + ' FAILED' : 'all passed'));
