@@ -1910,7 +1910,8 @@ describe('a migration takes its key before it works', () => {
   // The two that write rows. The older ones only ever update to a fixed
   // value, so running them twice is running them once.
   it('is used by every migration that creates or deletes rows', () => {
-    for (const fn of ['migrateEmailSmsSplit', 'repairDoubledSms']) {
+    for (const fn of ['migrateEmailSmsSplit', 'repairDoubledSms',
+                      'backfillDeadlines']) {
       const at = idx.indexOf('async function ' + fn);
       ok(at > 0, fn + ' is missing');
       const body = idx.slice(at, idx.indexOf('\n}', at));

@@ -75,6 +75,11 @@ const ITEMS = [
        department: 'culture', start_date: dayThis(8), end_date: dayThis(8) }),
   ev({ id: '88888888-8888-4888-8888-888888888888', title: 'Crowded C',
        department: 'culture', start_date: dayThis(8), end_date: dayThis(8) }),
+  ev({ id: '99999999-9999-4999-8999-999999999999',
+       title: 'Sunnyside Deadline: Fall Email',
+       event_type: 'deadline', department: 'marketing', sub_types: '',
+       deadline_for: '33333333-3333-4333-8333-333333333333',
+       start_date: dayThis(4), end_date: dayThis(4) }),
   ev({ id: '55555555-5555-4555-8555-555555555555', title: 'Surf Expo',
        department: 'wholesale', departments: 'jetty-ink', sub_types: 'tradeshow',
        vehicles: 'ink-van', start_date: dayThis(22), end_date: dayThis(22) }),
@@ -439,7 +444,9 @@ await t('keeps an event its department only promotes', async () => {
   // has to as well.
   await page.locator('.fchip[data-axis="depts"][data-key="marketing"]').click();
   const l = await listed();
-  return l.length === 2;     // its own email, and the store sale it promotes
+  // Its own email, the store sale it promotes, and the deadline for that
+  // email -- a deadline belongs to the department of the item it is for.
+  return l.length === 3;
 });
 await t('finds the events with no department at all', async () => {
   await page.locator('.fchip[data-axis="depts"][data-key="\u2014none\u2014"]').click();
@@ -567,7 +574,7 @@ await t('is UTF-8 for Excel', async () => csv.startsWith('﻿'));
 await page.locator('.fchip[data-axis="depts"][data-key="marketing"]').click();
 await page.locator('#exportBtn').click();
 await t('exports only what the chips left on screen', async () =>
-  (await page.locator('#xCount').textContent()) === '2 events');
+  (await page.locator('#xCount').textContent()) === '3 events');
 await t('names the filter in the file name', async () => {
   const [dl] = await Promise.all([
     page.waitForEvent('download'),
@@ -577,7 +584,7 @@ await t('names the filter in the file name', async () => {
   csv = fs.readFileSync(await dl.path(), 'utf8');
   return name.includes('marketing') && name.endsWith('.csv');
 });
-await t('and the rows agree with the count', async () => csvRows(csv).length === 3);
+await t('and the rows agree with the count', async () => csvRows(csv).length === 4);
 await clearAll();
 
 console.log('adding an event');
@@ -1304,6 +1311,32 @@ await page.locator('button[data-act="close"]').click().catch(() => {});
 console.log('Email and SMS, split apart');
 await page.goto('http://local.test/');
 await page.waitForSelector('.mo-grid');
+// Jeremy clicked Deadline and saw nothing, which turned out to be that no
+// deadline existed yet rather than that one would not show. Both halves are
+// worth pinning: it shows under Deadline, and under nothing else.
+//
+// Chips are clicked off again rather than cleared: Clear all only exists
+// while a filter is on, so calling it first is a click on nothing.
+console.log('finding a deadline');
+const kind = page.locator('.fchip[data-axis="kinds"][data-key="deadline"]');
+const sub = page.locator('.fchip[data-axis="subs"][data-key="email"]');
+await t('shows a Sunnyside deadline when Deadline is ticked', async () => {
+  await kind.click();
+  const l = await listed();
+  return l.length === 1 && l[0].includes('Sunnyside Deadline: Fall Email');
+});
+// It is not a send and it is not the placement -- it is the date the work is
+// due, and it belongs in one place.
+await t('does not also turn up under Email', async () => {
+  await kind.click();
+  await sub.click();
+  const l = await listed();
+  const out = l.length === 1 && l[0].includes('Fall Email')
+    && !l[0].includes('Sunnyside Deadline');
+  await sub.click();
+  return out;
+});
+
 await t('offers both as filter chips, and the merged one not at all', async () =>
   (await page.locator('.fchip[data-key="email"]').count()) === 1
   && (await page.locator('.fchip[data-key="sms"]').count()) === 1

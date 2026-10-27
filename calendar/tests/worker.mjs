@@ -379,6 +379,108 @@ await t('lets exactly one caller claim a migration', async () => {
   return first.meta.changes === 1 && second.meta.changes === 0;
 });
 
+
+// ── The deadlines that should already have been there ───────────────
+//
+// The rule only fires on a save, so every item put on the calendar before it
+// shipped has none -- which is why clicking Deadline showed nothing.
+console.log('');
+console.log('backfilling the deadlines that were missing');
+
+const old = new DatabaseSync(':memory:');
+for (const stmt of sqlStatements(fs.readFileSync(path.join(ROOT, 'worker', 'schema.sql'), 'utf8'))) {
+  old.exec(stmt);
+}
+const old_ = (id, title, date, subs, kind) => old.prepare(
+  'INSERT INTO items (id, title, event_type, department, sub_types, status, '
+  + "start_date, end_date, all_day) VALUES (?,?,?,'marketing',?,'Booked',?,?,1)")
+  .run(id, title, kind || 'marketing', subs, date, date);
+
+const ADVO = 'aaaaaaaa-1111-4111-8111-111111111111';
+old_(ADVO, 'Spring Placement', ymd(40), 'paid-advo');
+old_('ahead-email', 'December send', ymd(40), 'email');
+old_('soon-email', 'This week send', ymd(4), 'email');   // due 6 days ago
+old_('ahead-sms', 'A text', ymd(40), 'sms');
+old_('past-advo', 'Last spring placement', ymd(-200), 'paid-advo');
+old_('today-email', 'Going out today', ymd(0), 'email');
+old_('other', 'A photo shoot', ymd(40), 'photo-video');
+// One that was edited after the rule shipped, so it already has its own.
+old_('has-one', 'Already done', ymd(40), 'paid-advo');
+old.prepare("INSERT INTO items (id, title, event_type, department, status, start_date, "
+  + "end_date, all_day, deadline_for) VALUES ('d-has','Sunnyside Deadline: Already done',"
+  + "'deadline','marketing','Booked',?,?,1,'has-one')").run(ymd(19), ymd(19));
+
+const oldWorker = await freshWorker();
+await oldWorker.fetch(new Request('https://cal.test/api/items', {
+  headers: { 'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' },
+}), { ...ENV, DB: d1(old) }, { waitUntil() {} });
+
+const oldRows = (sql, ...b) => old.prepare(sql).all(...b);
+const dl = (id) => oldRows('SELECT * FROM items WHERE deadline_for = ?', id);
+
+await t('gives an upcoming Paid Advo the three weeks it should have had', async () => {
+  const d = dl(ADVO);
+  return d.length === 1 && d[0].start_date === ymd(40 - 21)
+    && d[0].title === 'Sunnyside Deadline: Spring Placement'
+    && d[0].event_type === 'deadline';
+});
+await t('gives an upcoming Email its ten days', async () =>
+  dl('ahead-email').length === 1 && dl('ahead-email')[0].start_date === ymd(40 - 10));
+// An email going out in four days was due with SunnySide six days ago, and
+// a date in the past is the honest way to say so.
+await t('still writes one whose date has already gone by', async () => {
+  const d = dl('soon-email');
+  return d.length === 1 && d[0].start_date === ymd(4 - 10);
+});
+await t('leaves SMS and the other sub-types out of it', async () =>
+  dl('ahead-sms').length === 0 && dl('other').length === 0);
+// There are years of these behind us and nobody can act on one.
+await t('does not reach back over items that have already run', async () =>
+  dl('past-advo').length === 0);
+// Still to come until it has gone, and the ordinary rule would write one on
+// a save, so the backfill writes the same row rather than a different one.
+await t('counts something going out today as still to come', async () =>
+  dl('today-email').length === 1);
+await t('does not give a second one to an item that has one', async () =>
+  dl('has-one').length === 1 && dl('has-one')[0].id === 'd-has');
+await t('marks them as the calendar\'s own work, not somebody\'s', async () =>
+  dl(ADVO)[0].created_by === 'calendar');
+await t('records how many it made', async () => {
+  const m = oldRows("SELECT value FROM meta WHERE key = 'deadline-backfill-2026-10'");
+  return m.length === 1 && JSON.parse(m[0].value).made === 4;
+});
+// It inserts, so a second pass has to be a no-op.
+await t('makes none a second time', async () => {
+  const before = oldRows('SELECT COUNT(*) AS n FROM items')[0].n;
+  const again = await freshWorker();
+  await again.fetch(new Request('https://cal.test/api/items', {
+    headers: { 'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' },
+  }), { ...ENV, DB: d1(old) }, { waitUntil() {} });
+  return oldRows('SELECT COUNT(*) AS n FROM items')[0].n === before;
+});
+// The thing Jeremy actually clicked.
+await t('puts every one of them under the Deadline kind', async () => {
+  const all = oldRows("SELECT * FROM items WHERE title LIKE 'Sunnyside Deadline:%'");
+  // The four backfilled, plus the one that was already there.
+  return all.length === 5 && all.every((r) => r.event_type === 'deadline'
+    && r.sub_types === null && r.end_date === r.start_date);
+});
+// A later edit of the source item must move the backfilled row rather than
+// add a second one beside it.
+await t('hands the backfilled row over to the ordinary rule', async () => {
+  const w = await freshWorker();
+  await w.fetch(new Request('https://cal.test/api/items/' + ADVO, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com',
+    },
+    body: JSON.stringify({ start_date: ymd(60), end_date: ymd(60) }),
+  }), { ...ENV, DB: d1(old) }, { waitUntil() {} });
+  const d = dl(ADVO);
+  return d.length === 1 && d[0].start_date === ymd(60 - 21);
+});
+
 console.log('');
 console.log(ran + ' checks, ' + (failed ? failed + ' FAILED' : 'all passed'));
 process.exit(failed ? 1 : 0);

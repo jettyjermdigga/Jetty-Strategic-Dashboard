@@ -137,6 +137,7 @@ async function ensureSchema(db) {
   await migrateKindSplit(db);
   await migrateEmailSmsSplit(db);
   await repairDoubledSms(db);
+  await backfillDeadlines(db);
   await backfillSocial(db);
   schemaReady = true;
 }
@@ -409,6 +410,60 @@ async function repairDoubledSms(db) {
 
   await db.prepare('UPDATE meta SET value = ? WHERE key = ?')
     .bind(JSON.stringify({ deleted: ids.length }), SMS_DEDUPE_KEY).run();
+}
+
+// One-time: the deadline every Paid Advo and Email item would have had, if
+// the rule had existed when it was put on the calendar.
+//
+// Only items still to come. A deadline for something that has already run is
+// an entry nobody can act on, and there are years of them back there.
+//
+// Items still to come whose deadline date has already passed DO get one --
+// an email going out in four days was due with SunnySide six days ago, and a
+// date in the past is the honest way to say so.
+const DEADLINE_BACKFILL_KEY = 'deadline-backfill-2026-10';
+
+async function backfillDeadlines(db) {
+  if (!(await claim(db, DEADLINE_BACKFILL_KEY))) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const res = await db.prepare(
+    'SELECT * FROM items WHERE start_date >= ? AND deadline_for IS NULL '
+    + "AND event_type != 'deadline' "
+    + "AND (sub_types LIKE '%paid-advo%' OR sub_types LIKE '%email%')").bind(today).all();
+
+  // Anything that already has one -- because it was created or edited after
+  // the rule shipped -- is left alone rather than given a second.
+  const have = new Set((((await db.prepare(
+    'SELECT deadline_for FROM items WHERE deadline_for IS NOT NULL').all())
+    .results) || []).map((r) => r.deadline_for));
+
+  const now = new Date().toISOString();
+  const insert = db.prepare(
+    'INSERT INTO items (id,' + COLS.join(',')
+    + ',deadline_for,created_by,created_at,updated_by,updated_at) '
+    + 'VALUES (?' + ',?'.repeat(COLS.length + 5) + ')');
+
+  const batch = [];
+  let skipped = 0;
+  for (const item of res.results || []) {
+    if (have.has(item.id)) { skipped += 1; continue; }
+    const want = deadlineFor(item);
+    if (!want) continue;
+    // The same path a typed deadline takes, so a backfilled row and one the
+    // Worker writes on a save are the same row.
+    const { row, errors } = normalise(coerceKeys(want), null);
+    if (errors.length) { skipped += 1; continue; }
+    batch.push(insert.bind(crypto.randomUUID(), ...COLS.map((c) => row[c]),
+                           item.id, CALENDAR_AUTHOR, now, CALENDAR_AUTHOR, now));
+  }
+  const BATCH = 50;
+  for (let i = 0; i < batch.length; i += BATCH) {
+    await db.batch(batch.slice(i, i + BATCH));
+  }
+
+  await db.prepare('UPDATE meta SET value = ? WHERE key = ?')
+    .bind(JSON.stringify({ made: batch.length, skipped }), DEADLINE_BACKFILL_KEY).run();
 }
 
 // One-time: Event and Marketing were one kind, Meeting and Deadline another.
