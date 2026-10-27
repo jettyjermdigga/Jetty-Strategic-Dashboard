@@ -64,7 +64,7 @@ const ITEMS = [
   ev({ id: '33333333-3333-4333-8333-333333333333', title: 'Fall Email',
        event_type: 'marketing', department: 'marketing', sub_types: 'email',
        start_date: dayThis(14), end_date: dayThis(14) }),
-  ev({ id: '44444444-4444-4444-8444-444444444444', title: 'Buy Plan Meeting',
+  ev({ id: 'bbbbbbbb-4444-4444-8444-444444444444', title: 'Buy Plan Meeting',
        event_type: 'meeting', department: '',
        start_date: dayThis(17), end_date: dayThis(17) }),
   // Four on one day: the month cell caps at three, which is what the download
@@ -103,7 +103,7 @@ const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], delete
                deletedComments: [], commented: null, savedFilters: null, resets: 0,
                mentionsSeen: 0, announced: [], announceFails: false,
                announceNoFile: false, attAdded: [], attDeleted: [],
-               personLoaded: [], spent: [] };
+               personLoaded: [], spent: [], rosterAsked: 0 };
 
 // The four who run the sample cupboard, as the Worker hands them over.
 const BOXY_CHECKOUT = ['Jeremy DeFilippis', 'JJ McKenna', 'Joe Mangino', 'Cory Higgins'];
@@ -243,6 +243,7 @@ await page.route('**/*', async (route) => {
     } });
   }
   if (/\/attendance$/.test(p)) {
+    if (method === 'GET') seen.rosterAsked++;
     if (method === 'DELETE') {
       seen.attDeleted.push(url.searchParams.get('person'));
       ATT = ATT.filter((r) => r.person !== url.searchParams.get('person'));
@@ -914,6 +915,71 @@ await t('reset issues a new link', async () => {
   return seen.resets === 1;
 });
 await page.locator('button[data-act="close"]').click();
+
+// ── What the panel says it is ──────────────────────────────
+//
+// It said "Event" across the top of everything it opened, including the
+// deadlines, the meetings and the van bookings.
+console.log('the panel header');
+const header = async (sel) => {
+  await page.locator(sel).first().click();
+  await page.waitForSelector('.det-title');
+  const out = await page.locator('#modalTitle').textContent();
+  return out;
+};
+const shut = async () => { await page.locator('button[data-act="close"]').click(); };
+
+await t('names the kind, the department and the sub-type', async () => {
+  const h = await header('.chip:has-text("Fall Email"):not(:has-text("Deadline"))');
+  await shut();
+  return h === 'Marketing \u00b7 Marketing \u00b7 Email';
+});
+await t('carries every department, primary first', async () => {
+  const h = await header('.chip:has-text("Surf Expo")');
+  await shut();
+  // Surf Expo is an Event that Wholesale owns and INK is also on -- the
+  // kind and the department are different questions.
+  return h === 'Event \u00b7 Wholesale + Jetty INK \u00b7 Tradeshow';
+});
+// "Meeting · ·" reads as something missing rather than something that does
+// not apply.
+await t('leaves out the parts an item does not have', async () => {
+  const h = await header('.chip:has-text("Buy Plan Meeting")');
+  await shut();
+  return h === 'Meeting';
+});
+await t('says Deadline on a deadline', async () => {
+  const h = await header('.chip:has-text("Sunnyside Deadline")');
+  await shut();
+  return h === 'Deadline \u00b7 Marketing';
+});
+
+// ── Who was there belongs to an Event ────────────────────────
+//
+// Boxy Bucks are earned by turning up, and a deadline is not something to
+// turn up to. The roster was being offered on all of them.
+console.log('who was there, only where it belongs');
+const rosterOn = async (sel) => {
+  await page.locator(sel).first().click();
+  await page.waitForSelector('.det-title');
+  const n = await page.locator('#whoWrap').count();
+  await shut();
+  return n;
+};
+await t('is not offered on a deadline', async () =>
+  (await rosterOn('.chip:has-text("Sunnyside Deadline")')) === 0);
+await t('is not offered on a meeting', async () =>
+  (await rosterOn('.chip:has-text("Buy Plan Meeting")')) === 0);
+await t('is not offered on a Marketing send', async () =>
+  (await rosterOn('.chip:has-text("Fall Email"):not(:has-text("Deadline"))')) === 0);
+// And a request for a roster nobody can see is a request for nothing.
+await t('does not even ask the server for one', async () => {
+  const before = seen.rosterAsked;
+  await rosterOn('.chip:has-text("Sunnyside Deadline")');
+  return seen.rosterAsked === before;
+});
+await t('is still offered on an event', async () =>
+  (await rosterOn('.chip:has-text("Coquina Jam")')) === 1);
 
 console.log('who was there');
 await page.locator('.chip:has-text("Coquina Jam")').click();

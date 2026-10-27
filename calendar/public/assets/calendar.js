@@ -844,6 +844,26 @@
     setTimeout(restore, 1500);
   }
 
+  // Boxy Bucks are earned by turning up, and only an Event is something to
+  // turn up to. Read off the item rather than passed in, so the modal and
+  // anything else asking get the same answer.
+  function takesAttendance(it) {
+    return (it && it.event_type) === 'event';
+  }
+
+  // What this item is, across the top of its own panel: the kind, whose it
+  // is, and what sort. It said "Event" on everything, including the
+  // deadlines and the van bookings.
+  function modalHeading(it) {
+    var subs = subsOf(it).map(function (k) { return labelIn(tax('subTypes'), k); });
+    // An empty part is dropped rather than written as a gap: a meeting has
+    // no sub-type and an unassigned item has no department, and
+    // "Meeting \u00b7 \u00b7" reads as something missing rather than something
+    // that does not apply.
+    return [labelIn(tax('eventTypes'), it.event_type) || 'Event',
+            deptSummary(it), subs.join(', ')].filter(Boolean).join(' \u00b7 ');
+  }
+
   // ── modal ──────────────────────────────────────────────────────────────
 
   function openModal(title, body, foot) {
@@ -1040,11 +1060,13 @@
       // noticeboard rather than a conversation.
       // Who was there. Above the comments because it is a fact about the
       // event rather than a conversation about it.
-      + '<div class="who-wrap" id="whoWrap">'
-      + '<h4 class="cmt-h">Who was there</h4>'
-      + '<div id="whoList"><span class="muted">Loading\u2026</span></div>'
-      + (state.me.canEdit ? '<div class="who-add" id="whoAdd"></div>' : '')
-      + '</div>'
+      + (takesAttendance(it)
+          ? '<div class="who-wrap" id="whoWrap">'
+            + '<h4 class="cmt-h">Who was there</h4>'
+            + '<div id="whoList"><span class="muted">Loading\u2026</span></div>'
+            + (state.me.canEdit ? '<div class="who-add" id="whoAdd"></div>' : '')
+            + '</div>'
+          : '')
       + '<div class="cmt-wrap">'
       + '<h4 class="cmt-h">Comments</h4>'
       + '<div class="cmt-list" id="cmtList"><span class="muted">Loading\u2026</span></div>'
@@ -1080,10 +1102,13 @@
         + '<button class="cal-btn primary" data-act="edit" data-id="' + esc(it.id) + '">Edit</button>'
       : '<div class="grow"></div><button class="cal-btn" data-act="close">Close</button>';
 
-    openModal('Event', body, foot);
+    openModal(modalHeading(it), body, foot);
 
     // ── who was there ────────────────────────────────────────────────────
 
+    // Only on an Event. A deadline, a meeting, an email or a van booking is
+    // not something people turn up to, and the roster was being offered on
+    // all of them.
     state.who = { rows: [], staff: [], roles: [], points: {} };
 
     function whoHtml() {
@@ -1137,8 +1162,12 @@
     // Published on state because the click handler lives in wire(), attached
     // once -- attaching it here instead would add another listener to the
     // same element every time an event is opened.
-    state.openId = id;
-    state.paintWho = paintWho;
+    //
+    // Cleared rather than left behind on an item that has no roster: that
+    // handler is still on the page, and a stale id would point it at the
+    // last event somebody happened to open.
+    state.openId = takesAttendance(it) ? id : '';
+    state.paintWho = takesAttendance(it) ? paintWho : null;
 
     function paintWho() {
       var box = $('#whoList');
@@ -1156,14 +1185,16 @@
       }
     }
 
-    api('/api/items/' + id + '/attendance').then(function (r) {
-      state.who = { rows: r.attendance || [], staff: r.staff || [],
-                    roles: r.roles || [], points: r.points || {} };
-      paintWho();
-    }).catch(function () {
-      var box = $('#whoList');
-      if (box) box.innerHTML = '<p class="hint">Could not load who was there.</p>';
-    });
+    if (takesAttendance(it)) {
+      api('/api/items/' + id + '/attendance').then(function (r) {
+        state.who = { rows: r.attendance || [], staff: r.staff || [],
+                      roles: r.roles || [], points: r.points || {} };
+        paintWho();
+      }).catch(function () {
+        var box = $('#whoList');
+        if (box) box.innerHTML = '<p class="hint">Could not load who was there.</p>';
+      });
+    }
 
     state.comments = [];
     function paintComments() {
