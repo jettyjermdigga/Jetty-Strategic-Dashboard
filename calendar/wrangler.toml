@@ -52,7 +52,7 @@ bucket_name = "jetty-calendar-files"
 # taylor.heussner@sunnysidecalifornia.com is the one outside address: she
 # runs Jetty's paid placements at SunnySide, which is why she is also the
 # Paid Advo watcher further down.
-CALENDAR_EDITORS = "cory@jettylife.com,jeremy@jettylife.com,joncoen@jettylife.com,arlynn@jettylife.com,colleen@jettylife.com,d.bachowski@jettylife.com,joem@jettylife.com,wholesale@jettylife.com,jjmckenna@jettylife.com,taylor.heussner@sunnysidecalifornia.com,kyle@jettyrockfoundation.org,jessica@jettyrockfoundation.org"
+CALENDAR_EDITORS = "cory@jettylife.com,jeremy@jettylife.com,john@jettylife.com,joncoen@jettylife.com,arlynn@jettylife.com,colleen@jettylife.com,k.hehl@jettylife.com,d.bachowski@jettylife.com,joem@jettylife.com,wholesale@jettylife.com,jjmckenna@jettylife.com,taylor.heussner@sunnysidecalifornia.com,kyle@jettyrockfoundation.org,jessica@jettyrockfoundation.org"
 
 # The email domains the calendar's Cloudflare Access application admits.
 #
