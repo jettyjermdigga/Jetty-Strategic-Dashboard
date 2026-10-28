@@ -1,0 +1,65 @@
+# Retail sales commissions. Its own Worker, deployed from this directory by
+# .github/workflows/commissions.yml.
+#
+# Separate from the calendar and the dashboard on purpose: two people use this
+# and it decides what the sales reps get paid. A calendar change must not be
+# able to stop Amy paying somebody, and nobody with calendar access should
+# inherit a view of commission rates.
+
+name = "jetty-commissions"
+main = "worker/index.js"
+compatibility_date = "2024-09-23"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+# Without this the platform serves matching files before the Worker runs, so
+# the Access check would never see a request for the page itself.
+run_worker_first = true
+
+# The Worker reads its table definitions out of worker/schema.sql at startup.
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+fallthrough = true
+
+# database_id is filled in at deploy time by provision_d1.py, which creates
+# the database on first run and looks it up on every run after -- so there is
+# no id to paste by hand and no way for the committed file to drift.
+[[d1_databases]]
+binding = "DB"
+database_name = "jetty_commissions"
+database_id = "__D1_DATABASE_ID__"
+
+# The monthly statements. The bytes live here; the statements table is the
+# index. Nothing is served straight from the bucket -- every download goes
+# through the Worker, which is what keeps it behind Access.
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "jetty-commissions-files"
+
+[vars]
+# Who may open this at all. There is no read-only tier: commission rates and
+# what each rep earns are not something to be half-admitted to, so not being
+# on this list means the module is not yours.
+#
+# Addresses, matched case-insensitively, on a domain Access admits.
+COMMISSION_USERS = "jeremy@jettylife.com,amy@jettylife.com"
+
+# The email domains the commissions Access application admits. Nothing reads
+# this at runtime -- Access decides, not the Worker. It is here so
+# COMMISSION_USERS can be checked against it: a user on a domain Access
+# blocks is a line of config that looks right and does nothing.
+ACCESS_DOMAINS = "jettylife.com"
+
+# Switches identity checking from "trust the Access header" to "verify the
+# Access JWT". ACCESS_TEAM_DOMAIN is the Zero Trust team domain; ACCESS_AUD is
+# the Application Audience tag on the Access application protecting THIS
+# Worker -- commissions needs its own, separate from the calendar's and the
+# dashboard's.
+ACCESS_TEAM_DOMAIN = "wild-pine-bbc7.cloudflareaccess.com"
+ACCESS_AUD = ""
+
+# INGEST_KEY is NOT here. It is a secret, set with `wrangler secret put`, and
+# it is the only credential that can write a payment without an Access
+# identity. See /api/ingest in worker/index.js.

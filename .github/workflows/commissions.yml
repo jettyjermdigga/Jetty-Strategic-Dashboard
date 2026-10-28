@@ -1,0 +1,62 @@
+name: Deploy Jetty Commissions
+
+# Its own workflow, like the calendar's. Commissions deploy when commissions
+# code changes; nothing else can disturb them and they can disturb nothing
+# else.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'commissions/**'
+      - '.github/workflows/commissions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commissions-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Gates the deploy. The unit suite needs no browser, no network and no
+      # packages. The worker suite bundles index.js and runs it against
+      # node:sqlite -- it SKIPS rather than fails when esbuild cannot be
+      # fetched, so a flaky registry does not block a deploy.
+      #
+      # This module decides what people get paid, so the arithmetic is
+      # checked three ways: the module, the generated columns in schema.sql
+      # and the copy the page uses, all against the same rows.
+      - name: Run the unit tests
+        working-directory: commissions
+        run: node tests/unit.mjs
+      - name: Run it against a real database
+        working-directory: commissions
+        run: node tests/worker.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # Creates the D1 database the first time and writes its id into
+      # wrangler.toml on every run, so no database id is ever committed.
+      - name: Provision the commissions database
+        working-directory: commissions
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python provision_d1.py
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          workingDirectory: commissions
+          command: deploy

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Retail Sales Commissions</title>
+<link rel="icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/assets/fonts.css">
+<link rel="stylesheet" href="/assets/rc_system.css">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/commissions.css">
+<meta name="robots" content="noindex,nofollow">
+</head>
+<body>
+
+<header class="site-top">
+  <div class="brand">
+    <img src="/assets/logo.png" alt="Jetty">
+    <div class="divider"></div>
+    <div>
+      <div class="title-main">Retail Sales Commissions</div>
+      <div class="title-sub" id="sub">Loading</div>
+    </div>
+  </div>
+  <div class="site-who" id="who"></div>
+</header>
+
+<main class="cm-shell">
+  <div id="notice"></div>
+
+  <div class="cm-bar" id="bar" hidden>
+    <span class="cm-lbl">To allocate</span>
+    <input class="cm-q" id="q" type="search" placeholder="Retailer, invoice or customer"
+           aria-label="Search the queue">
+    <span class="cm-grow"></span>
+    <span class="cm-hint" id="count"></span>
+  </div>
+
+  <div class="cm-strip" id="strip" hidden></div>
+
+  <div class="cm-wrap" id="wrap" hidden>
+    <table class="cm-t" id="t"></table>
+  </div>
+</main>
+
+<script src="/assets/commissions.js"></script>
+</body>
+</html>
