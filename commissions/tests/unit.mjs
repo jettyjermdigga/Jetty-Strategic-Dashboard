@@ -11,6 +11,10 @@ import {
   cleanPaid, totals, repKey, MAX_PCT,
 } from '../worker/commission.js';
 import { cleanIncoming, cleanDate } from '../worker/ingest.js';
+import {
+  msDate, accountCodes, isWholesale, rowsFromInvoice, rowsFromPage,
+  pageQuery, sinceHeader, SALES, XERO_SCOPES,
+} from '../worker/xero.js';
 import { sqlStatements } from '../worker/sql.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -275,22 +279,246 @@ describe('a payment arriving from outside', () => {
     ok(inc({ gross: 'none' }).errors);
     eq(inc({ gross: '-120.50' }).row.gross, -120.5, 'a refund could not come through');
   });
-  it('accepts the field names a Zap is likely to send', () => {
-    eq(cleanIncoming({ id: 'rec9', date: '2026-01-02', amount: '1,000.00' }).row.gross, 1000);
-    eq(cleanIncoming({ id: 'rec9', date: '2026-01-02', amount: 5 }).row.source_ref, 'rec9');
+  it('accepts the shorter field names too', () => {
+    eq(cleanIncoming({ id: 'p9', date: '2026-01-02', amount: '1,000.00' }).row.gross, 1000);
+    eq(cleanIncoming({ id: 'p9', date: '2026-01-02', amount: 5 }).row.source_ref, 'p9');
+  });
+  // Facts about the payment, which Xero knows and Amy should not have to
+  // retype.
+  it('carries what settled, in what currency, and whether it cleared', () => {
+    const r = inc({ usd_net: 1000, partial: 1, currency: 'cad', cad: 1 }).row;
+    eq([r.usd_net, r.partial, r.currency, r.cad], [1000, 1, 'CAD', 1]);
   });
   // A feed that could set a rate would be a way to pay somebody without
   // anybody deciding to.
   it('cannot set a rep, a rate or anything that pays out', () => {
     const r = inc({ rep_key: 'nathan-zelena', commission_pct: 99, paid: 1, credits: -500 }).row;
     eq(Object.keys(r).sort(),
-       ['cad', 'cc_fee', 'customer', 'gross', 'invoice_no', 'paid_on',
-        'payment_method', 'retailer', 'source', 'source_ref']);
+       ['cad', 'cc_fee', 'currency', 'customer', 'gross', 'invoice_no', 'paid_on',
+        'partial', 'payment_method', 'retailer', 'source', 'source_ref',
+        'usd_net', 'xero_invoice_id']);
+    ok(!('rep_key' in r) && !('commission_pct' in r) && !('paid' in r),
+       'the feed can set something that pays out');
   });
   it('defaults the source and refuses one it does not know', () => {
-    eq(inc().row.source, 'zapier');
+    eq(inc().row.source, 'xero');
     eq(inc({ source: 'ledger' }).row.source, 'ledger');
     ok(inc({ source: 'somewhere' }).errors);
+  });
+});
+
+// ── Reading paid invoices out of Xero ──────────────────────
+//
+// Shapes taken from Xero's own OpenAPI spec, not from memory: GET /Invoices
+// with a page parameter returns up to 100 invoices WITH their line items,
+// each carrying Contact, CurrencyCode, Total and a Payments array.
+
+describe('Xero dates', () => {
+  // /Date(1612137600000+0000)/ is what comes back on the wire. A payment made
+  // in the evening, shifted by an offset that was already applied, lands on
+  // the next day -- in the wrong month, and therefore on the wrong statement.
+  it('reads the Microsoft date format Xero actually sends', () => {
+    eq(msDate('/Date(1612137600000+0000)/'), '2021-02-01');
+    // 20:00 UTC: add a +1300 offset that Xero has already applied and this
+    // payment moves to the 2nd -- into the next month on the last day of
+    // January, and onto the wrong statement.
+    eq(msDate('/Date(1612209600000+1300)/'), '2021-02-01',
+       'the offset was applied twice');
+    eq(msDate('/Date(1612209600000-0500)/'), '2021-02-01',
+       'a negative offset was applied twice');
+    eq(msDate('/Date(-86400000+0000)/'), '1969-12-31');
+  });
+  it('takes a plain date or a timestamp as well', () => {
+    eq(msDate('2026-10-27'), '2026-10-27');
+    eq(msDate('2026-10-27T23:50:00Z'), '2026-10-27');
+  });
+  it('gives nothing for anything else', () => {
+    eq(msDate(''), '');
+    eq(msDate(null), '');
+    eq(msDate('/Date(nonsense)/'), '');
+    eq(msDate('last tuesday'), '');
+  });
+});
+
+describe('which invoices are wholesale', () => {
+  const inv = (x) => Object.assign({
+    Type: SALES, InvoiceID: 'inv-1', InvoiceNumber: '22183', Total: 610,
+    CurrencyCode: 'USD', Contact: { Name: 'CINNAMON RAINBOWS' },
+    LineItems: [{ AccountCode: '400' }, { AccountCode: '200' }],
+    Payments: [{ PaymentID: 'pay-1', Date: '/Date(1793232000000+0000)/',
+                 Amount: 610, Reference: 'Direct Debit', Status: 'AUTHORISED' }],
+  }, x || {});
+
+  it('is one whose line items hit a wholesale account', () => {
+    eq(isWholesale(inv(), ['200']), true);
+    eq(isWholesale(inv(), ['400', '999']), true);
+    eq(isWholesale(inv(), ['999']), false);
+  });
+  // A bill we owe is not a retailer paying us.
+  it('is never a bill or a credit note', () => {
+    eq(isWholesale(inv({ Type: 'ACCPAY' }), ['200']), false);
+    eq(isWholesale(inv({ Type: 'ACCRECCREDIT' }), ['200']), false);
+  });
+  // Empty config must import nothing rather than everything.
+  it('is nothing at all when no accounts are configured', () => {
+    eq(isWholesale(inv(), []), false);
+    eq(isWholesale(inv(), null), false, 'an unset list was read as a match');
+    eq(isWholesale(inv(), undefined), false);
+    eq(accountCodes(''), []);
+    eq(accountCodes(null), []);
+    eq(accountCodes(' 200 , 201 ,,'), ['200', '201']);
+  });
+});
+
+describe('what an invoice is worth to the queue', () => {
+  const inv = (x) => Object.assign({
+    Type: SALES, InvoiceID: 'inv-1', InvoiceNumber: '22183', Total: 610,
+    CurrencyCode: 'USD', Contact: { Name: 'CINNAMON RAINBOWS' },
+    LineItems: [{ AccountCode: '200' }],
+    Payments: [{ PaymentID: 'pay-1', Date: '/Date(1793232000000+0000)/',
+                 Amount: 610, Reference: 'Direct Debit', Status: 'AUTHORISED' }],
+  }, x || {});
+  const one = (x) => rowsFromInvoice(inv(x), ['200'])[0];
+
+  it('is one row per payment, not one per invoice', () => {
+    const r = rowsFromInvoice(inv({ Payments: [
+      { PaymentID: 'a', Date: '/Date(1793232000000+0000)/', Amount: 300, Status: 'AUTHORISED' },
+      { PaymentID: 'b', Date: '/Date(1793318400000+0000)/', Amount: 310, Status: 'AUTHORISED' },
+    ] }), ['200']);
+    eq(r.length, 2);
+    eq(r.map((x) => x.gross), [300, 310]);
+  });
+  // PaymentID is what makes a re-pull write nothing the second time.
+  it('is keyed on the payment, so a re-pull is harmless', () => {
+    eq(one().source_ref, 'pay-1');
+    eq(one().source, 'xero');
+  });
+  it('carries the retailer, the invoice number and how it was paid', () => {
+    eq([one().retailer, one().invoice_no, one().payment_method],
+       ['CINNAMON RAINBOWS', '22183', 'Direct Debit']);
+  });
+  // A reversed payment that still earned commission is the kind of thing
+  // nobody notices until a rep queries it.
+  it('leaves a deleted payment out', () => {
+    eq(rowsFromInvoice(inv({ Payments: [
+      { PaymentID: 'a', Date: '/Date(1793232000000+0000)/', Amount: 5, Status: 'DELETED' },
+    ] }), ['200']).length, 0);
+  });
+  it('leaves out a payment with no id, no date or no amount', () => {
+    const bad = [
+      { Date: '/Date(1793232000000+0000)/', Amount: 5, Status: 'AUTHORISED' },
+      { PaymentID: 'b', Amount: 5, Status: 'AUTHORISED' },
+      { PaymentID: 'c', Date: '/Date(1793232000000+0000)/', Status: 'AUTHORISED' },
+      { PaymentID: 'd', Date: '/Date(1793232000000+0000)/', Amount: 0, Status: 'AUTHORISED' },
+    ];
+    eq(rowsFromInvoice(inv({ Payments: bad }), ['200']).length, 0);
+  });
+  it('marks a payment that did not clear the invoice', () => {
+    eq(one().partial, 0);
+    eq(rowsFromInvoice(inv({ Payments: [
+      { PaymentID: 'a', Date: '/Date(1793232000000+0000)/', Amount: 300, Status: 'AUTHORISED' },
+    ] }), ['200'])[0].partial, 1);
+  });
+  // Paying on the foreign net would hand the rep the exchange rate as a
+  // bonus. BankAmount is what it actually settled for.
+  it('takes a foreign invoice at what it settled for', () => {
+    const r = rowsFromInvoice(inv({ CurrencyCode: 'CAD', Total: 1400, Payments: [
+      { PaymentID: 'a', Date: '/Date(1793232000000+0000)/', Amount: 1400,
+        BankAmount: 1000, Status: 'AUTHORISED' },
+    ] }), ['200'])[0];
+    eq([r.cad, r.usd_net, r.gross, r.currency], [1, 1000, 1400, 'CAD']);
+  });
+  it('leaves a USD invoice alone', () => {
+    eq([one().cad, one().usd_net], [0, null]);
+  });
+  // A foreign invoice with no BankAmount has to reach Amy rather than be
+  // priced at zero.
+  it('leaves the USD figure empty rather than guessing it', () => {
+    const r = rowsFromInvoice(inv({ CurrencyCode: 'GBP', Payments: [
+      { PaymentID: 'a', Date: '/Date(1793232000000+0000)/', Amount: 500, Status: 'AUTHORISED' },
+    ] }), ['200'])[0];
+    eq([r.cad, r.usd_net], [1, null]);
+  });
+  it('reads a whole page, and copes with an empty one', () => {
+    eq(rowsFromPage({ Invoices: [inv(), inv({ InvoiceID: 'i2' })] }, ['200']).length, 2);
+    eq(rowsFromPage({ Invoices: [] }, ['200']).length, 0);
+    eq(rowsFromPage({}, ['200']).length, 0);
+    eq(rowsFromPage(null, ['200']).length, 0);
+  });
+  // Everything the mapper produces has to survive the gate everything else
+  // entering the queue goes through.
+  it('produces rows the feed gate accepts unchanged', () => {
+    const r = one();
+    const { row, errors } = cleanIncoming(r);
+    ok(!errors, show(errors));
+    eq([row.source_ref, row.gross, row.retailer, row.paid_on],
+       [r.source_ref, r.gross, r.retailer, r.paid_on]);
+  });
+});
+
+describe('everything from Xero goes through the feed gate', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+  const at = idx.indexOf('async function runPull');
+  const body = idx.slice(at, idx.indexOf('\nconst QUEUE_FIELDS', at));
+
+  // Today's mapper produces nothing cleanIncoming would reject, so no
+  // behavioural check can tell whether the gate is wired in. This is the
+  // weaker, structural kind on purpose -- the gate is what stops a later
+  // change to the mapper quietly writing a rep or a rate.
+  it('cleans every row rather than trusting the mapper', () => {
+    ok(at > 0, 'there is no pull');
+    ok(/cleanIncoming\(candidate\)/.test(body), 'rows go straight into the table');
+    ok(/PAYMENT_COLS\.map/.test(body), 'the insert does not use the cleaned columns');
+    const cols = idx.slice(idx.indexOf('const PAYMENT_COLS'), idx.indexOf('];', idx.indexOf('const PAYMENT_COLS')));
+    for (const banned of ['rep_key', 'commission_pct', 'paid']) {
+      ok(!cols.includes("'" + banned + "'"), 'a pull can write ' + banned);
+    }
+  });
+  // The old one is dead the instant the new one is issued, so a pull that
+  // throws halfway must not take the only working credential with it.
+  it('stores the rotated refresh token before it pulls anything', () => {
+    const stored = body.indexOf('SET refresh_token = ?');
+    const pulled = body.indexOf('await pullRows(');
+    ok(stored > 0 && pulled > 0, 'one of the two is missing');
+    ok(stored < pulled, 'the token is only stored after the pull');
+  });
+  // Moving it after a run that stopped on a rate limit would skip whatever
+  // was left behind.
+  it('leaves the watermark alone when the run did not finish', () => {
+    ok(/out\.more \? \(row\.watermark/.test(body),
+       'the watermark moves even when the window was not finished');
+  });
+});
+
+describe('what the pull asks Xero for', () => {
+  it('asks for sales invoices only, by the fast parameter', () => {
+    const q = new URLSearchParams(pageQuery(1));
+    eq(q.get('where'), 'Type=="ACCREC"');
+    // Xero's own docs: the explicit parameter is faster than an OR in where.
+    eq(q.get('Statuses'), 'AUTHORISED,PAID');
+  });
+  // A part-paid invoice is still AUTHORISED, and its payments have already
+  // earned commission.
+  it('does not ask only for PAID, which would miss every part payment', () => {
+    ok(new URLSearchParams(pageQuery(1)).get('Statuses').includes('AUTHORISED'));
+  });
+  it('pages, and orders so the watermark means something', () => {
+    eq(new URLSearchParams(pageQuery(3)).get('page'), '3');
+    eq(new URLSearchParams(pageQuery(1)).get('order'), 'UpdatedDateUTC ASC');
+  });
+  it('sends a timestamp Xero will take, or none at all', () => {
+    eq(sinceHeader('2026-10-27T12:00:00.000Z'), '2026-10-27T12:00:00');
+    eq(sinceHeader(null), null);
+    eq(sinceHeader('not a date'), null);
+  });
+  // Without offline_access there is no refresh token and the link dies in
+  // half an hour, on a Sunday, silently.
+  it('asks for offline access and nothing it does not need', () => {
+    const scopes = XERO_SCOPES.split(' ');
+    ok(scopes.includes('offline_access'), 'the connection would expire in 30 minutes');
+    ok(scopes.includes('accounting.transactions.read'));
+    ok(!scopes.some((x) => x === 'accounting.transactions' || x === 'accounting.settings'),
+       'it asks for write access to the books');
   });
 });
 
@@ -320,9 +548,15 @@ describe('who can open this', () => {
   });
   // The secret that can write a payment without an Access identity must not
   // be committed, whatever else is in here.
-  it('keeps the ingest key out of the file', () => {
-    ok(!/^INGEST_KEY\s*=/m.test(toml), 'the ingest key is committed in wrangler.toml');
-    ok(/INGEST_KEY is NOT here/.test(toml), 'nothing says where the key lives');
+  // The two credentials that could read the whole of Xero.
+  it('keeps the Xero secret and the refresh token out of the file', () => {
+    ok(!/^XERO_CLIENT_SECRET\s*=/m.test(toml), 'the Xero secret is committed');
+    ok(!/refresh_token/i.test(toml), 'a refresh token is committed');
+    ok(/XERO_CLIENT_SECRET is NOT in this file/.test(toml),
+       'nothing says where the secret lives');
+  });
+  it('pulls on a schedule rather than waiting to be asked', () => {
+    ok(/^crons = \[/m.test(toml), 'nothing pulls from Xero on its own');
   });
   it('reads its own allowlist, not the calendar\'s', () => {
     const access = fs.readFileSync(root('worker/access.js'), 'utf8');

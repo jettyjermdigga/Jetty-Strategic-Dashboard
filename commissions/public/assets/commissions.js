@@ -28,6 +28,7 @@
   // because every keystroke re-renders the table underneath the form.
   var openId = '';
   var form = {};
+  var xero = null;
 
   var SIGNED_OUT = 'Your sign-in has expired. Reload the page.';
 
@@ -193,6 +194,35 @@
     chrome();
   }
 
+  // Where the money comes from. A line rather than a page: the connection
+  // is somebody's concern twice a year and the queue is their concern every
+  // day.
+  function xeroHtml() {
+    if (!xero) return '';
+    if (!xero.configured) {
+      return '<span class="cm-x-off">Xero is not set up yet.</span>'
+        + '<span>XERO_CLIENT_ID and the XERO_CLIENT_SECRET secret are both needed.</span>';
+    }
+    if (!xero.connected) {
+      return '<span class="cm-x-off">Not connected to Xero.</span>'
+        + '<span class="cm-grow"></span>'
+        + '<button class="cm-x-btn" type="button" id="xConnect">Connect Xero</button>';
+    }
+    var r = xero.lastResult || {};
+    var last = xero.lastRunAt
+      ? ('last pull ' + String(xero.lastRunAt).slice(0, 16).replace('T', ' ')
+         + (r.error ? ' \u2014 failed: ' + r.error
+                    : ' \u00b7 ' + (r.made || 0) + ' new'))
+      : 'never pulled';
+    return '<span>Xero: <b>' + esc(xero.tenant || '') + '</b></span>'
+      + '<span' + (r.error ? ' class="cm-x-off"' : '') + '>' + esc(last) + '</span>'
+      + (xero.accounts && xero.accounts.length
+          ? '<span>accounts ' + esc(xero.accounts.join(', ')) + '</span>'
+          : '<span class="cm-x-off">no wholesale accounts set</span>')
+      + '<span class="cm-grow"></span>'
+      + '<button class="cm-x-btn" type="button" id="xPull">Pull now</button>';
+  }
+
   function chrome() {
     var t = D.totals || {};
     $('#strip').innerHTML = [
@@ -204,6 +234,8 @@
         + '<div class="cm-v">' + esc(p[1]) + '</div></div>';
     }).join('');
     $('#strip').hidden = false;
+    var box = $('#xero');
+    if (box) { box.innerHTML = xeroHtml(); box.hidden = !xero; }
     $('#count').textContent = (D.rows || []).length + ' shown of ' + D.waiting;
     $('#sub').textContent = D.waiting + ' to allocate';
   }
@@ -271,12 +303,40 @@
       e.preventDefault();
       save(f.dataset.for);
     });
+    // Delegated, because the strip is redrawn on every render.
+    document.addEventListener('click', function (e) {
+      if (e.target.id === 'xConnect') {
+        api('/api/xero/connect')
+          .then(function (r) { window.location.href = r.go; })
+          .catch(function (err) { say(err.message || 'Could not start that.'); });
+        return;
+      }
+      if (e.target.id === 'xPull') {
+        e.target.disabled = true;
+        e.target.textContent = 'Pulling\u2026';
+        api('/api/xero/pull', { method: 'POST', body: '{}' })
+          .then(function () { return refreshXero(); })
+          .then(load)
+          .catch(function (err) {
+            say(err.message || 'The pull did not run.');
+            return refreshXero().then(render);
+          });
+      }
+    });
     $('#q').addEventListener('input', function (e) {
       q = e.target.value.trim();
       openId = '';
       clearTimeout(bind.t);
       bind.t = setTimeout(load, 180);
     });
+  }
+
+  function refreshXero() {
+    return api('/api/xero/status')
+      .then(function (r) { xero = r; })
+      // A connection nobody can read about is not worth failing the queue
+      // over: the rows are still there and still allocatable.
+      .catch(function () { xero = null; });
   }
 
   function load() {
@@ -287,7 +347,7 @@
       });
   }
 
-  Promise.all([api('/api/choices'), api('/api/queue?limit=200')])
+  Promise.all([api('/api/choices'), api('/api/queue?limit=200'), refreshXero()])
     .then(function (both) {
       choices = both[0];
       D = both[1];

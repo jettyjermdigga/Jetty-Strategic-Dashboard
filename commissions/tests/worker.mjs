@@ -94,79 +94,190 @@ const t = async (name, fn) => {
 };
 const rows = (sql, ...b) => sqlite.prepare(sql).all(...b);
 
-const payment = (x) => Object.assign({
-  source_ref: 'rec' + Math.random().toString(36).slice(2, 10),
-  paid_on: '2026-10-27', gross: 1000, retailer: 'East of Maui',
-}, x || {});
-const ingest = (body, key) => call('POST', '/api/ingest', body,
-  { 'x-ingest-key': key === undefined ? 'a-long-shared-secret' : key });
+// ── Xero, stubbed at the network ────────────────────────────────────────
+//
+// globalThis.fetch is what the Worker reaches for, so that is what is
+// replaced. Everything below is Xero's real response shape, taken from its
+// OpenAPI spec -- including the Microsoft dates, which are the thing most
+// likely to be got wrong.
+const xero = { calls: [], refresh: 'refresh-1', issued: 0, invoicePages: {}, tokenStatus: 200 };
+const msdate = (iso) => '/Date(' + Date.parse(iso) + '+0000)/';
+const invoice = (n, over) => Object.assign({
+  Type: 'ACCREC', InvoiceID: 'inv-' + n, InvoiceNumber: String(22000 + n), Total: 610,
+  CurrencyCode: 'USD', Contact: { Name: 'Shop ' + n },
+  LineItems: [{ AccountCode: '200' }],
+  UpdatedDateUTC: msdate('2026-10-2' + (n % 9) + 'T10:00:00Z'),
+  Payments: [{ PaymentID: 'pay-' + n, Date: msdate('2026-10-27T00:00:00Z'),
+               Amount: 610, Reference: 'Direct Debit', Status: 'AUTHORISED' }],
+}, over || {});
 
-console.log('the feed');
+const reply = (status, body) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body,
+});
 
-await t('takes a payment and puts it in the queue', async () => {
-  const r = await ingest(payment({ source_ref: 'rec-one', invoice_no: '22183' }));
-  const got = rows("SELECT * FROM payments WHERE source_ref = 'rec-one'");
-  return r.status === 200 && r.body.made === 1 && got.length === 1
-    && got[0].rep_key === null && got[0].created_by === 'feed'
-    && got[0].invoice_no === '22183';
+globalThis.fetch = async (url, opts) => {
+  const u = String(url);
+  xero.calls.push({ url: u, opts });
+  if (u.startsWith('https://identity.xero.com/connect/token')) {
+    if (xero.tokenStatus !== 200) {
+      return reply(xero.tokenStatus, { error: 'invalid_grant',
+                                       error_description: 'refresh token expired' });
+    }
+    xero.issued += 1;
+    // Xero rotates the refresh token on every refresh and kills the old one.
+    xero.refresh = 'refresh-' + (xero.issued + 1);
+    return reply(200, { access_token: 'access-' + xero.issued, refresh_token: xero.refresh });
+  }
+  if (u === 'https://api.xero.com/connections') {
+    return reply(200, [{ tenantId: 'tenant-1', tenantName: 'Jetty Brand' }]);
+  }
+  if (u.startsWith('https://api.xero.com/api.xro/2.0/Invoices')) {
+    const page = Number(new URL(u).searchParams.get('page'));
+    return reply(200, { Invoices: xero.invoicePages[page] || [] });
+  }
+  throw new Error('unexpected fetch: ' + u);
+};
+
+const XENV = { ...ENV, XERO_CLIENT_ID: 'cid', XERO_CLIENT_SECRET: 'csecret',
+               XERO_ACCOUNTS: '200' };
+const xcall = async (method, p, body) => {
+  const res = await worker.fetch(new Request('https://cm.test' + p, {
+    method,
+    headers: { 'content-type': 'application/json',
+               'Cf-Access-Authenticated-User-Email': 'amy@jettylife.com' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }), XENV, { waitUntil() {} });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch (e) { /* not json */ }
+  return { status: res.status, body: json, text, headers: res.headers };
+};
+
+console.log('connecting to Xero');
+
+await t('says it is not connected yet', async () => {
+  const r = await xcall('GET', '/api/xero/status');
+  return r.status === 200 && r.body.connected === false && r.body.configured === true;
 });
-// A duplicate payment is a duplicate commission: money out of the door
-// rather than a tidy-up.
-await t('writes nothing the second time a payment is replayed', async () => {
-  const r = await ingest(payment({ source_ref: 'rec-one', gross: 9999 }));
-  const got = rows("SELECT gross FROM payments WHERE source_ref = 'rec-one'");
-  return r.body.made === 0 && r.body.skipped === 1
-    && got.length === 1 && got[0].gross === 1000;
+// Without offline_access the link dies in half an hour, on a Sunday.
+await t('sends people to Xero asking for offline access', async () => {
+  const r = await xcall('GET', '/api/xero/connect');
+  const go = new URL(r.body.go);
+  return go.origin + go.pathname === 'https://login.xero.com/identity/connect/authorize'
+    && go.searchParams.get('scope').includes('offline_access')
+    && go.searchParams.get('redirect_uri') === 'https://cm.test/api/xero/callback'
+    && (go.searchParams.get('state') || '').length > 20;
 });
-await t('takes a batch, and reports what it could not take', async () => {
-  const r = await ingest({ payments: [
-    payment({ source_ref: 'rec-a' }),
-    payment({ source_ref: 'rec-b', paid_on: '10/27/2026' }),
-    payment({ source_ref: 'rec-c' }),
-  ] });
-  return r.status === 207 && r.body.made === 2 && r.body.errors.length === 1
-    && r.body.errors[0].ref === 'rec-b';
+await t('refuses a callback whose state it did not issue', async () =>
+  (await xcall('GET', '/api/xero/callback?code=abc&state=not-mine')).status === 400);
+await t('refuses a callback with no code at all', async () => {
+  const state = new URL((await xcall('GET', '/api/xero/connect')).body.go)
+    .searchParams.get('state');
+  return (await xcall('GET', '/api/xero/callback?state=' + state)).status === 400;
 });
-// The one path answered before the Access check, so the key is the only
-// thing standing in front of it.
-await t('refuses the wrong key, and says nothing else', async () => {
-  const r = await ingest(payment(), 'not-the-key');
-  return r.status === 401 && !/secret/.test(r.text);
+await t('stores the organisation and the refresh token', async () => {
+  const state = new URL((await xcall('GET', '/api/xero/connect')).body.go)
+    .searchParams.get('state');
+  const r = await xcall('GET', '/api/xero/callback?code=abc&state=' + state);
+  const row = rows('SELECT * FROM xero WHERE id = 1')[0];
+  return r.status === 302 && row.tenant_id === 'tenant-1'
+    && row.tenant_name === 'Jetty Brand' && row.refresh_token
+    && row.connected_by === 'amy@jettylife.com';
 });
-await t('refuses a missing key', async () => (await ingest(payment(), '')).status === 401);
-// An unset secret must not mean an open endpoint.
-await t('refuses everything when no key is configured', async () => {
-  const w = await freshWorker();
-  const res = await w.fetch(new Request('https://cm.test/api/ingest', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payment()),
-  }), { ...ENV, INGEST_KEY: '' }, { waitUntil() {} });
-  return res.status === 503;
+// One-time: a callback arriving twice is not the one we sent somebody off
+// with.
+await t('will not take the same state twice', async () => {
+  const state = new URL((await xcall('GET', '/api/xero/connect')).body.go)
+    .searchParams.get('state');
+  const first = await xcall('GET', '/api/xero/callback?code=abc&state=' + state);
+  const again = await xcall('GET', '/api/xero/callback?code=abc&state=' + state);
+  return first.status === 302 && again.status === 400;
 });
-await t('will not read, allocate or pay through the feed', async () => {
-  const get = await call('GET', '/api/ingest', undefined, { 'x-ingest-key': 'a-long-shared-secret' });
-  return get.status === 405;
+
+console.log('');
+console.log('pulling from Xero');
+
+await t('puts every wholesale payment in the queue', async () => {
+  xero.invoicePages = { 1: [invoice(1), invoice(2), invoice(3)] };
+  const r = await xcall('POST', '/api/xero/pull', { full: true });
+  const got = rows("SELECT * FROM payments WHERE source = 'xero' ORDER BY source_ref");
+  return r.status === 200 && r.body.made === 3 && got.length === 3
+    && got[0].source_ref === 'pay-1' && got[0].retailer === 'Shop 1'
+    && got[0].paid_on === '2026-10-27' && got[0].rep_key === null
+    && got[0].created_by === 'xero';
 });
-// The feed reaches a Worker with no Access identity at all; nothing else may.
-await t('lets nothing else past without an Access identity', async () => {
-  const res = await worker.fetch(new Request('https://cm.test/api/queue'), ENV, { waitUntil() {} });
-  return res.status === 403;
+// A duplicate payment is a duplicate commission.
+await t('writes nothing the second time the same window is pulled', async () => {
+  const r = await xcall('POST', '/api/xero/pull', { full: true });
+  return r.body.made === 0 && r.body.skipped === 3
+    && rows("SELECT id FROM payments WHERE source = 'xero'").length === 3;
+});
+// Xero kills the old refresh token the moment it issues a new one, so a
+// stored token that is one behind means the next run cannot connect at all.
+await t('stores the rotated refresh token every time', async () => {
+  const before = rows('SELECT refresh_token FROM xero WHERE id = 1')[0].refresh_token;
+  await xcall('POST', '/api/xero/pull', {});
+  const after = rows('SELECT refresh_token FROM xero WHERE id = 1')[0].refresh_token;
+  return before !== after && after === xero.refresh;
+});
+await t('ignores invoices that are not wholesale', async () => {
+  xero.invoicePages = { 1: [
+    invoice(10, { LineItems: [{ AccountCode: '999' }] }),
+    invoice(11, { Type: 'ACCPAY' }),
+    invoice(12),
+  ] };
+  const r = await xcall('POST', '/api/xero/pull', { full: true });
+  return r.body.made === 1
+    && rows("SELECT id FROM payments WHERE source_ref = 'pay-12'").length === 1
+    && rows("SELECT id FROM payments WHERE source_ref IN ('pay-10','pay-11')").length === 0;
+});
+// Empty config must import nothing rather than everything.
+await t('refuses to pull when no wholesale account is configured', async () => {
+  const res = await worker.fetch(new Request('https://cm.test/api/xero/pull', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json',
+               'Cf-Access-Authenticated-User-Email': 'amy@jettylife.com' },
+    body: '{}',
+  }), { ...XENV, XERO_ACCOUNTS: '' }, { waitUntil() {} });
+  return res.status === 500 && /XERO_ACCOUNTS/.test(await res.text());
+});
+await t('moves the watermark on so the next run asks for less', async () => {
+  const w = rows('SELECT watermark FROM xero WHERE id = 1')[0].watermark;
+  return typeof w === 'string' && w.startsWith('2026-10-2');
+});
+await t('says what it did, where the page can show it', async () => {
+  const r = await xcall('GET', '/api/xero/status');
+  return r.body.connected === true && r.body.tenant === 'Jetty Brand'
+    && r.body.lastResult.made === 1 && Array.isArray(r.body.accounts);
+});
+// The reason belongs where somebody will see it, not in a log nobody reads.
+await t('records why a pull failed rather than throwing it away', async () => {
+  xero.tokenStatus = 400;
+  const r = await xcall('POST', '/api/xero/pull', {});
+  xero.tokenStatus = 200;
+  return r.status === 500 && /refresh token expired/.test(r.text);
 });
 
 console.log('');
 console.log('the queue');
 
+// Seeded straight into the table: the queue is the same queue however a
+// payment arrived, and the Xero path is covered above.
+const seed = (ref, paid_on, retailer, gross) => sqlite.prepare(
+  'INSERT INTO payments (id, source, source_ref, paid_on, retailer, gross) '
+  + "VALUES (?, 'manual', ?, ?, ?, ?)")
+  .run(crypto.randomUUID(), ref, paid_on, retailer, gross);
+
 await t('lists what is waiting, oldest first', async () => {
-  await ingest({ payments: [
-    payment({ source_ref: 'rec-old', paid_on: '2026-09-01', retailer: 'PRO Skateboard Shop' }),
-    payment({ source_ref: 'rec-new', paid_on: '2026-10-28', retailer: 'Surf Unlimited' }),
-  ] });
+  seed('rec-old', '2026-09-01', 'PRO Skateboard Shop', 1000);
+  seed('rec-new', '2026-10-28', 'Surf Unlimited', 1000);
   const r = await call('GET', '/api/queue');
-  const first = r.body.rows[0];
-  return r.status === 200 && first.paid_on === '2026-09-01' && r.body.waiting >= 5;
+  return r.status === 200 && r.body.rows[0].paid_on === '2026-09-01' && r.body.waiting >= 5;
 });
 await t('works out the figures on the way out', async () => {
-  await ingest(payment({ source_ref: 'rec-math', gross: 1000 }));
+  seed('rec-math', '2026-10-01', 'East of Maui', 1000);
   await call('PATCH', '/api/payments/' + rows(
     "SELECT id FROM payments WHERE source_ref = 'rec-math'")[0].id,
     { credits: -100, freight: 25 });
@@ -184,27 +295,27 @@ console.log('allocating');
 const idOf = (ref) => rows('SELECT id FROM payments WHERE source_ref = ?', ref)[0].id;
 
 await t('needs a rep on the list, so a typed name cannot get in', async () => {
-  const r = await call('PATCH', '/api/payments/' + idOf('rec-one'),
+  const r = await call('PATCH', '/api/payments/' + idOf('pay-1'),
     { rep_key: 'Nathan Zelena', commission_pct: 10 });
   return r.status === 400;
 });
 await t('allocates once the rep exists', async () => {
   sqlite.prepare("INSERT INTO reps (key, name, email) VALUES ('nathan-zelena','Nathan Zelena LLC','n@x.com')").run();
-  const r = await call('PATCH', '/api/payments/' + idOf('rec-one'),
+  const r = await call('PATCH', '/api/payments/' + idOf('pay-1'),
     { rep_key: 'nathan-zelena', commission_pct: 10 });
-  const got = rows("SELECT * FROM payments WHERE source_ref = 'rec-one'")[0];
+  const got = rows("SELECT * FROM payments WHERE source_ref = 'pay-1'")[0];
   return r.status === 200 && got.rep_key === 'nathan-zelena'
-    && got.amount_due === 100 && got.updated_by === 'amy@jettylife.com';
+    && got.amount_due === 61 && got.updated_by === 'amy@jettylife.com';
 });
 // The whole definition of the queue, and the one thing allocating is for.
 await t('takes it out of the queue', async () => {
   const r = await call('GET', '/api/queue');
-  return !r.body.rows.some((x) => x.id === idOf('rec-one'));
+  return !r.body.rows.some((x) => x.id === idOf('pay-1'));
 });
 // A form that sends only the rep must not blank what somebody typed
 // yesterday.
 await t('merges over what is already stored', async () => {
-  const id = idOf('rec-a');
+  const id = idOf('pay-2');
   await call('PATCH', '/api/payments/' + id, { retailer: 'Third Coast Beach Co.', territory: 'MI' });
   await call('PATCH', '/api/payments/' + id, { rep_key: 'nathan-zelena', commission_pct: 8 });
   const got = rows('SELECT * FROM payments WHERE id = ?', id)[0];
@@ -212,12 +323,13 @@ await t('merges over what is already stored', async () => {
     && got.rep_key === 'nathan-zelena';
 });
 await t('will not take a rate that is not plausible', async () => {
-  const r = await call('PATCH', '/api/payments/' + idOf('rec-c'),
+  const r = await call('PATCH', '/api/payments/' + idOf('pay-3'),
     { rep_key: 'nathan-zelena', commission_pct: 1500 });
   return r.status === 400 && /over 50/.test(JSON.stringify(r.body));
 });
 await t('will not allocate a Canadian row with no USD net', async () => {
-  await ingest(payment({ source_ref: 'rec-cad', gross: 1400, cad: true }));
+  sqlite.prepare("INSERT INTO payments (id, source, source_ref, paid_on, gross, cad) "
+    + "VALUES (?, 'manual', 'rec-cad', '2026-10-01', 1400, 1)").run(crypto.randomUUID());
   const r = await call('PATCH', '/api/payments/' + idOf('rec-cad'),
     { rep_key: 'nathan-zelena', commission_pct: 7 });
   return r.status === 400;
@@ -247,7 +359,7 @@ await t('refuses somebody not on the list, and says why', async () => {
 await t('refuses them the choices and one payment too', async () => {
   const head = { 'Cf-Access-Authenticated-User-Email': 'arlynn@jettylife.com' };
   const a = await worker.fetch(new Request('https://cm.test/api/choices', { headers: head }), ENV, { waitUntil() {} });
-  const b = await worker.fetch(new Request('https://cm.test/api/payments/' + idOf('rec-one'),
+  const b = await worker.fetch(new Request('https://cm.test/api/payments/' + idOf('pay-1'),
     { headers: head }), ENV, { waitUntil() {} });
   return a.status === 403 && b.status === 403;
 });

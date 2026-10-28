@@ -38,6 +38,12 @@ database_id = "__D1_DATABASE_ID__"
 binding = "FILES"
 bucket_name = "jetty-commissions-files"
 
+# Pull from Xero every night. Xero's own rate limit is the reason this is
+# nightly rather than hourly, and the watermark means each run only asks for
+# what changed since the last one.
+[triggers]
+crons = ["17 7 * * *"]
+
 [vars]
 # Who may open this at all. There is no read-only tier: commission rates and
 # what each rep earns are not something to be half-admitted to, so not being
@@ -60,6 +66,22 @@ ACCESS_DOMAINS = "jettylife.com"
 ACCESS_TEAM_DOMAIN = "wild-pine-bbc7.cloudflareaccess.com"
 ACCESS_AUD = ""
 
-# INGEST_KEY is NOT here. It is a secret, set with `wrangler secret put`, and
-# it is the only credential that can write a payment without an Access
-# identity. See /api/ingest in worker/index.js.
+# The Xero app this connects with. The id is not a secret; the secret is.
+#
+#   cd commissions && npx wrangler secret put XERO_CLIENT_SECRET
+#
+# XERO_CLIENT_SECRET is NOT in this file and must never be. Nor is the refresh
+# token: Xero rotates it on every refresh, so it lives in the database where
+# the Worker can write it back. See the xero table in worker/schema.sql.
+XERO_CLIENT_ID = ""
+
+# The Xero account codes that mean wholesale revenue. An invoice counts when
+# any of its line items hits one of these.
+#
+# Codes rather than account names: an account can be renamed in Xero without
+# anybody telling us, and a renamed account silently matching nothing is a
+# month of commission that never arrives.
+#
+# Empty means nothing is recognised as wholesale and a pull refuses outright,
+# rather than quietly importing none.
+XERO_ACCOUNTS = ""

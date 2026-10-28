@@ -7,7 +7,7 @@
 // Amy's to set, and a feed that could set a commission rate would be a way
 // to pay somebody without anybody deciding to.
 
-const SOURCES = ['ledger', 'zapier', 'airtable', 'manual'];
+const SOURCES = ['xero', 'ledger', 'airtable', 'manual'];
 
 function text(v, max) {
   return String(v == null ? '' : v).trim().slice(0, max);
@@ -36,7 +36,7 @@ export function cleanIncoming(input) {
   const ref = text(i.source_ref || i.id, 120);
   if (!ref) errors.push('source_ref is required.');
 
-  const source = text(i.source, 20).toLowerCase() || 'zapier';
+  const source = text(i.source, 20).toLowerCase() || 'xero';
   if (!SOURCES.includes(source)) errors.push('"' + source + '" is not a source.');
 
   const paidOn = cleanDate(i.paid_on || i.date);
@@ -60,6 +60,14 @@ export function cleanIncoming(input) {
       gross,
       cc_fee: i.cc_fee ? 1 : 0,
       cad: i.cad ? 1 : 0,
+      // Facts about the payment, not decisions about it. usd_net is what a
+      // foreign invoice actually settled for and partial says this payment
+      // did not clear it -- Xero knows both, and asking Amy to retype them
+      // is asking her to be a worse copy of the ledger.
+      usd_net: money(i.usd_net),
+      partial: i.partial ? 1 : 0,
+      currency: text(i.currency, 10).toUpperCase() || null,
+      xero_invoice_id: text(i.xero_invoice_id, 60) || null,
     },
   };
 }

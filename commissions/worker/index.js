@@ -14,6 +14,8 @@ import { identify } from './access.js';
 import { sqlStatements } from './sql.js';
 import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
+import { XERO_AUTHORIZE, XERO_SCOPES, accountCodes } from './xero.js';
+import { refreshAccess, exchangeCode, tenants, pullRows } from './xero-pull.js';
 import SCHEMA from './schema.sql';
 
 const json = (body, status) => new Response(JSON.stringify(body), {
@@ -57,6 +59,84 @@ async function claim(db, key) {
       'SELECT value FROM meta WHERE key = ? AND value = \'"claimed"\'').bind(key).first());
   }
   return Boolean(changed);
+}
+
+// ── Xero ────────────────────────────────────────────────────────────────
+//
+// One row, id = 1. Created on demand so the rest of the module works before
+// anybody has connected anything.
+async function xeroRow(db) {
+  await db.prepare('INSERT OR IGNORE INTO xero (id) VALUES (1)').run();
+  return db.prepare('SELECT * FROM xero WHERE id = 1').first();
+}
+
+const PAYMENT_COLS = ['source', 'source_ref', 'paid_on', 'invoice_no', 'retailer',
+  'customer', 'payment_method', 'gross', 'cc_fee', 'cad', 'usd_net', 'partial',
+  'currency', 'xero_invoice_id'];
+
+/**
+ * A pull: ask Xero what has changed, and put the new payments in the queue.
+ *
+ * Every row goes through cleanIncoming, the same gate anything entering the
+ * queue goes through, so a Xero row cannot carry a rep or a rate however the
+ * mapper is changed later.
+ *
+ * Written with INSERT OR IGNORE on source_ref, which is UNIQUE: re-pulling an
+ * overlapping window writes nothing the second time. A duplicate payment is a
+ * duplicate commission.
+ */
+async function runPull(env, db, who, { full } = {}) {
+  const codes = accountCodes(env.XERO_ACCOUNTS);
+  if (!codes.length) {
+    throw new Error('XERO_ACCOUNTS is not set, so nothing would be recognised as wholesale.');
+  }
+  const row = await xeroRow(db);
+  if (!row || !row.refresh_token || !row.tenant_id) throw new Error('Xero is not connected yet.');
+
+  const fresh = await refreshAccess({
+    refresh: row.refresh_token,
+    clientId: env.XERO_CLIENT_ID,
+    clientSecret: env.XERO_CLIENT_SECRET,
+    post: fetch,
+  });
+  // Stored BEFORE the pull. Xero has already killed the old one, so a pull
+  // that throws halfway must not take the only working credential with it.
+  await db.prepare('UPDATE xero SET refresh_token = ? WHERE id = 1')
+    .bind(fresh.refresh).run();
+
+  const out = await pullRows({
+    access: fresh.access,
+    tenantId: row.tenant_id,
+    codes,
+    since: full ? null : row.watermark,
+    get: fetch,
+  });
+
+  let made = 0;
+  let skipped = 0;
+  const rejected = [];
+  const now = new Date().toISOString();
+  for (const candidate of out.rows) {
+    const { row: clean, errors } = cleanIncoming(candidate);
+    if (errors) { rejected.push({ ref: candidate.source_ref, errors }); continue; }
+    const res = await db.prepare(
+      'INSERT OR IGNORE INTO payments (id, ' + PAYMENT_COLS.join(', ')
+      + ', created_by, created_at) VALUES (?' + ',?'.repeat(PAYMENT_COLS.length + 2) + ')')
+      .bind(crypto.randomUUID(), ...PAYMENT_COLS.map((c) => clean[c]), 'xero', now).run();
+    const changed = res && res.meta
+      ? (res.meta.changes != null ? res.meta.changes : res.meta.changed_db) : 1;
+    if (changed) made += 1; else skipped += 1;
+  }
+
+  const result = { made, skipped, pages: out.pages, seen: out.rows.length,
+                   rejected: rejected.length, more: out.more };
+  // The watermark only moves when the run finished the window. Moving it
+  // after a run that stopped on a rate limit would skip whatever was left.
+  await db.prepare(
+    'UPDATE xero SET watermark = ?, last_run_at = ?, last_result = ? WHERE id = 1')
+    .bind(out.more ? (row.watermark || null) : (out.watermark || row.watermark || null),
+          now, JSON.stringify(result)).run();
+  return { ...result, by: (who && who.email) || 'schedule', rejected_detail: rejected.slice(0, 10) };
 }
 
 const QUEUE_FIELDS = 'id, source, paid_on, invoice_no, retailer, customer, territory, '
@@ -107,6 +187,81 @@ async function handleApi(request, env, url, who) {
       retailers: await col('retailer'),
       reps: await repList(),
     });
+  }
+
+  // Where the money comes from. Connecting is a two-step dance through
+  // Xero's own sign-in, so it is a redirect rather than a form.
+  if (path === '/api/xero/status' && method === 'GET') {
+    const row = await xeroRow(db);
+    return json({
+      connected: Boolean(row && row.refresh_token && row.tenant_id),
+      tenant: (row && row.tenant_name) || null,
+      connectedBy: (row && row.connected_by) || null,
+      connectedAt: (row && row.connected_at) || null,
+      watermark: (row && row.watermark) || null,
+      lastRunAt: (row && row.last_run_at) || null,
+      lastResult: (row && row.last_result) ? JSON.parse(row.last_result) : null,
+      accounts: accountCodes(env.XERO_ACCOUNTS),
+      // Said plainly rather than left to be discovered: without these the
+      // Connect button goes nowhere.
+      configured: Boolean(env.XERO_CLIENT_ID && env.XERO_CLIENT_SECRET),
+    });
+  }
+
+  if (path === '/api/xero/connect' && method === 'GET') {
+    if (!env.XERO_CLIENT_ID || !env.XERO_CLIENT_SECRET) {
+      return json({ error: 'XERO_CLIENT_ID and XERO_CLIENT_SECRET are not set.' }, 503);
+    }
+    await xeroRow(db);
+    const state = crypto.randomUUID();
+    await db.prepare('UPDATE xero SET oauth_state = ?, oauth_at = ? WHERE id = 1')
+      .bind(state, new Date().toISOString()).run();
+    const q = new URLSearchParams({
+      response_type: 'code',
+      client_id: env.XERO_CLIENT_ID,
+      redirect_uri: url.origin + '/api/xero/callback',
+      scope: XERO_SCOPES,
+      state,
+    });
+    return json({ go: XERO_AUTHORIZE + '?' + q.toString() });
+  }
+
+  if (path === '/api/xero/callback' && method === 'GET') {
+    const row = await xeroRow(db);
+    const state = url.searchParams.get('state') || '';
+    const code = url.searchParams.get('code') || '';
+    // One-time, and only for a few minutes: a callback arriving with a stale
+    // or borrowed state is not the one we sent somebody off with.
+    const issued = row && row.oauth_at ? Date.parse(row.oauth_at) : 0;
+    const fresh = issued && (Date.now() - issued) < 15 * 60 * 1000;
+    if (!code || !state || !row || !row.oauth_state || state !== row.oauth_state || !fresh) {
+      return json({ error: 'That sign-in did not match the one this module started.' }, 400);
+    }
+    await db.prepare('UPDATE xero SET oauth_state = NULL WHERE id = 1').run();
+
+    const tok = await exchangeCode({
+      code,
+      redirect: url.origin + '/api/xero/callback',
+      clientId: env.XERO_CLIENT_ID,
+      clientSecret: env.XERO_CLIENT_SECRET,
+      post: fetch,
+    });
+    const orgs = await tenants({ access: tok.access, get: fetch });
+    if (!orgs.length) return json({ error: 'That Xero login reaches no organisations.' }, 400);
+    const org = orgs[0];
+    await db.prepare(
+      'UPDATE xero SET tenant_id = ?, tenant_name = ?, refresh_token = ?, '
+      + 'connected_by = ?, connected_at = ? WHERE id = 1')
+      .bind(org.tenantId, org.name, tok.refresh, who.email, new Date().toISOString()).run();
+    // Back to the page rather than a wall of JSON: this is the end of a
+    // journey somebody started by pressing a button.
+    return new Response(null, { status: 302, headers: { location: '/?connected=' + encodeURIComponent(org.name) } });
+  }
+
+  if (path === '/api/xero/pull' && method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const result = await runPull(env, db, who, { full: Boolean(body && body.full) });
+    return json(result);
   }
 
   // The queue: every payment with no rep on it yet.
@@ -163,84 +318,9 @@ async function handleApi(request, env, url, who) {
   return json({ error: 'Unknown endpoint.' }, 404);
 }
 
-/** Compares in time that does not depend on how much of the key is right.
- *  A plain === leaks the length of the shared prefix to anyone willing to
- *  measure, which is the whole attack on a fixed secret. */
-function safeEqual(a, b) {
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  if (x.length !== y.length) return false;
-  let diff = 0;
-  for (let i = 0; i < x.length; i += 1) diff |= x[i] ^ y[i];
-  return diff === 0;
-}
-
-/**
- * A payment arriving from the feed.
- *
- * Keyed on source_ref, which is UNIQUE: a feed that replays yesterday writes
- * nothing the second time. A duplicate payment here is a duplicate
- * commission, which is money out of the door rather than a tidy-up.
- */
-async function handleIngest(request, env) {
-  const db = env.DB;
-  if (!db) return json({ error: 'The commissions database is not bound yet.' }, 503);
-  await ensureSchema(db);
-
-  const body = await request.json().catch(() => null);
-  if (!body) return json({ error: 'Expected a JSON body.' }, 400);
-  const items = Array.isArray(body) ? body : (Array.isArray(body.payments) ? body.payments : [body]);
-  if (items.length > 500) return json({ error: 'Too many at once; send 500 or fewer.' }, 400);
-
-  const made = [];
-  const skipped = [];
-  const errors = [];
-  for (const item of items) {
-    const { row, errors: bad } = cleanIncoming(item);
-    if (bad) { errors.push({ ref: (item && item.source_ref) || null, errors: bad }); continue; }
-    const id = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const res = await db.prepare(
-      'INSERT OR IGNORE INTO payments '
-      + '(id, source, source_ref, paid_on, invoice_no, retailer, customer, '
-      + 'payment_method, gross, cc_fee, cad, created_by, created_at) '
-      + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(id, row.source, row.source_ref, row.paid_on, row.invoice_no, row.retailer,
-            row.customer, row.payment_method, row.gross, row.cc_fee, row.cad,
-            'feed', now).run();
-    const changed = res && res.meta
-      ? (res.meta.changes != null ? res.meta.changes : res.meta.changed_db) : 1;
-    if (changed) made.push(row.source_ref);
-    else skipped.push(row.source_ref);
-  }
-  return json({ made: made.length, skipped: skipped.length, errors }, errors.length ? 207 : 200);
-}
-
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    // The feed. Zapier and a scheduled script cannot hold a Cloudflare
-    // Access identity, so this one path is answered before the Access check
-    // and carries its own key instead.
-    //
-    // Deliberately narrow: it only ever inserts a payment nobody has
-    // allocated yet. It cannot read, cannot allocate, cannot mark anything
-    // paid, and refuses outright when no key is configured -- an unset
-    // secret must not mean an open endpoint.
-    if (url.pathname === '/api/ingest') {
-      if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405);
-      const want = String(env.INGEST_KEY || '');
-      const got = request.headers.get('x-ingest-key') || '';
-      if (!want) return json({ error: 'This feed is not configured.' }, 503);
-      if (!safeEqual(want, got)) return json({ error: 'Not authorised.' }, 401);
-      try {
-        return await handleIngest(request, env);
-      } catch (err) {
-        return json({ error: 'Ingest failed: '
-          + (err && err.message ? err.message : String(err)) }, 500);
-      }
-    }
-
     const who = await identify(request, env);
 
     // A new workers.dev hostname is reachable by anyone until an Access
@@ -272,5 +352,30 @@ export default {
     }
 
     return env.ASSETS.fetch(request);
+  },
+
+  // The nightly pull. Nobody has to remember to press anything, and the
+  // queue is what Amy finds in the morning rather than what she builds.
+  //
+  // Failures are swallowed deliberately: a thrown scheduled handler is
+  // retried and retried, and the reason is already recorded in last_result
+  // where the page shows it.
+  async scheduled(event, env, ctx) {
+    const run = (async () => {
+      const db = env.DB;
+      if (!db) return;
+      await ensureSchema(db);
+      try {
+        await runPull(env, db, null, {});
+      } catch (err) {
+        await db.prepare(
+          'UPDATE xero SET last_run_at = ?, last_result = ? WHERE id = 1')
+          .bind(new Date().toISOString(),
+                JSON.stringify({ error: String((err && err.message) || err) })).run()
+          .catch(() => {});
+      }
+    })();
+    if (ctx && ctx.waitUntil) ctx.waitUntil(run);
+    return run;
   },
 };

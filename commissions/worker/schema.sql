@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS payments (
   credit_memo   TEXT,
   notes         TEXT,
 
+  -- What Xero said this was raised in, and which invoice it came off.
+  -- Neither is needed to pay anybody; both are what a query three months
+  -- from now is answered with.
+  currency      TEXT,
+  xero_invoice_id TEXT,
+
   -- The two figures everything reads, worked out by the database rather than
   -- by whoever is writing. worker/commission.js does the same arithmetic for
   -- the page, and a test runs both over the same rows and fails if they ever
@@ -101,6 +107,31 @@ CREATE TABLE IF NOT EXISTS statements (
   UNIQUE (rep_key, year, month)
 );
 CREATE INDEX IF NOT EXISTS idx_stmt_period ON statements(year, month);
+
+-- The Xero connection. One row, because there is one Xero organisation.
+--
+-- refresh_token is the live credential and it ROTATES: Xero issues a new one
+-- on every single refresh and kills the old one. Not writing it back means
+-- the connection works exactly once and then fails quietly, which is why it
+-- lives in a table rather than in a secret nobody can rewrite.
+CREATE TABLE IF NOT EXISTS xero (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  tenant_id     TEXT,
+  tenant_name   TEXT,
+  refresh_token TEXT,
+  -- One-time CSRF state for the connect flow, and when it was issued. A
+  -- callback carrying anything else is somebody else's.
+  oauth_state   TEXT,
+  oauth_at      TEXT,
+  connected_by  TEXT,
+  connected_at  TEXT,
+  -- How far the last pull got, as a Xero UpdatedDateUTC. The next pull asks
+  -- only for what changed after it, which is the difference between a nightly
+  -- run and re-reading every invoice ever raised.
+  watermark     TEXT,
+  last_run_at   TEXT,
+  last_result   TEXT
+);
 
 -- Which one-time migrations have run. Same shape as the calendar's, and read
 -- the same way: a key is claimed with INSERT OR IGNORE before any work, so

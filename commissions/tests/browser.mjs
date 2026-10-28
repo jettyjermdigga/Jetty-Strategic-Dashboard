@@ -49,14 +49,20 @@ let ROWS = [
     commission_pct: null, gross: 1400, credits: null, freight: null,
     cad: 1, usd_net: null, cc_fee: 0, partial: 0, paid: 0 },
 ];
-const seen = { patched: [] };
+const seen = { patched: [], pulls: 0 };
+let XERO = {
+  connected: true, configured: true, tenant: 'Jetty Brand',
+  accounts: ['200'], lastRunAt: '2026-10-28T07:17:00.000Z',
+  lastResult: { made: 4, skipped: 12 },
+};
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 page.on('console', (m) => {
-  if (m.type() === 'error' && !/400 \(Bad Request\)/.test(m.text())) {
+  if (m.type() === 'error' && !/400 \(Bad Request\)/.test(m.text())
+      && !/500 \(Internal Server Error\)/.test(m.text())) {
     errors.push('console: ' + m.text());
   }
 });
@@ -67,6 +73,14 @@ await page.route('**/*', async (route) => {
   const p = url.pathname;
 
   if (p === '/api/choices') return route.fulfill({ json: CHOICES });
+  if (p === '/api/xero/status') {
+    if (!XERO) return route.fulfill({ status: 500, json: { error: 'nope' } });
+    return route.fulfill({ json: XERO });
+  }
+  if (p === '/api/xero/connect') {
+    return route.fulfill({ json: { go: 'https://login.xero.com/identity/connect/authorize?x=1' } });
+  }
+  if (p === '/api/xero/pull') { seen.pulls += 1; return route.fulfill({ json: { made: 2 } }); }
   if (p === '/api/queue') {
     const q = (url.searchParams.get('q') || '').toLowerCase();
     const rows = ROWS.filter((r) => !r.rep_key).filter((r) => !q
@@ -135,6 +149,56 @@ await t('searches the queue', async () => {
   await page.waitForFunction(() => document.querySelectorAll('.cm-t tbody tr').length === 3);
   return true;
 });
+
+// ── Where the money comes from ──────────────────────────────────────────
+console.log('');
+console.log('the Xero line');
+await t('says which organisation, and what the last pull did', async () => {
+  const txt = await page.locator('#xero').textContent();
+  return txt.includes('Jetty Brand') && txt.includes('4 new') && txt.includes('200');
+});
+await t('offers a pull, and runs one', async () => {
+  const before = seen.pulls;
+  await page.locator('#xPull').click();
+  await page.waitForFunction(() => !document.querySelector('#xPull[disabled]'));
+  return seen.pulls === before + 1;
+});
+// A pull that failed must say so where somebody is looking, not in a log.
+await t('says plainly when the last pull failed', async () => {
+  XERO = { ...XERO, lastResult: { error: 'Xero refused the refresh: expired' } };
+  await page.reload();
+  await page.waitForSelector('.cm-t tbody tr');
+  const txt = await page.locator('#xero').textContent();
+  return txt.includes('failed') && txt.includes('expired')
+    && (await page.locator('#xero .cm-x-off').count()) > 0;
+});
+await t('offers Connect when nothing is connected', async () => {
+  XERO = { connected: false, configured: true };
+  await page.reload();
+  await page.waitForSelector('.cm-t tbody tr');
+  return (await page.locator('#xConnect').count()) === 1
+    && (await page.locator('#xPull').count()) === 0;
+});
+// A Connect button that goes nowhere is worse than a sentence saying why.
+await t('says what is missing when the app is not set up', async () => {
+  XERO = { connected: false, configured: false };
+  await page.reload();
+  await page.waitForSelector('.cm-t tbody tr');
+  const txt = await page.locator('#xero').textContent();
+  return txt.includes('XERO_CLIENT_ID') && (await page.locator('#xConnect').count()) === 0;
+});
+// The rows are still there and still allocatable.
+await t('still shows the queue when the connection cannot be read', async () => {
+  XERO = null;
+  await page.reload();
+  await page.waitForSelector('.cm-t tbody tr');
+  return (await page.locator('.cm-t tbody tr').count()) === 3
+    && (await page.locator('#xero').isHidden());
+});
+XERO = { connected: true, configured: true, tenant: 'Jetty Brand', accounts: ['200'],
+         lastRunAt: '2026-10-28T07:17:00.000Z', lastResult: { made: 4 } };
+await page.reload();
+await page.waitForSelector('.cm-t tbody tr');
 
 console.log('');
 console.log('allocating one');

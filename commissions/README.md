@@ -14,8 +14,30 @@ the calendar or the dashboard.
 
 ## Where the numbers come from
 
-    Jeremy's Ledger  ->  /api/ingest  ->  the queue  ->  Amy allocates  ->  paid
-                                                                        ->  statement
+    Xero  ->  the nightly pull  ->  the queue  ->  Amy allocates  ->  paid
+                                                                  ->  statement
+
+Straight from Xero. No Zapier.
+
+The pull asks `GET /Invoices` for sales invoices that are AUTHORISED or PAID
+-- AUTHORISED as well, because a part-paid invoice is still AUTHORISED and its
+payments have already earned commission. With a `page` parameter Xero returns
+each invoice **with its line items**, which is what makes an invoice knowable
+as wholesale: any line item hitting an account code in `XERO_ACCOUNTS`.
+
+Each payment on such an invoice becomes one queue row, keyed on Xero's
+`PaymentID`. That key is UNIQUE here, so re-pulling an overlapping window
+writes nothing the second time: a duplicate payment is a duplicate commission.
+
+Two things about Xero that are easy to get wrong and are tested:
+
+* **Dates are `/Date(1612137600000+0000)/`.** The number is already UTC
+  milliseconds. Applying the offset as well moves an evening payment to the
+  next day, which on the last of the month puts it on the wrong statement.
+* **The refresh token rotates on every single refresh.** The old one dies the
+  instant the new one is issued, so it is stored in the database -- before the
+  pull runs, not after -- rather than in a secret nobody can rewrite. Store it
+  late and the connection works exactly once.
 
 Three formulas, which are the ones the Airtable base has always used:
 
@@ -38,9 +60,12 @@ fails if they ever disagree.
   `rep_key IS NULL` is the whole definition -- the Airtable view was "Sales
   Rep is empty" and this is the same rule, in one place rather than in a view
   somebody can edit.
-* **The feed.** `POST /api/ingest`, keyed on the sender's own record id, which
-  is UNIQUE. A replay writes nothing the second time; a duplicate payment here
-  is a duplicate commission.
+* **The Xero pull.** Nightly on a cron trigger, and on demand from the Pull
+  now button. Each run moves a watermark so the next one asks only for what
+  changed -- except when it stopped early on a rate limit, where the watermark
+  stays put so nothing is skipped.
+* **Connecting to Xero**, from the line above the queue. What the last run did
+  is shown there too, including why it failed.
 
 ## What is not built yet
 
@@ -65,14 +90,16 @@ fails if they ever disagree.
    on a verified Access token, and with a team domain set and no audience
    there is nothing to verify against. It fails closed rather than falling
    back to trusting a header anyone can send.
-3. **Set the feed key**, which is the only credential that can write a payment
-   without an Access identity:
+3. **Make a Xero app** at developer.xero.com, of type *Web app*, with the
+   redirect URI set to `<this module's URL>/api/xero/callback`. Put its client
+   id in `XERO_CLIENT_ID` in `wrangler.toml` and its secret where secrets go:
 
-       cd commissions && npx wrangler secret put INGEST_KEY
+       cd commissions && npx wrangler secret put XERO_CLIENT_SECRET
 
-   Then point the existing Zap at `POST /api/ingest` with that value in an
-   `x-ingest-key` header. Until the key is set the endpoint answers 503 to
-   everything -- an unset secret must not mean an open endpoint.
+   Then set `XERO_ACCOUNTS` to the account code or codes that mean wholesale
+   revenue in your chart of accounts, and press **Connect Xero**. Until
+   `XERO_ACCOUNTS` is set a pull refuses outright rather than quietly
+   importing nothing.
 4. **Import the history.** Run the *Import commissions from Airtable*
    workflow. Leave `apply` unticked for a dry run; it reports what it would
    write without touching D1. It is keyed on Airtable record ids, so running

@@ -21,7 +21,7 @@
   background:var(--cm-cell);border:1px solid var(--surface-alt);border-radius:10px;
   padding:12px 15px;margin:0 0 14px;
 }
-.cm-bar[hidden],.cm-strip[hidden],.cm-wrap[hidden]{display:none}
+.cm-bar[hidden],.cm-strip[hidden],.cm-wrap[hidden],.cm-xero[hidden]{display:none}
 .cm-grow{flex:1 1 auto}
 .cm-lbl{
   font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;opacity:.75;
@@ -125,3 +125,25 @@
   .cm-shell{padding-left:14px;padding-right:14px}
   .cm-t th:nth-child(n+4):nth-child(-n+6),.cm-t td:nth-child(n+4):nth-child(-n+6){display:none}
 }
+
+/* ── Where the money comes from ──────────────────────────────────────────
+   A line rather than a page: the connection is somebody's concern twice a
+   year, and the queue is their concern every day. */
+.cm-xero{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  background:var(--cm-cell);border:1px solid var(--surface-alt);border-radius:10px;
+  padding:10px 15px;margin:0 0 14px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;
+}
+.cm-xero b{font-size:12px;letter-spacing:0}
+.cm-x-off{color:#A33F28}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .cm-x-off{color:#F2B0A0} }
+:root[data-theme="dark"] .cm-x-off{color:#F2B0A0}
+:root[data-theme="light"] .cm-x-off{color:#A33F28}
+.cm-x-btn{
+  font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  padding:6px 11px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--surface-alt);background:var(--cm-cell);color:var(--ink);
+}
+.cm-x-btn:hover{background:var(--cm-wash)}
+.cm-x-btn[disabled]{cursor:default;opacity:.75}
