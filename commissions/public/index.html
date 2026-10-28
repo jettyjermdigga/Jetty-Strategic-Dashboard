@@ -29,9 +29,18 @@
   <div id="notice"></div>
 
   <div class="cm-bar" id="bar" hidden>
-    <span class="cm-lbl">To allocate</span>
-    <input class="cm-q" id="q" type="search" placeholder="Retailer, invoice or customer"
-           aria-label="Search the queue">
+    <label class="cm-f-l">Show
+      <select class="cm-f-i" id="fStatus" aria-label="Which payments"></select></label>
+    <label class="cm-f-l">Rep
+      <select class="cm-f-i" id="fRep" aria-label="Sales rep"></select></label>
+    <label class="cm-f-l">Month
+      <input class="cm-f-i" id="fMonth" type="month" aria-label="Month"></label>
+    <label class="cm-f-l">Territory
+      <select class="cm-f-i" id="fTerritory" aria-label="Territory"></select></label>
+    <label class="cm-f-l">Find
+      <input class="cm-q" id="q" type="search" placeholder="Retailer, invoice or customer"
+             aria-label="Search"></label>
+    <button class="cm-f-x" type="button" id="fClear" hidden>Clear</button>
     <span class="cm-grow"></span>
     <span class="cm-hint" id="count"></span>
   </div>

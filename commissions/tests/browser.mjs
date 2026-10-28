@@ -27,10 +27,18 @@ const REPS = [
   { key: 'nathan-zelena-llc', name: 'Nathan Zelena LLC', email: 'n@x.com', active: 1 },
   { key: 'agenc-ani-caron', name: 'AgenC (Ani Caron)', email: 'a@x.com', active: 1 },
 ];
+const STATUSES = [
+  { key: 'needs', label: 'Needs a rep' },
+  { key: 'allocated', label: 'Has a rep' },
+  { key: 'unpaid', label: 'Allocated, not paid' },
+  { key: 'paid', label: 'Paid' },
+  { key: 'all', label: 'Everything' },
+];
 const CHOICES = {
   territories: ['HI', 'NJ', 'CANADA'], lines: ['SS26', 'FW26'],
   methods: ['Check', 'ACH', 'Stripe (CC)'],
   retailers: ['East of Maui', 'PRO Skateboard Shop'], reps: REPS,
+  years: ['2026', '2025'], statuses: STATUSES, thisMonth: '2026-10',
 };
 let ROWS = [
   { id: '11111111-1111-4111-8111-111111111111', paid_on: '2026-09-01',
@@ -48,8 +56,13 @@ let ROWS = [
     territory: 'CANADA', jetty_line: null, payment_method: 'Wire', rep_key: null,
     commission_pct: null, gross: 1400, credits: null, freight: null,
     cad: 1, usd_net: null, cc_fee: 0, partial: 0, paid: 0 },
+  { id: '44444444-4444-4444-8444-444444444444', paid_on: '2026-08-14',
+    invoice_no: '21001', retailer: 'East of Maui', customer: null,
+    territory: 'HI', jetty_line: 'FW26', payment_method: 'ACH',
+    rep_key: 'nathan-zelena-llc', commission_pct: 10, gross: 2000, credits: null,
+    freight: null, cad: 0, usd_net: null, cc_fee: 0, partial: 0, paid: 1 },
 ];
-const seen = { patched: [], pulls: 0 };
+const seen = { patched: [], pulls: 0, asked: [] };
 let XERO = {
   connected: true, configured: true, tenant: 'Jetty Brand',
   accounts: ['200'], lastRunAt: '2026-10-28T07:17:00.000Z',
@@ -81,14 +94,27 @@ await page.route('**/*', async (route) => {
     return route.fulfill({ json: { go: 'https://login.xero.com/identity/connect/authorize?x=1' } });
   }
   if (p === '/api/xero/pull') { seen.pulls += 1; return route.fulfill({ json: { made: 2 } }); }
-  if (p === '/api/queue') {
-    const q = (url.searchParams.get('q') || '').toLowerCase();
-    const rows = ROWS.filter((r) => !r.rep_key).filter((r) => !q
-      || (r.retailer || '').toLowerCase().includes(q)
-      || (r.invoice_no || '').includes(q));
+  if (p === '/api/payments') {
+    seen.asked.push(url.search);
+    const g = (k) => url.searchParams.get(k) || '';
+    const status = g('status') || 'needs';
+    const q = g('q').toLowerCase();
+    let rows = ROWS.slice();
+    if (status === 'needs') rows = rows.filter((r) => !r.rep_key);
+    if (status === 'allocated') rows = rows.filter((r) => r.rep_key);
+    if (status === 'unpaid') rows = rows.filter((r) => r.rep_key && !r.paid);
+    if (status === 'paid') rows = rows.filter((r) => r.paid);
+    if (g('rep')) rows = rows.filter((r) => r.rep_key === g('rep'));
+    if (g('territory')) rows = rows.filter((r) => r.territory === g('territory'));
+    if (g('month')) rows = rows.filter((r) => (r.paid_on || '').startsWith(g('month')));
+    if (q) {
+      rows = rows.filter((r) => (r.retailer || '').toLowerCase().includes(q)
+        || (r.invoice_no || '').includes(q));
+    }
     return route.fulfill({ json: {
-      rows, waiting: ROWS.filter((r) => !r.rep_key).length,
-      totals: { gross: 8479.55 }, you: 'amy@jettylife.com',
+      rows, status, matched: rows.length, shown: rows.length,
+      waiting: ROWS.filter((r) => !r.rep_key).length,
+      totals: { gross: 8479.55, due: 647.96, unpaid: 61 }, you: 'amy@jettylife.com',
     } });
   }
   if (/^\/api\/payments\//.test(p) && req.method() === 'PATCH') {
@@ -199,6 +225,65 @@ XERO = { connected: true, configured: true, tenant: 'Jetty Brand', accounts: ['2
          lastRunAt: '2026-10-28T07:17:00.000Z', lastResult: { made: 4 } };
 await page.reload();
 await page.waitForSelector('.cm-t tbody tr');
+
+// ── The filter bar ──────────────────────────────────
+//
+// The forty-odd Airtable views, as one bar.
+console.log('');
+console.log('the filter bar');
+await t('opens on what needs a rep', async () => {
+  const rows = await page.locator('.cm-t tbody tr').count();
+  return (await page.locator('#fStatus').inputValue()) === 'needs' && rows === 3;
+});
+await t('offers every rep, and everywhere', async () => {
+  const reps = await page.locator('#fRep option').allTextContents();
+  const terr = await page.locator('#fTerritory option').allTextContents();
+  return reps.length === REPS.length + 1 && reps.includes('Nathan Zelena LLC')
+    && terr.includes('Everywhere') && terr.includes('CANADA');
+});
+await t('shows one rep across every status', async () => {
+  await page.selectOption('#fStatus', 'all');
+  await page.selectOption('#fRep', 'nathan-zelena-llc');
+  await page.waitForFunction(() => document.querySelectorAll('.cm-t tbody tr').length === 1);
+  return (await page.locator('.cm-who').first().textContent()) === 'East of Maui';
+});
+await t('shows the rep on the row once there is one', async () => {
+  const txt = await page.locator('.cm-t tbody tr').first().textContent();
+  return txt.includes('Nathan Zelena LLC') && txt.includes('Paid');
+});
+await t('narrows to a month', async () => {
+  await page.fill('#fMonth', '2026-08');
+  await page.waitForFunction(() => document.querySelectorAll('.cm-t tbody tr').length === 1);
+  await page.fill('#fMonth', '2026-10');
+  await page.waitForFunction(() => document.querySelectorAll('.cm-t .cm-none').length === 1);
+  return true;
+});
+// Five boxes on screen and "no results" does not say which one to change.
+await t('says which filter found nothing', async () =>
+  (await page.locator('.cm-none').textContent()).includes('No payments match'));
+await t('clears back to the queue in one go', async () => {
+  await page.locator('#fClear').click();
+  await page.waitForFunction(() => document.querySelectorAll('.cm-t tbody tr').length === 3);
+  return (await page.locator('#fStatus').inputValue()) === 'needs'
+    && (await page.locator('#fRep').inputValue()) === ''
+    && (await page.locator('#fMonth').inputValue()) === ''
+    && (await page.locator('#fClear').isHidden());
+});
+// The number the day is measured by does not move with the filter.
+await t('keeps the waiting count on the strip whatever is filtered', async () => {
+  const before = await page.locator('.cm-strip div').first().textContent();
+  await page.selectOption('#fStatus', 'paid');
+  await page.waitForFunction(() => document.querySelectorAll('.cm-t tbody tr').length === 1);
+  const after = await page.locator('.cm-strip div').first().textContent();
+  await page.locator('#fClear').click();
+  await page.waitForFunction(() => document.querySelectorAll('.cm-t tbody tr').length === 3);
+  return before === after && before.includes('Waiting to allocate');
+});
+await t('sends the filters to the server rather than sifting on the page', async () => {
+  const last = seen.asked[seen.asked.length - 1];
+  return seen.asked.some((x) => x.includes('status=paid'))
+    && typeof last === 'string';
+});
 
 console.log('');
 console.log('allocating one');

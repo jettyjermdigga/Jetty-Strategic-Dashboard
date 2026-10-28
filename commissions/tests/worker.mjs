@@ -273,7 +273,7 @@ const seed = (ref, paid_on, retailer, gross) => sqlite.prepare(
 await t('lists what is waiting, oldest first', async () => {
   seed('rec-old', '2026-09-01', 'PRO Skateboard Shop', 1000);
   seed('rec-new', '2026-10-28', 'Surf Unlimited', 1000);
-  const r = await call('GET', '/api/queue');
+  const r = await call('GET', '/api/payments');
   return r.status === 200 && r.body.rows[0].paid_on === '2026-09-01' && r.body.waiting >= 5;
 });
 await t('works out the figures on the way out', async () => {
@@ -285,8 +285,30 @@ await t('works out the figures on the way out', async () => {
   return got.net_invoice === 875 && got.amount_due === 0;
 });
 await t('searches on retailer and invoice', async () => {
-  const r = await call('GET', '/api/queue?q=Skateboard');
+  const r = await call('GET', '/api/payments?status=all&q=Skateboard');
   return r.body.rows.length === 1 && r.body.rows[0].retailer === 'PRO Skateboard Shop';
+});
+// The totals belong to the filter, not to the page of it on screen.
+await t('adds up the whole filtered set, not the page shown', async () => {
+  const r = await call('GET', '/api/payments?status=all&limit=2');
+  return r.body.shown === 2 && r.body.matched > 2
+    && r.body.totals.rows === r.body.matched;
+});
+// The number the day is measured by does not move with the filter.
+await t('keeps the waiting count whatever is being looked at', async () => {
+  const a2 = await call('GET', '/api/payments');
+  const b2 = await call('GET', '/api/payments?status=paid');
+  return a2.body.waiting === b2.body.waiting && a2.body.waiting > 0;
+});
+await t('narrows to one rep and one month', async () => {
+  const r = await call('GET', '/api/payments?status=all&month=2026-10');
+  return r.body.rows.every((x) => x.paid_on >= '2026-10-01' && x.paid_on < '2026-11-01');
+});
+await t('offers the bar the reps, the places and the years', async () => {
+  const r = await call('GET', '/api/choices');
+  return Array.isArray(r.body.statuses) && r.body.statuses.length >= 4
+    && Array.isArray(r.body.years) && r.body.years.includes('2026')
+    && /^\d{4}-\d{2}$/.test(r.body.thisMonth);
 });
 
 console.log('');
@@ -309,7 +331,7 @@ await t('allocates once the rep exists', async () => {
 });
 // The whole definition of the queue, and the one thing allocating is for.
 await t('takes it out of the queue', async () => {
-  const r = await call('GET', '/api/queue');
+  const r = await call('GET', '/api/payments');
   return !r.body.rows.some((x) => x.id === idOf('pay-1'));
 });
 // A form that sends only the rep must not blank what somebody typed
@@ -348,7 +370,7 @@ console.log('');
 console.log('who can open it');
 
 await t('refuses somebody not on the list, and says why', async () => {
-  const res = await worker.fetch(new Request('https://cm.test/api/queue', {
+  const res = await worker.fetch(new Request('https://cm.test/api/payments', {
     headers: { 'Cf-Access-Authenticated-User-Email': 'arlynn@jettylife.com' },
   }), ENV, { waitUntil() {} });
   const body = await res.json();

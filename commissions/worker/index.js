@@ -14,6 +14,7 @@ import { identify } from './access.js';
 import { sqlStatements } from './sql.js';
 import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
+import { buildWhere, cleanLimit, STATUSES } from './filters.js';
 import { XERO_AUTHORIZE, XERO_SCOPES, accountCodes } from './xero.js';
 import { refreshAccess, exchangeCode, tenants, pullRows } from './xero-pull.js';
 import SCHEMA from './schema.sql';
@@ -180,12 +181,21 @@ async function handleApi(request, env, url, who) {
       'SELECT DISTINCT ' + name + ' AS v FROM payments WHERE ' + name
       + " IS NOT NULL AND " + name + " != '' ORDER BY v").all()).results) || [])
       .map((r) => r.v);
+    const years = (((await db.prepare(
+      "SELECT DISTINCT substr(paid_on, 1, 4) AS v FROM payments "
+      + "WHERE paid_on IS NOT NULL ORDER BY v DESC").all()).results) || []).map((r) => r.v);
     return json({
       territories: await col('territory'),
       lines: await col('jetty_line'),
       methods: await col('payment_method'),
       retailers: await col('retailer'),
       reps: await repList(),
+      years,
+      statuses: STATUSES,
+      // What the month box opens on. From the Worker rather than the
+      // browser: a laptop in another time zone should not see a different
+      // month to the one the figures are filed under.
+      thisMonth: new Date().toISOString().slice(0, 7),
     });
   }
 
@@ -264,25 +274,34 @@ async function handleApi(request, env, url, who) {
     return json(result);
   }
 
-  // The queue: every payment with no rep on it yet.
-  if (path === '/api/queue' && method === 'GET') {
-    const limit = Math.min(Number(url.searchParams.get('limit')) || 200, 500);
-    const q = String(url.searchParams.get('q') || '').trim();
-    let sql = 'SELECT ' + QUEUE_FIELDS + ' FROM payments WHERE rep_key IS NULL';
-    const binds = [];
-    if (q) {
-      sql += ' AND (retailer LIKE ? OR invoice_no LIKE ? OR customer LIKE ?)';
-      const like = '%' + q + '%';
-      binds.push(like, like, like);
-    }
-    // Oldest first: the one that has been waiting longest is the one to do.
-    sql += ' ORDER BY paid_on ASC, rowid ASC LIMIT ?';
-    binds.push(limit);
-    const rows = ((await db.prepare(sql).bind(...binds).all()).results) || [];
+  // Payments, filtered. The default is the queue -- the screen is opened to
+  // do the allocating, and anything else is asked for.
+  if (path === '/api/payments' && method === 'GET') {
+    const p = Object.fromEntries(url.searchParams.entries());
+    const w = buildWhere(p);
+    const limit = cleanLimit(p.limit, 200);
+
+    const rows = ((await db.prepare(
+      'SELECT ' + QUEUE_FIELDS + ' FROM payments' + w.sql + w.order + ' LIMIT ?')
+      .bind(...w.binds, limit).all()).results) || [];
+
+    // Totals over the whole filtered set, not the page of it on screen. A
+    // strip that only adds up the first two hundred rows is a strip that
+    // quietly lies about a year.
     const all = ((await db.prepare(
       'SELECT gross, credits, freight, cad, usd_net, commission_pct, rep_key, paid '
-      + 'FROM payments WHERE rep_key IS NULL').all()).results) || [];
-    return json({ rows, waiting: all.length, totals: totals(all), you: who.email });
+      + 'FROM payments' + w.sql).bind(...w.binds).all()).results) || [];
+
+    // How many are still waiting, whatever is being looked at. It is the
+    // number the day is measured by, so it does not move with the filter.
+    const waitingRow = await db.prepare(
+      'SELECT COUNT(*) AS n FROM payments WHERE rep_key IS NULL').first();
+
+    return json({
+      rows, status: w.status, matched: all.length, shown: rows.length, limit,
+      totals: totals(all), waiting: (waitingRow && waitingRow.n) || 0,
+      you: who.email,
+    });
   }
 
   // One payment, allocated.

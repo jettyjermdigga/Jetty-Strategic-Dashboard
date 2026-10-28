@@ -16,6 +16,7 @@ import {
   pageQuery, sinceHeader, SALES, XERO_SCOPES,
 } from '../worker/xero.js';
 import { sqlStatements } from '../worker/sql.js';
+import { buildWhere, monthRange, cleanYear, cleanLimit, STATUS_KEYS } from '../worker/filters.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const root = (p) => path.join(HERE, '..', p);
@@ -304,6 +305,144 @@ describe('a payment arriving from outside', () => {
     eq(inc().row.source, 'xero');
     eq(inc({ source: 'ledger' }).row.source, 'ledger');
     ok(inc({ source: 'somewhere' }).errors);
+  });
+});
+
+// ── Which payments a view is asking for ─────────────────────
+//
+// The Airtable base answered this with forty-odd saved views. One filter bar
+// instead, and this is what each setting means.
+
+describe('the filter bar', () => {
+  const w = (p) => buildWhere(p);
+
+  // The screen is opened to do the allocating.
+  it('shows what needs a rep unless asked otherwise', () => {
+    eq(w({}).status, 'needs');
+    eq(w({}).sql, ' WHERE rep_key IS NULL');
+    eq(w({ status: 'nonsense' }).status, 'needs');
+  });
+  it('shows everything when asked', () => {
+    eq(w({ status: 'all' }).sql, '');
+  });
+  it('separates allocated from paid', () => {
+    ok(w({ status: 'allocated' }).sql.includes('rep_key IS NOT NULL'));
+    ok(w({ status: 'unpaid' }).sql.includes('paid = 0'));
+    ok(w({ status: 'paid' }).sql.includes('paid = 1'));
+  });
+  // One per rep is what the Airtable base needed twenty-five views for.
+  it('narrows to one rep', () => {
+    const r = w({ status: 'all', rep: 'nathan-zelena' });
+    ok(r.sql.includes('rep_key = ?'));
+    eq(r.binds, ['nathan-zelena']);
+  });
+  it('narrows to a month, as a half-open range', () => {
+    eq(monthRange('2026-10'), { from: '2026-10-01', to: '2026-11-01' });
+    // December has to roll the year, which is the one a hand-written range
+    // gets wrong.
+    eq(monthRange('2026-12'), { from: '2026-12-01', to: '2027-01-01' });
+    eq(w({ status: 'all', month: '2026-10' }).binds, ['2026-10-01', '2026-11-01']);
+  });
+  // A month that silently means all of time is worse than no month at all.
+  it('ignores a month it cannot read rather than guessing one', () => {
+    eq(monthRange('2026-13'), null);
+    eq(monthRange('2026-00'), null);
+    eq(monthRange('October'), null);
+    eq(monthRange(''), null);
+    eq(w({ status: 'all', month: 'October' }).sql, '');
+  });
+  it('narrows to a year', () => {
+    eq(w({ status: 'all', year: '2025' }).binds, ['2025-01-01', '2026-01-01']);
+    eq(cleanYear('1066'), null);
+    eq(cleanYear('abcd'), null);
+  });
+  it('lets the month win over the year rather than applying both', () => {
+    eq(w({ status: 'all', month: '2026-03', year: '2025' }).binds,
+       ['2026-03-01', '2026-04-01']);
+  });
+  it('narrows to a territory, a line and the Canadian rows', () => {
+    eq(w({ status: 'all', territory: 'HI' }).binds, ['HI']);
+    eq(w({ status: 'all', line: 'SS26' }).binds, ['SS26']);
+    ok(w({ status: 'all', cad: '1' }).sql.includes('cad = 1'));
+  });
+  // Everything is bound. A retailer called O'Neill must not be able to end
+  // a statement early.
+  it('binds every value rather than writing it into the SQL', () => {
+    for (const p of [{ rep: "x' OR 1=1 --" }, { territory: "'" }, { q: "';DROP--" },
+                     { status: 'all', line: "'" }]) {
+      const r = w(Object.assign({ status: 'all' }, p));
+      ok(!r.sql.includes("'" ) || /ESCAPE/.test(r.sql),
+         'a value reached the SQL: ' + r.sql);
+    }
+  });
+  // Typed wildcards would make "100%" match everything and "_" match any
+  // character -- and without ESCAPE, escaping them leaves backslashes in the
+  // pattern that stop it matching at all.
+  it('escapes the wildcards somebody types into the search box', () => {
+    const r = w({ status: 'all', q: '100%' });
+    ok(r.sql.includes("ESCAPE '\\'"), 'there is no ESCAPE clause, so the escaping does nothing');
+    eq(r.binds[0], '%100\\%%');
+  });
+  it('searches the three things somebody would type', () => {
+    const r = w({ status: 'all', q: 'Maui' });
+    ok(/retailer LIKE/.test(r.sql) && /invoice_no LIKE/.test(r.sql)
+       && /customer LIKE/.test(r.sql));
+    eq(r.binds.length, 3);
+  });
+  // Oldest first while allocating; newest first once it is a record being
+  // read rather than a job being worked.
+  it('sorts for the job the view is for', () => {
+    ok(w({}).order.includes('ASC'));
+    ok(w({ status: 'all' }).order.includes('DESC'));
+    ok(w({ status: 'paid' }).order.includes('DESC'));
+  });
+  it('caps how much one request can ask for', () => {
+    eq(cleanLimit('9999'), 500);
+    eq(cleanLimit('abc'), 200);
+    eq(cleanLimit('-1'), 200);
+    eq(cleanLimit('50'), 50);
+  });
+  it('offers the page a status for every one it understands', () => {
+    for (const k of STATUS_KEYS) eq(buildWhere({ status: k }).status, k);
+  });
+});
+
+describe('the filters run against the real table', () => {
+  const db = new DatabaseSync(':memory:');
+  for (const stmt of sqlStatements(fs.readFileSync(root('worker/schema.sql'), 'utf8'))) {
+    db.exec(stmt);
+  }
+  const ins = db.prepare(
+    'INSERT INTO payments (id, source_ref, paid_on, retailer, gross, rep_key, '
+    + 'commission_pct, paid, territory) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  [['a', '2026-09-30', '100% Off Surf', 1000, null, null, 0, 'HI'],
+   ['b', '2026-10-01', 'East of Maui', 2000, 'rep-one', 10, 0, 'HI'],
+   ['c', '2026-10-31', 'A_B Shop', 3000, 'rep-one', 10, 1, 'NJ'],
+   ['d', '2026-11-01', 'AXB Shop', 4000, 'rep-two', 5, 0, 'NJ'],
+  ].forEach((r) => ins.run(r[0], r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]));
+
+  const find = (p) => {
+    const w = buildWhere(p);
+    return db.prepare('SELECT id FROM payments' + w.sql + w.order)
+      .all(...w.binds).map((r) => r.id);
+  };
+
+  it('finds what is waiting', () => eq(find({}), ['a']));
+  it('finds one rep', () => eq(find({ status: 'all', rep: 'rep-one' }), ['c', 'b']));
+  // The boundaries are the whole point of a half-open range.
+  it('finds a month without catching its neighbours', () => {
+    eq(find({ status: 'all', month: '2026-10' }), ['c', 'b']);
+  });
+  it('finds what is allocated and unpaid', () => eq(find({ status: 'unpaid' }), ['d', 'b']));
+  it('finds what is paid', () => eq(find({ status: 'paid' }), ['c']));
+  it('finds a rep in a month', () => {
+    eq(find({ status: 'all', rep: 'rep-one', month: '2026-10' }), ['c', 'b']);
+    eq(find({ status: 'all', rep: 'rep-two', month: '2026-10' }), []);
+  });
+  it('finds a territory', () => eq(find({ status: 'all', territory: 'NJ' }), ['d', 'c']));
+  it('does not treat a typed wildcard as a wildcard', () => {
+    eq(find({ status: 'all', q: '100%' }), ['a']);
+    eq(find({ status: 'all', q: 'A_B' }), ['c']);
   });
 });
 

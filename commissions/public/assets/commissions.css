@@ -17,7 +17,7 @@
 .cm-shell{max-width:1320px;margin:0 auto;padding:26px 24px 80px}
 
 .cm-bar{
-  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;
   background:var(--cm-cell);border:1px solid var(--surface-alt);border-radius:10px;
   padding:12px 15px;margin:0 0 14px;
 }
@@ -27,7 +27,7 @@
   font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;opacity:.75;
 }
 .cm-q{
-  font-family:var(--body);font-size:13.5px;padding:6px 9px;border-radius:7px;min-width:260px;
+  font-family:var(--body);font-size:13.5px;padding:5px 8px;border-radius:7px;min-width:220px;
   border:1px solid var(--surface-alt);background:var(--cm-cell);color:var(--ink);
 }
 .cm-hint{font-family:var(--mono);font-size:10.5px;opacity:.78}
@@ -147,3 +147,10 @@
 }
 .cm-x-btn:hover{background:var(--cm-wash)}
 .cm-x-btn[disabled]{cursor:default;opacity:.75}
+
+/* The bar is a row of the same controls the allocation form uses, so a
+   filter and a field do not look like different kinds of thing. */
+.cm-bar .cm-f-l{opacity:.8}
+.cm-bar .cm-f-i{min-width:130px}
+.cm-bar .cm-f-x{align-self:flex-end;margin-bottom:1px}
+.cm-sum{font-family:var(--mono);font-size:10.5px;opacity:.85}
