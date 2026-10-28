@@ -32,6 +32,12 @@ TOTAL_COMMISSIONS = "tblXwSFovCWyhPhww"
 LEDGER_BASE = "appW8jAfERj3iBzqt"
 REPS_TABLE = "tbl50U84eJuPAe1dv"
 
+# Only so a failure can name the base rather than its id.
+BASE_NAMES = {
+    COMMISSION_BASE: "Retail Sales Commission Tracker",
+    LEDGER_BASE: "Ledger",
+}
+
 MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
@@ -54,10 +60,15 @@ assert slug("T&L Action Agency") == "t-l-action-agency"
 assert slug("O'Brien Sales") == "obrien-sales"
 
 
+class AccessDenied(Exception):
+    """The token is real but may not read this base."""
+
+
 def fetch(base, table, token, fields=None):
     """Every record in a table, following Airtable's pagination."""
     out = []
     offset = None
+    where = "%s (%s)" % (BASE_NAMES.get(base, base), base)
     while True:
         params = {"pageSize": "100"}
         if offset:
@@ -71,12 +82,33 @@ def fetch(base, table, token, fields=None):
                 with urllib.request.urlopen(req, timeout=60) as res:
                     page = json.load(res)
                 break
-            except Exception as err:          # noqa: BLE001 - retried below
+            except urllib.error.HTTPError as err:
+                # 401 and 403 are answers, not hiccups. Retrying a
+                # permissions error four times spends fifteen seconds
+                # proving the same thing and buries the reason in a stack
+                # trace. An Airtable token is scoped to named bases, so a
+                # token that works for one base says nothing about another.
+                if err.code in (401, 403):
+                    raise AccessDenied(
+                        "Airtable answered %d on %s.\n\n"
+                        "AIRTABLE_API_KEY reached Airtable but may not read that base.\n"
+                        "Airtable personal access tokens are scoped to the bases you "
+                        "name when you make them, so a token that works for one base "
+                        "says nothing about another.\n\n"
+                        "Add %s to that token's bases at\n"
+                        "  https://airtable.com/create/tokens\n"
+                        "with the data.records:read scope, then run this again."
+                        % (err.code, where, BASE_NAMES.get(base, base))) from None
                 if attempt == 4:
                     raise
                 # Airtable rate-limits at 5 requests a second per base and
                 # answers 429; backing off is cheaper than failing a 22,000
                 # row import three quarters of the way through.
+                time.sleep(2 ** attempt)
+                print("  retrying after %s" % err, file=sys.stderr)
+            except Exception as err:          # noqa: BLE001 - retried below
+                if attempt == 4:
+                    raise
                 time.sleep(2 ** attempt)
                 print("  retrying after %s" % err, file=sys.stderr)
         out.extend(page.get("records", []))
@@ -134,13 +166,18 @@ def main():
         print("AIRTABLE_API_KEY is not set.", file=sys.stderr)
         return 1
 
-    print("Reading Total Commissions...", file=sys.stderr)
-    commissions = fetch(COMMISSION_BASE, TOTAL_COMMISSIONS, token)
-    print("  %d payments" % len(commissions), file=sys.stderr)
+    try:
+        print("Reading Total Commissions...", file=sys.stderr)
+        commissions = fetch(COMMISSION_BASE, TOTAL_COMMISSIONS, token)
+        print("  %d payments" % len(commissions), file=sys.stderr)
 
-    print("Reading the Ledger's Reps tab...", file=sys.stderr)
-    statements = fetch(LEDGER_BASE, REPS_TABLE, token)
-    print("  %d monthly statements" % len(statements), file=sys.stderr)
+        print("Reading the Ledger's Reps tab...", file=sys.stderr)
+        statements = fetch(LEDGER_BASE, REPS_TABLE, token)
+        print("  %d monthly statements" % len(statements), file=sys.stderr)
+    except AccessDenied as err:
+        print("", file=sys.stderr)
+        print(str(err), file=sys.stderr)
+        return 1
 
     # Every rep named by either table, and an email wherever the Ledger has
     # one. A rep who only appears on old commissions still has to exist, or
