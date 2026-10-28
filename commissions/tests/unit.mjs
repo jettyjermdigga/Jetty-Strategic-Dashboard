@@ -555,6 +555,13 @@ describe('who can open this', () => {
     ok(/XERO_CLIENT_SECRET is NOT in this file/.test(toml),
        'nothing says where the secret lives');
   });
+  it('has an Access application to verify tokens against', () => {
+    const aud = (toml.match(/^ACCESS_AUD = "([^"]*)"/m) || ['', ''])[1];
+    ok(/^[0-9a-f]{64}$/.test(aud),
+       'ACCESS_AUD is not an Application Audience tag, so nobody can get in');
+    ok(/^ACCESS_TEAM_DOMAIN = "[^"]+\.cloudflareaccess\.com"/m.test(toml),
+       'there is no team domain to check the token with');
+  });
   it('pulls on a schedule rather than waiting to be asked', () => {
     ok(/^crons = \[/m.test(toml), 'nothing pulls from Xero on its own');
   });

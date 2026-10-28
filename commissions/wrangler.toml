@@ -64,7 +64,7 @@ ACCESS_DOMAINS = "jettylife.com"
 # Worker -- commissions needs its own, separate from the calendar's and the
 # dashboard's.
 ACCESS_TEAM_DOMAIN = "wild-pine-bbc7.cloudflareaccess.com"
-ACCESS_AUD = ""
+ACCESS_AUD = "8f073f894aae873a6934f611d6917d9d633a4706472c06b484f05107f0721718"
 
 # The Xero app this connects with. The id is not a secret; the secret is.
 #

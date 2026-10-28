@@ -41,6 +41,22 @@ jobs:
       - name: Run it against a real database
         working-directory: commissions
         run: node tests/worker.mjs
+      # An empty ACCESS_AUD fails closed -- nobody gets in, including the
+      # people on the list -- which is the right failure but reads as a
+      # broken module rather than as missing config. Caught here instead.
+      - name: Refuse to deploy without Access in front
+        working-directory: commissions
+        run: |
+          aud=$(sed -n 's/^ACCESS_AUD *= *"\(.*\)"/\1/p' wrangler.toml)
+          team=$(sed -n 's/^ACCESS_TEAM_DOMAIN *= *"\(.*\)"/\1/p' wrangler.toml)
+          if [ -z "$aud" ] || [ -z "$team" ]; then
+            echo "::error::ACCESS_AUD and ACCESS_TEAM_DOMAIN must both be set in commissions/wrangler.toml."
+            echo "This module decides what the sales reps get paid; it does not"
+            echo "deploy without an Access application in front of it."
+            exit 1
+          fi
+          echo "Access application configured on $team."
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
