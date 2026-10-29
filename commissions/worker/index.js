@@ -15,11 +15,41 @@ import { sqlStatements } from './sql.js';
 import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
 import { buildWhere, cleanLimit, STATUSES } from './filters.js';
-import { XERO_SCOPES, accountCodes, revenueAccounts } from './xero.js';
+import {
+  XERO_SCOPES, missingScopes, accountCodes, revenueAccounts,
+} from './xero.js';
 import {
   accessToken, probeScopes, tenants, pullRows, chartOfAccounts,
 } from './xero-pull.js';
 import SCHEMA from './schema.sql';
+
+/**
+ * What the probe's numbers mean, in a sentence, because the person reading
+ * them is reading them at the point where nothing works.
+ */
+function reading(bare, bareWhy, holds, short) {
+  if (!bare) {
+    return 'Xero would not issue a token even for a request naming no scope: '
+      + bareWhy + '. That is the app or the credentials rather than the scope '
+      + 'list -- client_credentials works on a Custom Connection and nothing else.';
+  }
+  if (holds == null) {
+    return 'A token came back but its scopes could not be read off it, so what '
+      + 'this connection holds is unknown. Press Check Xero: it will work or '
+      + 'say what Xero refused.';
+  }
+  if (!holds.length) {
+    return 'A token came back carrying no scopes at all. The connection was '
+      + 'made without any, and they cannot be added afterwards -- this needs a '
+      + 'new Custom Connection in Xero.';
+  }
+  if (short.length) {
+    return 'The connection holds ' + holds.join(' ') + ' but needs '
+      + short.join(' and ') + '. Scopes are fixed when a Custom Connection is '
+      + 'made, so this needs a new one.';
+  }
+  return 'The connection holds everything this needs. Press Check Xero.';
+}
 
 const json = (body, status) => new Response(JSON.stringify(body), {
   status: status || 200,
@@ -87,6 +117,18 @@ async function xeroSession(env, db) {
     clientSecret: env.XERO_CLIENT_SECRET,
     post: fetch,
   });
+  // What the connection was actually granted, read off the token rather
+  // than asked for. A missing scope does not refuse the call -- it returns
+  // invoices with an empty Payments array, or an empty chart of accounts,
+  // which reads as a quiet month rather than as a permissions problem.
+  // That is the worst way for this to be wrong, so it stops here instead.
+  const short = missingScopes(tok.scopes, XERO_SCOPES);
+  if (short.length) {
+    throw new Error('The Xero Custom Connection is missing ' + short.join(' and ')
+      + '. It holds ' + ((tok.scopes || []).join(' ') || 'nothing')
+      + '. Scopes are set when the connection is made and cannot be widened '
+      + 'afterwards, so this needs a new Custom Connection in Xero.');
+  }
   const orgs = await tenants({ access: tok.access, get: fetch });
   if (!orgs.length) {
     throw new Error('The Xero connection reaches no organisation. '
@@ -254,20 +296,30 @@ async function handleApi(request, env, url, who) {
   // it, which is why it is allowed to be slow: it makes one token request
   // per scope.
   if (path === '/api/xero/probe' && method === 'GET') {
+    // The bare request first, because it is the one that matters: a
+    // Custom Connection answers it and nothing else does.
+    let bare = null;
+    let bareWhy = '';
+    try {
+      bare = await accessToken({
+        clientId: env.XERO_CLIENT_ID, clientSecret: env.XERO_CLIENT_SECRET, post: fetch,
+      });
+    } catch (err) {
+      bareWhy = String((err && err.message) || err);
+    }
+    const holds = bare ? bare.scopes : null;
     const results = await probeScopes({
       clientId: env.XERO_CLIENT_ID, clientSecret: env.XERO_CLIENT_SECRET, post: fetch,
     });
-    const held = results.filter((r) => r.ok).map((r) => r.scope);
+    const short = missingScopes(holds, XERO_SCOPES);
     return json({
-      asking: XERO_SCOPES.split(' '),
-      held,
+      needs: XERO_SCOPES.split(' '),
+      holds,
+      missing: short,
+      namedScopesAccepted: results.filter((r) => r.ok && r.scope !== '(no scope named)')
+        .map((r) => r.scope),
       results,
-      reading: held.length
-        ? 'These are the scopes the connection holds. XERO_SCOPES must be a subset.'
-        : 'Nothing was granted, not even a request naming no scope at all. '
-          + 'That is the app rather than the scope list: client_credentials '
-          + 'works only on a Custom Connection, so a Web app or a Mobile or '
-          + 'desktop app will refuse every scope this way.',
+      reading: reading(bare, bareWhy, holds, short),
     });
   }
 

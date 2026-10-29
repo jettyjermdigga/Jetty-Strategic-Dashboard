@@ -6,8 +6,8 @@
 // and without anybody's real invoices.
 
 import {
-  XERO_TOKEN, XERO_CONNECTIONS, XERO_API, XERO_SCOPES,
-  pageQuery, sinceHeader, rowsFromPage,
+  XERO_TOKEN, XERO_CONNECTIONS, XERO_API,
+  heldScopes, pageQuery, sinceHeader, rowsFromPage,
 } from './xero.js';
 
 /**
@@ -24,12 +24,11 @@ export async function accessToken({ clientId, clientSecret, post, scope }) {
   if (!clientId || !clientSecret) {
     throw new Error('XERO_CLIENT_ID and the XERO_CLIENT_SECRET secret are not both set.');
   }
-  // scope is overridable only so the probe below can ask for one at a time.
-  // Undefined means the real set; the empty string means send no scope at
-  // all, which is a different request from sending an empty one.
-  const want = scope === undefined ? XERO_SCOPES : scope;
+  // No scope by default: the connection's own grant decides, and naming a
+  // scope is what Xero kept refusing. The probe passes one to ask about it
+  // specifically; an empty string or undefined both send none.
   const body = new URLSearchParams({ grant_type: 'client_credentials' });
-  if (want) body.set('scope', want);
+  if (scope) body.set('scope', scope);
   const res = await post(XERO_TOKEN, {
     method: 'POST',
     headers: {
@@ -46,7 +45,7 @@ export async function accessToken({ clientId, clientSecret, post, scope }) {
     const why = (json && (json.error_description || json.error)) || ('HTTP ' + res.status);
     throw new Error('Xero refused the credentials: ' + why);
   }
-  return { access: json.access_token };
+  return { access: json.access_token, scopes: heldScopes(json.access_token) };
 }
 
 /**

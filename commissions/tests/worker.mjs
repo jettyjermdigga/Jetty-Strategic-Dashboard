@@ -101,7 +101,13 @@ const rows = (sql, ...b) => sqlite.prepare(sql).all(...b);
 // OpenAPI spec -- including the Microsoft dates, which are the thing most
 // likely to be got wrong.
 const xero = { calls: [], issued: 0, invoicePages: {}, tokenStatus: 200, orgs: null,
-               granted: null };
+               granted: null, refuseNamed: false, holds: ['accounting.transactions.read',
+                                      'accounting.settings.read'] };
+// A Xero access token is a JWT and the scope claim is read off it, so the
+// stub has to hand back something shaped like one.
+const token = (n) => 'hdr.' + btoa(JSON.stringify({
+  sub: 'conn', scope: xero.holds.join(' '), jti: String(n),
+})).replace(/=+$/, '') + '.sig';
 const msdate = (iso) => '/Date(' + Date.parse(iso) + '+0000)/';
 const invoice = (n, over) => Object.assign({
   Type: 'ACCREC', InvoiceID: 'inv-' + n, InvoiceNumber: String(22000 + n), Total: 610,
@@ -129,6 +135,12 @@ globalThis.fetch = async (url, opts) => {
     // Xero filters the requested scopes down to the ones this app was
     // granted, then fails only when nothing survives -- which is why a
     // single wrong name goes unnoticed and a list of them does not.
+    // What the live connection does: a request naming any scope is
+    // refused, a request naming none returns a token.
+    if (xero.refuseNamed && new URLSearchParams(opts.body).has('scope')) {
+      return reply(400, { error: 'invalid_scope',
+        error_description: 'Client credentials scope validation failed' });
+    }
     if (xero.granted) {
       // Naming no scope and naming an empty one are different requests:
       // the first asks for everything granted, the second asks for nothing.
@@ -142,7 +154,7 @@ globalThis.fetch = async (url, opts) => {
       }
     }
     xero.issued += 1;
-    return reply(200, { access_token: 'access-' + xero.issued, expires_in: 1800 });
+    return reply(200, { access_token: token(xero.issued), expires_in: 1800 });
   }
   if (u === 'https://api.xero.com/connections') {
     return reply(200, xero.orgs === null
@@ -183,15 +195,45 @@ await t('says nothing has answered yet', async () => {
   return r.status === 200 && r.body.connected === false && r.body.configured === true;
 });
 // A Custom Connection has no sign-in to send anybody to.
-await t('asks for a token with the Custom Connection scopes', async () => {
+// Naming a scope is what Xero refused, every name alike, while naming
+// none returned a token. So the request names none and the connection's
+// own grant decides.
+await t('asks for a token without naming a scope', async () => {
   const r = await xcall('POST', '/api/xero/connect', {});
   const tok = xero.calls.filter((c) => c.url.includes('/connect/token')).pop();
   const sent = new URLSearchParams(tok.opts.body);
   return r.status === 200 && r.body.tenant === 'Jetty Brand'
     && sent.get('grant_type') === 'client_credentials'
-    && sent.get('scope').includes('accounting.transactions.read')
-    && sent.get('scope').includes('accounting.settings.read')
-    && !sent.get('scope').includes('offline_access');
+    && !sent.has('scope');
+});
+// A missing scope does not refuse the call. It returns invoices with an
+// empty Payments array, which reads as a quiet month rather than as a
+// permissions problem -- so this has to be caught at the token, not later.
+await t('stops when the connection does not hold what it needs', async () => {
+  xero.holds = ['accounting.contacts.read'];
+  const r = await xcall('POST', '/api/xero/connect', {});
+  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
+  return r.status === 500 && /accounting.transactions.read/.test(r.text)
+    && /accounting.settings.read/.test(r.text)
+    && /holds accounting.contacts.read/.test(r.text);
+});
+// The write variant covers the read one. Refusing to start on a
+// connection that can do more than it needs would be a wrong no.
+await t('accepts a connection granted more than it needs', async () => {
+  xero.holds = ['accounting.transactions', 'accounting.settings', 'accounting.contacts'];
+  const r = await xcall('POST', '/api/xero/connect', {});
+  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
+  return r.status === 200 && r.body.tenant === 'Jetty Brand';
+});
+// An unreadable token is not evidence of a missing scope, and treating it
+// as one would refuse to start over a token that works.
+await t('does not block on a token whose scopes cannot be read', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (u, o) => (String(u).includes('/connect/token')
+    ? reply(200, { access_token: 'opaque', expires_in: 1800 }) : real(u, o));
+  const r = await xcall('POST', '/api/xero/connect', {});
+  globalThis.fetch = real;
+  return r.status === 200;
 });
 await t('sends the id and secret as Basic auth, not in the body', async () => {
   const tok = xero.calls.filter((c) => c.url.includes('/connect/token')).pop();
@@ -235,37 +277,56 @@ await t('reads the chart of accounts for the wholesale codes', async () => {
     && r.body.accounts[0].code === '200' && r.body.chosen.includes('200');
 });
 
-// The probe exists because one sentence from Xero covers three different
-// causes. These are the two readings that matter.
-await t('names the scopes the connection actually holds', async () => {
+// The probe exists because one sentence from Xero covers several causes,
+// and the module cannot tell them apart from the failure alone.
+await t('reports what the token actually carries', async () => {
+  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
+  xero.refuseNamed = true;
+  const r = await xcall('GET', '/api/xero/probe');
+  xero.refuseNamed = false;
+  return r.status === 200
+    && r.body.holds.join(' ') === 'accounting.transactions.read accounting.settings.read'
+    && r.body.missing.length === 0
+    && r.body.namedScopesAccepted.length === 0
+    && /holds everything this needs/.test(r.body.reading);
+});
+// This is the case the live connection is in: every named scope refused,
+// the bare request fine. The grant is what counts, not the refusals.
+await t('reads the grant off the token even when every name is refused', async () => {
+  xero.holds = ['accounting.contacts.read'];
+  xero.refuseNamed = true;
+  const r = await xcall('GET', '/api/xero/probe');
+  xero.refuseNamed = false;
+  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
+  return r.body.missing.join(' ')
+      === 'accounting.transactions.read accounting.settings.read'
+    && /needs a new one/.test(r.body.reading);
+});
+await t('names which scopes a connection will narrow to, when it will', async () => {
   xero.granted = ['accounting.transactions.read', 'accounting.contacts.read'];
   const r = await xcall('GET', '/api/xero/probe');
   xero.granted = null;
-  const held = r.body.held;
-  return r.status === 200 && held.includes('accounting.transactions.read')
-    && held.includes('accounting.contacts.read')
-    && !held.includes('accounting.settings.read')
-    && !held.includes('offline_access')
-    && r.body.asking.includes('accounting.settings.read');
+  return r.body.namedScopesAccepted.includes('accounting.transactions.read')
+    && r.body.namedScopesAccepted.includes('accounting.contacts.read')
+    && !r.body.namedScopesAccepted.includes('offline_access');
 });
-// Every scope refused, the one naming no scope included, is the app type
-// rather than the list -- client_credentials only works on a Custom
-// Connection.
-await t('says it is the app when nothing at all is granted', async () => {
-  xero.granted = [];
+// No token at all, not even bare, is the app or the credentials.
+await t('says it is the app when even a bare request is refused', async () => {
+  xero.tokenStatus = 400;
   const r = await xcall('GET', '/api/xero/probe');
-  xero.granted = null;
-  return r.status === 200 && r.body.held.length === 0
-    && /Custom Connection/.test(r.body.reading)
-    && r.body.results.every((x) => x.ok === false)
-    && /No valid scopes remaining/.test(r.body.results[0].why);
+  xero.tokenStatus = 200;
+  return r.status === 200 && r.body.holds === null
+    && /Custom Connection and nothing else/.test(r.body.reading);
 });
-await t('asks about a bare request as well as each scope', async () => {
-  xero.granted = ['accounting.settings.read'];
+await t('does not call a token with no scopes a token with unknown ones', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (u, o) => (String(u).includes('/connect/token')
+    ? reply(200, { access_token: 'hdr.' + btoa('{"scope":""}').replace(/=+$/, '') + '.sig' })
+    : real(u, o));
   const r = await xcall('GET', '/api/xero/probe');
-  xero.granted = null;
-  const bare = r.body.results[0];
-  return bare.scope === '(no scope named)' && bare.ok === true;
+  globalThis.fetch = real;
+  return Array.isArray(r.body.holds) && r.body.holds.length === 0
+    && /carrying no scopes at all/.test(r.body.reading);
 });
 
 console.log('');

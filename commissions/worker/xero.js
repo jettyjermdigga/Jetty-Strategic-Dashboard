@@ -22,37 +22,86 @@ export const XERO_TOKEN = 'https://identity.xero.com/connect/token';
 export const XERO_CONNECTIONS = 'https://api.xero.com/connections';
 
 /**
- * The scopes this asks Xero for.
+ * The scopes this module needs -- which is not the same as the scopes it
+ * asks for. It asks for none.
  *
- * Two, and these exact names. There is no accounting.invoices scope and no
- * accounting.payments scope -- Xero does not break the ledger up that
- * finely. Invoices, payments, credit notes and bank transactions all sit
- * under accounting.transactions, and the chart of accounts sits under
- * accounting.settings. Checked against the securitySchemes and the per-
- * operation security blocks in Xero's own OpenAPI spec (XeroAPI/Xero-OpenAPI,
- * xero_accounting.yaml): getInvoices and getPayments both require
- * accounting.transactions, getAccounts requires accounting.settings. The
- * full set of accounting scopes the spec knows is attachments, budgets.read,
- * contacts, journals.read, reports.read, reports.tenninetynine.read,
- * settings and transactions, each with a .read variant where one exists.
+ * A Custom Connection already knows what it was granted. Naming a scope on
+ * the token request asks Xero to narrow that, and Xero's validation of the
+ * narrowing is what kept failing: probing this connection one scope at a
+ * time, every single name was refused -- transactions, settings, contacts,
+ * reports, journals, budgets, attachments, the read variants and the write
+ * ones alike -- while the request naming no scope at all returned a token.
+ * Two different refusals came back ("Client credentials scope validation
+ * failed" and "No valid scopes remaining after filtering for grant type"),
+ * neither of which depends on the name being right.
  *
- * Asking for a name Xero does not have is not ignored. It is dropped, and
- * when enough of them are dropped the token request fails with "No valid
- * scopes remaining after filtering for grant type" -- which sounds like a
- * grant-type problem and is really a spelling one.
+ * So the request names nothing and the connection's own grant decides. The
+ * token says what it ended up with, in its scope claim, which is where
+ * heldScopes reads it from -- and checking that is better than asking
+ * anyway, because it reports what is true rather than what was requested.
  *
- * A Custom Connection is machine-to-machine: one organisation, no user, no
- * consent screen. So there is no openid, no profile, no email and no
- * offline_access -- there is nobody to sign in and no refresh token to
- * rotate, because a token is just asked for again when it expires.
+ * These two are what the endpoints need, from the security blocks in Xero's
+ * own OpenAPI spec (XeroAPI/Xero-OpenAPI, xero_accounting.yaml):
+ * getInvoices and getPayments require accounting.transactions, getAccounts
+ * requires accounting.settings. There is no accounting.invoices scope and
+ * no accounting.payments scope; Xero does not divide the ledger that
+ * finely.
  *
  * Both read-only. This module reconciles what has already happened and has
- * no business being able to write anybody's books.
+ * no business being able to write anybody's books -- so the write variants
+ * satisfy the need as far as Xero is concerned, and are accepted here,
+ * but nothing asks for them.
  */
 export const XERO_SCOPES = [
   'accounting.transactions.read',
   'accounting.settings.read',
 ].join(' ');
+
+/**
+ * The scopes a token actually carries.
+ *
+ * A Xero access token is a JWT, so its middle segment is the claims. This
+ * reads the scope claim and nothing else: no signature check, because
+ * there is nothing to defend against -- the token came straight from a TLS
+ * call to Xero and is used only to label what we hold.
+ *
+ * Anything unreadable returns null rather than an empty list. Those mean
+ * different things: an empty list is a token that holds no scopes, null is
+ * a token whose scopes could not be read, and treating the second as the
+ * first would refuse to start over a token that is perfectly good.
+ */
+export function heldScopes(access) {
+  const parts = String(access || '').split('.');
+  if (parts.length < 2) return null;
+  let claims = null;
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    claims = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)));
+  } catch (err) {
+    return null;
+  }
+  if (!claims || claims.scope == null) return null;
+  const list = Array.isArray(claims.scope) ? claims.scope : String(claims.scope).split(' ');
+  return list.filter(Boolean);
+}
+
+/**
+ * What XERO_SCOPES asks for that a token does not carry.
+ *
+ * The write variant covers the read one: a connection granted
+ * accounting.transactions can read transactions, so wanting the .read is
+ * satisfied. Not the other way round.
+ *
+ * A null held list -- scopes unreadable -- means nothing is missing. This
+ * only ever blocks on evidence, because the alternative is refusing to
+ * start over a token that would have worked.
+ */
+export function missingScopes(held, want) {
+  if (held == null) return [];
+  const have = new Set(held);
+  return String(want == null ? XERO_SCOPES : want).split(' ').filter(Boolean)
+    .filter((s) => !have.has(s) && !have.has(s.replace(/\.read$/, '')));
+}
 
 // A sales invoice. ACCPAY is a bill we owe and has no business here; the
 // credit and prepayment types are not a retailer paying an invoice.

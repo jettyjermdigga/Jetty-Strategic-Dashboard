@@ -13,7 +13,8 @@ import {
 import { cleanIncoming, cleanDate } from '../worker/ingest.js';
 import {
   msDate, accountCodes, isWholesale, rowsFromInvoice, rowsFromPage,
-  pageQuery, sinceHeader, SALES, XERO_SCOPES, revenueAccounts,
+  pageQuery, sinceHeader, SALES, XERO_SCOPES, heldScopes, missingScopes,
+  revenueAccounts,
 } from '../worker/xero.js';
 import { sqlStatements } from '../worker/sql.js';
 import { buildWhere, monthRange, cleanYear, cleanLimit, STATUS_KEYS } from '../worker/filters.js';
@@ -623,8 +624,14 @@ describe('everything from Xero goes through the feed gate', () => {
   // chart of accounts cannot drift into asking for them differently.
   it('gets its token and its organisation in one place', () => {
     ok(/async function xeroSession\(env, db\)/.test(idx), 'there is no session helper');
-    eq([...idx.matchAll(/await accessToken\(\{/g)].length, 1,
-       'a token is asked for in more than one place');
+    // Twice: once inside xeroSession, once in the probe route. The probe
+    // has to work when the session cannot start, which is the whole point
+    // of it, so it is the one caller allowed to go round the helper.
+    eq([...idx.matchAll(/await accessToken\(\{/g)].length, 2,
+       'a token is asked for somewhere other than the session and the probe');
+    const body = idx.slice(idx.indexOf('async function xeroSession'));
+    ok(/await accessToken\(\{/.test(body.slice(0, body.indexOf('\n}'))),
+       'the session helper does not get its own token');
     ok([...idx.matchAll(/await xeroSession\(env, db\)/g)].length >= 3,
        'the session helper is not used by every caller');
   });
@@ -733,6 +740,42 @@ describe('what the pull asks Xero for', () => {
     for (const x of ['openid', 'profile', 'email', 'offline_access']) {
       ok(!scopes.includes(x), x + ' is not a scope a Custom Connection has');
     }
+  });
+  // The token says what the connection holds. Asking Xero for a scope is
+  // what it refused; reading what it granted is what works.
+  const jwt = (claims) => 'hdr.'
+    + btoa(JSON.stringify(claims)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    + '.sig';
+  it('reads the scopes off a token', () => {
+    eq(heldScopes(jwt({ scope: 'accounting.transactions.read accounting.settings.read' })),
+       ['accounting.transactions.read', 'accounting.settings.read']);
+    eq(heldScopes(jwt({ scope: ['accounting.settings.read'] })),
+       ['accounting.settings.read']);
+    eq(heldScopes(jwt({ scope: '' })), []);
+  });
+  // Unreadable and empty are different answers. An empty list is a token
+  // that holds nothing; null is a token nothing could be learned from, and
+  // reporting the second as the first would refuse to start on a token
+  // that works.
+  it('tells a token it cannot read from one that holds nothing', () => {
+    eq(heldScopes(jwt({ sub: 'conn' })), null, 'no scope claim is not no scopes');
+    eq(heldScopes('opaque'), null);
+    eq(heldScopes('hdr.not-base64-json.sig'), null);
+    eq(heldScopes(''), null);
+    eq(heldScopes(null), null);
+  });
+  it('counts a scope as missing only on evidence', () => {
+    eq(missingScopes(null, XERO_SCOPES), [], 'unreadable is not missing');
+    eq(missingScopes(['accounting.transactions.read'], XERO_SCOPES),
+       ['accounting.settings.read']);
+    eq(missingScopes([], XERO_SCOPES), XERO_SCOPES.split(' '));
+  });
+  // The write variant can do everything the read one can, so a connection
+  // granted it is not short of anything. Not the other way round.
+  it('lets the write variant satisfy the read one', () => {
+    eq(missingScopes(['accounting.transactions', 'accounting.settings'], XERO_SCOPES), []);
+    eq(missingScopes(['accounting.transactions.read'], 'accounting.transactions'),
+       ['accounting.transactions'], 'read does not cover write');
   });
   it('asks for nothing that could write the books', () => {
     for (const x of XERO_SCOPES.split(' ')) ok(x.endsWith('.read'), x + ' is not read-only');

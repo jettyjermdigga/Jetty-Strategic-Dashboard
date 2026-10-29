@@ -96,23 +96,36 @@ fails if they ever disagree.
    one organisation, and has no consent screen, no callback and no refresh
    token to go stale. There is nobody whose leaving breaks the pull.
 
-   Two scopes, both read-only:
+   Give it these two scopes, both read-only:
 
        accounting.transactions.read   the invoices and the payments on them
        accounting.settings.read       the chart of accounts, to find the codes
 
-   Those names are not negotiable and not guessable. Xero has no
-   `accounting.invoices` scope and no `accounting.payments` scope -- it does
-   not divide the ledger that finely, and invoices, payments, credit notes
-   and bank transactions all sit under `accounting.transactions`. A name
-   Xero does not have is dropped rather than refused, and once enough are
-   dropped the token request fails with *No valid scopes remaining after
-   filtering for grant type*, which sounds like a grant-type problem and is
-   really a spelling one. `tests/unit.mjs` pins every scope we ask for
-   against the list in Xero's OpenAPI spec so an invented one cannot ship.
+   Those are the real names. There is no `accounting.invoices` scope and no
+   `accounting.payments` scope -- Xero does not divide the ledger that
+   finely, and `getInvoices` and `getPayments` both sit under
+   `accounting.transactions` in its OpenAPI spec, while `getAccounts` sits
+   under `accounting.settings`.
 
-   `openid`, `profile`, `email` and `offline_access` are not on a Custom
-   Connection at all -- there is nobody to sign in and no refresh token.
+   Pick them when you create the connection. They are fixed from then on:
+   Xero does not let an existing Custom Connection be widened, so a missing
+   scope means making a new one.
+
+   **The token request names no scope at all.** That is deliberate and it is
+   not an oversight. A Custom Connection already knows its grant, and asking
+   Xero to narrow it was refused here for every scope name alike -- with two
+   different messages, *Client credentials scope validation failed* and *No
+   valid scopes remaining after filtering for grant type*, neither of which
+   depends on the name being right -- while the request naming nothing
+   returned a token. So the connection's own grant decides, and what it
+   decided is read back off the token's `scope` claim rather than assumed.
+   `heldScopes` does that reading and `missingScopes` checks it, before the
+   first API call rather than after.
+
+   That check matters more than it looks. A missing scope does not refuse
+   the call: it returns invoices with an empty `Payments` array, or an empty
+   chart of accounts. That reads as a quiet month rather than as a
+   permissions problem, which is the worst way for this to be wrong.
 
    Put its client id in `XERO_CLIENT_ID` in `wrangler.toml` and its secret
    where secrets go:
@@ -122,15 +135,12 @@ fails if they ever disagree.
    Not in `[vars]`: a deploy overwrites every var in that file and leaves
    secrets alone.
 
-   If Check Xero says *No valid scopes remaining after filtering for grant
-   type*, open `/api/xero/probe`. That asks Xero for each scope on its own
-   and reports which ones the connection holds. Xero drops a scope it does
-   not recognise and a scope the connection was not granted, both silently,
-   and complains only once nothing is left -- so that one sentence covers a
-   wrong name, a missing grant and the wrong kind of app. The probe tells
-   them apart. If every scope is refused, including the request that names
-   none, the app is not a Custom Connection: `client_credentials` works on
-   nothing else.
+   If it will not start, open `/api/xero/probe`. It asks for a token naming
+   no scope, reports what that token carries and what is missing, then asks
+   about each scope separately, and says in a sentence what the numbers
+   mean. A bare request that is itself refused is the app or the
+   credentials rather than the scopes -- `client_credentials` works on a
+   Custom Connection and nothing else.
 
    Then press **Check Xero**, which asks for a token and reports which
    organisation answered. Open `/api/xero/accounts` to see the chart of
