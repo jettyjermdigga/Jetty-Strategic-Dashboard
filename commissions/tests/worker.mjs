@@ -101,13 +101,17 @@ const rows = (sql, ...b) => sqlite.prepare(sql).all(...b);
 // OpenAPI spec -- including the Microsoft dates, which are the thing most
 // likely to be got wrong.
 const xero = { calls: [], issued: 0, invoicePages: {}, tokenStatus: 200, orgs: null,
-               granted: null, refuseNamed: false, holds: ['accounting.transactions.read',
-                                      'accounting.settings.read'] };
+               granted: null, refuseNamed: false,
+               holds: ['accounting.invoices.read', 'accounting.payments.read',
+                       'accounting.settings.read'] };
 // A Xero access token is a JWT and the scope claim is read off it, so the
 // stub has to hand back something shaped like one.
 const token = (n) => 'hdr.' + btoa(JSON.stringify({
   sub: 'conn', scope: xero.holds.join(' '), jti: String(n),
 })).replace(/=+$/, '') + '.sig';
+// What Jetty's own Custom Connection holds, trimmed to what is needed.
+const HOLDS = ['accounting.invoices.read', 'accounting.payments.read',
+               'accounting.settings.read'];
 const msdate = (iso) => '/Date(' + Date.parse(iso) + '+0000)/';
 const invoice = (n, over) => Object.assign({
   Type: 'ACCREC', InvoiceID: 'inv-' + n, InvoiceNumber: String(22000 + n), Total: 610,
@@ -212,17 +216,18 @@ await t('asks for a token without naming a scope', async () => {
 await t('stops when the connection does not hold what it needs', async () => {
   xero.holds = ['accounting.contacts.read'];
   const r = await xcall('POST', '/api/xero/connect', {});
-  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
-  return r.status === 500 && /accounting.transactions.read/.test(r.text)
+  xero.holds = HOLDS.slice();
+  return r.status === 500 && /accounting.invoices.read/.test(r.text)
     && /accounting.settings.read/.test(r.text)
     && /holds accounting.contacts.read/.test(r.text);
 });
 // The write variant covers the read one. Refusing to start on a
 // connection that can do more than it needs would be a wrong no.
 await t('accepts a connection granted more than it needs', async () => {
-  xero.holds = ['accounting.transactions', 'accounting.settings', 'accounting.contacts'];
+  xero.holds = ['accounting.invoices', 'accounting.payments',
+                'accounting.settings', 'accounting.contacts'];
   const r = await xcall('POST', '/api/xero/connect', {});
-  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
+  xero.holds = HOLDS.slice();
   return r.status === 200 && r.body.tenant === 'Jetty Brand';
 });
 // An unreadable token is not evidence of a missing scope, and treating it
@@ -280,12 +285,12 @@ await t('reads the chart of accounts for the wholesale codes', async () => {
 // The probe exists because one sentence from Xero covers several causes,
 // and the module cannot tell them apart from the failure alone.
 await t('reports what the token actually carries', async () => {
-  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
+  xero.holds = HOLDS.slice();
   xero.refuseNamed = true;
   const r = await xcall('GET', '/api/xero/probe');
   xero.refuseNamed = false;
   return r.status === 200
-    && r.body.holds.join(' ') === 'accounting.transactions.read accounting.settings.read'
+    && r.body.holds.join(' ') === HOLDS.join(' ')
     && r.body.missing.length === 0
     && r.body.namedScopesAccepted.length === 0
     && /holds everything this needs/.test(r.body.reading);
@@ -297,16 +302,15 @@ await t('reads the grant off the token even when every name is refused', async (
   xero.refuseNamed = true;
   const r = await xcall('GET', '/api/xero/probe');
   xero.refuseNamed = false;
-  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
-  return r.body.missing.join(' ')
-      === 'accounting.transactions.read accounting.settings.read'
+  xero.holds = HOLDS.slice();
+  return r.body.missing.join(' ') === HOLDS.join(' ')
     && /needs a new one/.test(r.body.reading);
 });
 await t('names which scopes a connection will narrow to, when it will', async () => {
-  xero.granted = ['accounting.transactions.read', 'accounting.contacts.read'];
+  xero.granted = ['accounting.invoices.read', 'accounting.contacts.read'];
   const r = await xcall('GET', '/api/xero/probe');
   xero.granted = null;
-  return r.body.namedScopesAccepted.includes('accounting.transactions.read')
+  return r.body.namedScopesAccepted.includes('accounting.invoices.read')
     && r.body.namedScopesAccepted.includes('accounting.contacts.read')
     && !r.body.namedScopesAccepted.includes('offline_access');
 });

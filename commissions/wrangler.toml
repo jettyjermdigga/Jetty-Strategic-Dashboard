@@ -74,11 +74,11 @@ ACCESS_AUD = "8f073f894aae873a6934f611d6917d9d633a4706472c06b484f05107f0721718"
 # sign-in, no consent screen and no refresh token. The id and secret ARE the
 # credential, so these two are the whole of it.
 #
-# Its scopes are set on the app in Xero and must include
-# accounting.transactions.read (the invoices and their payments) and
-# accounting.settings.read (the chart of accounts). Those are the real Xero
-# scope names -- see XERO_SCOPES in worker/xero.js, which says why there is
-# no accounting.invoices or accounting.payments to ask for.
+# Its scopes are set on the app in Xero when the connection is made and
+# cannot be widened afterwards. It needs accounting.invoices.read,
+# accounting.payments.read and accounting.settings.read -- a Custom
+# Connection's own vocabulary, which is finer than the umbrella scopes in
+# Xero's OpenAPI spec. See XERO_SCOPES in worker/xero.js.
 XERO_CLIENT_ID = "CF90B6EE8120441B9F1AAF9ECDA97F85"
 
 # The Xero account codes that mean wholesale revenue. An invoice counts when

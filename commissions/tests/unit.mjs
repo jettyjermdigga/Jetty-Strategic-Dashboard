@@ -700,37 +700,53 @@ describe('what the pull asks Xero for', () => {
     eq(sinceHeader(null), null);
     eq(sinceHeader('not a date'), null);
   });
-  // Every accounting scope Xero has, read straight out of the
-  // securitySchemes block of its OpenAPI spec (XeroAPI/Xero-OpenAPI,
-  // xero_accounting.yaml). There is no accounting.invoices and no
-  // accounting.payments: Xero does not divide the ledger that finely.
-  const XERO_REAL_SCOPES = [
+  // What a Custom Connection is actually granted, read off a live token
+  // from Jetty's own connection. Not from the OpenAPI spec: the spec lists
+  // the umbrella scopes the user-facing flow uses, and a Custom Connection
+  // does not share that vocabulary. There is no accounting.transactions
+  // here at all -- invoices, payments, bank transactions and manual
+  // journals are granted separately.
+  const CUSTOM_CONNECTION_SCOPES = [
     'accounting.attachments', 'accounting.attachments.read',
+    'accounting.banktransactions', 'accounting.banktransactions.read',
     'accounting.budgets.read',
     'accounting.contacts', 'accounting.contacts.read',
-    'accounting.journals.read',
-    'accounting.reports.read', 'accounting.reports.tenninetynine.read',
+    'accounting.invoices', 'accounting.invoices.read',
+    'accounting.manualjournals', 'accounting.manualjournals.read',
+    'accounting.payments', 'accounting.payments.read',
+    'accounting.reports.aged.read', 'accounting.reports.balancesheet.read',
+    'accounting.reports.banksummary.read', 'accounting.reports.budgetsummary.read',
+    'accounting.reports.executivesummary.read', 'accounting.reports.profitandloss.read',
+    'accounting.reports.taxreports.read', 'accounting.reports.tenninetynine.read',
+    'accounting.reports.trialbalance.read',
     'accounting.settings', 'accounting.settings.read',
-    'accounting.transactions', 'accounting.transactions.read',
+    'app.connections', 'assets', 'assets.read', 'files', 'files.read',
+    'payroll.employees', 'payroll.employees.read',
+    'payroll.payruns', 'payroll.payruns.read',
+    'payroll.payslip', 'payroll.payslip.read',
+    'payroll.settings', 'payroll.settings.read',
+    'payroll.timesheets', 'payroll.timesheets.read',
+    'projects', 'projects.read',
   ];
-  // A scope Xero does not have is not refused. It is dropped, and when
-  // enough of them are dropped the token request fails with "No valid
-  // scopes remaining after filtering for grant type" -- which sounds like
-  // a grant-type problem and is really a spelling one. This is the check
-  // that catches an invented name before Xero does.
-  it('asks only for scopes Xero actually has', () => {
+  // A name from the wrong vocabulary is not refused in a way that says so.
+  // Both directions of that mistake have now been made here, so both are
+  // pinned: this list is what a Custom Connection has.
+  it('needs only scopes a Custom Connection is granted', () => {
     for (const x of XERO_SCOPES.split(' ')) {
-      ok(XERO_REAL_SCOPES.includes(x), x + ' is not a scope Xero has');
+      ok(CUSTOM_CONNECTION_SCOPES.includes(x),
+         x + ' is not a scope a Custom Connection is granted');
     }
+    ok(!CUSTOM_CONNECTION_SCOPES.includes('accounting.transactions'),
+       'the umbrella scope belongs to the user-facing flow, not to this one');
   });
-  // getInvoices and getPayments both sit under accounting.transactions in
-  // the spec. The payments arrive nested inside each invoice; without the
-  // scope they would come back as an empty array, which reads as a quiet
-  // month rather than as a permissions problem.
-  it('asks for the transactions, where the invoices and payments live', () => {
+  // The payments arrive nested inside each invoice. Without the scope they
+  // come back as an empty array, which reads as a quiet month rather than
+  // as a permissions problem -- the worst way for this to be wrong.
+  it('needs the payments as well as the invoices', () => {
     const scopes = XERO_SCOPES.split(' ');
-    ok(scopes.includes('accounting.transactions.read'),
-       'invoices and payments are both accounting.transactions');
+    ok(scopes.includes('accounting.invoices.read'));
+    ok(scopes.includes('accounting.payments.read'),
+       'invoices would come back with no payments on them');
     ok(scopes.includes('accounting.settings.read'), 'the chart of accounts needs this');
   });
   // A Custom Connection is machine-to-machine: one organisation, no user
@@ -766,16 +782,18 @@ describe('what the pull asks Xero for', () => {
   });
   it('counts a scope as missing only on evidence', () => {
     eq(missingScopes(null, XERO_SCOPES), [], 'unreadable is not missing');
-    eq(missingScopes(['accounting.transactions.read'], XERO_SCOPES),
+    eq(missingScopes(['accounting.invoices.read', 'accounting.payments.read'],
+                     XERO_SCOPES),
        ['accounting.settings.read']);
     eq(missingScopes([], XERO_SCOPES), XERO_SCOPES.split(' '));
   });
   // The write variant can do everything the read one can, so a connection
   // granted it is not short of anything. Not the other way round.
   it('lets the write variant satisfy the read one', () => {
-    eq(missingScopes(['accounting.transactions', 'accounting.settings'], XERO_SCOPES), []);
-    eq(missingScopes(['accounting.transactions.read'], 'accounting.transactions'),
-       ['accounting.transactions'], 'read does not cover write');
+    eq(missingScopes(['accounting.invoices', 'accounting.payments',
+                      'accounting.settings'], XERO_SCOPES), []);
+    eq(missingScopes(['accounting.invoices.read'], 'accounting.invoices'),
+       ['accounting.invoices'], 'read does not cover write');
   });
   it('asks for nothing that could write the books', () => {
     for (const x of XERO_SCOPES.split(' ')) ok(x.endsWith('.read'), x + ' is not read-only');

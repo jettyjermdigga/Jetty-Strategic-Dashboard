@@ -96,16 +96,21 @@ fails if they ever disagree.
    one organisation, and has no consent screen, no callback and no refresh
    token to go stale. There is nobody whose leaving breaks the pull.
 
-   Give it these two scopes, both read-only:
+   Give it these three scopes, all read-only:
 
-       accounting.transactions.read   the invoices and the payments on them
-       accounting.settings.read       the chart of accounts, to find the codes
+       accounting.invoices.read    the invoices and their line items
+       accounting.payments.read    the payments on them
+       accounting.settings.read    the chart of accounts, to find the codes
 
-   Those are the real names. There is no `accounting.invoices` scope and no
-   `accounting.payments` scope -- Xero does not divide the ledger that
-   finely, and `getInvoices` and `getPayments` both sit under
-   `accounting.transactions` in its OpenAPI spec, while `getAccounts` sits
-   under `accounting.settings`.
+   A Custom Connection and a Web app do not share a scope vocabulary, and
+   only the Web app's is in the OpenAPI spec. The spec's `securitySchemes`
+   list umbrella scopes -- `accounting.transactions` covers invoices,
+   payments, credit notes and bank transactions between them -- and a
+   Custom Connection has no `accounting.transactions` at all. It is granted
+   `accounting.invoices`, `accounting.payments`,
+   `accounting.banktransactions` and `accounting.manualjournals` separately,
+   each with a `.read` variant. Ask a Custom Connection for the umbrella
+   name and it is refused.
 
    Pick them when you create the connection. They are fixed from then on:
    Xero does not let an existing Custom Connection be widened, so a missing

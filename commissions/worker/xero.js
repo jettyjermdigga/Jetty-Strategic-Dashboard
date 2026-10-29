@@ -25,35 +25,27 @@ export const XERO_CONNECTIONS = 'https://api.xero.com/connections';
  * The scopes this module needs -- which is not the same as the scopes it
  * asks for. It asks for none.
  *
- * A Custom Connection already knows what it was granted. Naming a scope on
- * the token request asks Xero to narrow that, and Xero's validation of the
- * narrowing is what kept failing: probing this connection one scope at a
- * time, every single name was refused -- transactions, settings, contacts,
- * reports, journals, budgets, attachments, the read variants and the write
- * ones alike -- while the request naming no scope at all returned a token.
- * Two different refusals came back ("Client credentials scope validation
- * failed" and "No valid scopes remaining after filtering for grant type"),
- * neither of which depends on the name being right.
+ * These three names come from the live connection's own grant, read off a
+ * token (see heldScopes) rather than from documentation. That matters,
+ * because a Custom Connection and a Web app do not have the same scope
+ * vocabulary and only one of them is in the OpenAPI spec.
  *
- * So the request names nothing and the connection's own grant decides. The
- * token says what it ended up with, in its scope claim, which is where
- * heldScopes reads it from -- and checking that is better than asking
- * anyway, because it reports what is true rather than what was requested.
+ * The spec's securitySchemes list the umbrella scopes the user-facing flow
+ * uses -- accounting.transactions covers invoices, payments, credit notes
+ * and bank transactions between them. A Custom Connection is granted
+ * something finer: separate accounting.invoices, accounting.payments,
+ * accounting.banktransactions and accounting.manualjournals, each with a
+ * .read variant, and no accounting.transactions at all. Asking a Custom
+ * Connection for the umbrella name gets it refused, which is the trap this
+ * walked into from the other side.
  *
- * These two are what the endpoints need, from the security blocks in Xero's
- * own OpenAPI spec (XeroAPI/Xero-OpenAPI, xero_accounting.yaml):
- * getInvoices and getPayments require accounting.transactions, getAccounts
- * requires accounting.settings. There is no accounting.invoices scope and
- * no accounting.payments scope; Xero does not divide the ledger that
- * finely.
- *
- * Both read-only. This module reconciles what has already happened and has
- * no business being able to write anybody's books -- so the write variants
- * satisfy the need as far as Xero is concerned, and are accepted here,
- * but nothing asks for them.
+ * So: invoices for the invoices and their line items, payments because the
+ * payments arrive nested inside them, settings for the chart of accounts.
+ * All three read-only.
  */
 export const XERO_SCOPES = [
-  'accounting.transactions.read',
+  'accounting.invoices.read',
+  'accounting.payments.read',
   'accounting.settings.read',
 ].join(' ');
 

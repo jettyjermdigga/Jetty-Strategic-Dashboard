@@ -63,8 +63,9 @@ export async function accessToken({ clientId, clientSecret, post, scope }) {
  */
 export const PROBE_SCOPES = [
   '',
+  'accounting.invoices.read',
+  'accounting.payments.read',
   'accounting.transactions.read',
-  'accounting.transactions',
   'accounting.settings.read',
   'accounting.settings',
   'accounting.contacts.read',
