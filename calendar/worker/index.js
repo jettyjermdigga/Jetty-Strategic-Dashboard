@@ -1487,6 +1487,7 @@ async function handleApi(request, env, url, who, ctx) {
 
   const boxyPoints = () => pointsFromConfig(env.BOXY_POINTS);
   const boxyCheckout = () => checkoutNames(env.BOXY_CHECKOUT);
+  const boxyEntry = () => checkoutNames(env.BOXY_ENTRY);
 
   const readAttendance = async (itemId) => {
     const res = await db.prepare(
@@ -1575,7 +1576,8 @@ async function handleApi(request, env, url, who, ctx) {
     return json({
       board, standings: standings(board), roles: ROLES,
       points: boxyPoints(), rosterAsOf: BOXY_AS_OF, you: who.email,
-      checkout: boxyCheckout(), samplePerPoint: SAMPLE_PER_POINT,
+      checkout: boxyCheckout(), enteredBy: boxyEntry(),
+      samplePerPoint: SAMPLE_PER_POINT,
       today: new Date().toISOString().slice(0, 10),
     });
   }
@@ -1613,7 +1615,7 @@ async function handleApi(request, env, url, who, ctx) {
     const body = await request.json().catch(() => null);
     if (!body) return json({ error: 'Expected a JSON body.' }, 400);
 
-    const out = cleanLedger(body, env.BOXY_CHECKOUT);
+    const out = cleanLedger(body, env.BOXY_CHECKOUT, env.BOXY_ENTRY);
     if (out.errors) return json({ errors: out.errors }, 400);
     const r = out.row;
     await db.prepare(

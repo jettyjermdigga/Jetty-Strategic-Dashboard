@@ -2253,23 +2253,44 @@ describe('spending and corrections', () => {
     eq(spend({ points: '-12' }).row.points, -12);
   });
   // A correction can go either way.
+  // Who may add, by name. A different list from the checkout: handing a
+  // sample over and putting Boxy Bucks on a balance are different jobs.
+  const EN = 'Jeremy,Joe,JJ';
+  const adjust = (over) => cleanLedger(
+    Object.assign({ person: who, kind: 'adjust', note: 'Trade show',
+                    checkedBy: 'Jeremy' }, over), CO, EN);
+
   it('signs a correction however it was typed', () => {
-    const add = (over) => cleanLedger(
-      Object.assign({ person: who, kind: 'adjust', note: 'Trade show' }, over), CO);
+    const add = adjust;
     eq(add({ points: '5' }).row.points, 5);
     eq(add({ points: '-5' }).row.points, -5);
   });
   it('refuses zero, which moves nothing', () => {
-    ok(cleanLedger({ person: who, kind: 'adjust', points: '0', note: 'x' }, CO).errors);
+    ok(adjust({ points: '0' }).errors);
+  });
+  // The checkout list and the list of people who can add are different
+  // lists, and a name from the wrong one is not a name on this entry.
+  it('takes the adding name from its own list, not the checkout', () => {
+    ok(!adjust({ points: '5', checkedBy: 'JJ' }).errors);
+    const wrong = adjust({ points: '5', checkedBy: 'Grace Hopper' });
+    ok(wrong.errors && wrong.errors.join(' ').includes('people who can add'));
+  });
+  it('will not add Boxy Bucks with nobody entering them', () => {
+    const out = adjust({ points: '5', checkedBy: '' });
+    ok(out.errors && out.errors.join(' ').includes('Who is entering this?'));
+  });
+  // Empty config stops an entry rather than letting any name through.
+  it('records no adjustment at all when nobody is set up to add', () => {
+    ok(cleanLedger({ person: who, kind: 'adjust', points: '5', note: 'x',
+                     checkedBy: 'Jeremy' }, CO, '').errors);
   });
   // A spend is explained by its own fields -- the day, the count, who
   // handed the samples over. Boxy Bucks arriving on a balance have none
   // of that, so the reason is the only record of why.
   it('will not add Boxy Bucks with nothing said about them', () => {
-    const out = cleanLedger({ person: who, kind: 'adjust', points: '5' }, CO);
+    const out = adjust({ points: '5', note: '' });
     ok(out.errors && out.errors.join(' ').includes('What are these for?'));
-    ok(!cleanLedger({ person: who, kind: 'adjust', points: '5',
-                      note: 'Ran the Asbury booth' }, CO).errors);
+    ok(!adjust({ points: '5', note: 'Ran the Asbury booth' }).errors);
   });
   it('refuses a kind it does not know', () => {
     ok(cleanLedger({ person: who, kind: 'earn', points: '5' }, CO).errors);
@@ -2353,11 +2374,12 @@ describe('spending and corrections', () => {
     ok(!spend({ note: '' }).errors);
     eq(spend({ note: ' Sample pack ' }).row.note, 'Sample pack');
   });
-  // A correction is bookkeeping, not a handover, so it asks for neither.
-  it('asks a correction for neither a name nor a day', () => {
-    const r = cleanLedger({ person: who, kind: 'adjust', points: '5',
-                            note: 'Trade show' }, CO).row;
-    eq([r.checkedBy, r.onDate], ['', '']);
+  // A correction is bookkeeping rather than a handover, so it carries a
+  // name but no day: there is nothing that happened on a particular
+  // afternoon to record.
+  it('asks a correction for a name but not a day', () => {
+    const r = adjust({ points: '5' }).row;
+    eq([r.checkedBy, r.onDate], ['Jeremy', '']);
   });
 });
 
@@ -2396,8 +2418,8 @@ describe('a checkout survives the round trip', () => {
        'the insert does not name the new columns');
     ok(/r\.onDate \|\| null/.test(body) && /r\.checkedBy \|\| null/.test(body),
        'the cleaned values are not bound');
-    ok(/cleanLedger\(body, env\.BOXY_CHECKOUT\)/.test(body),
-       'the checkout list never reaches the validator, so any name would do');
+    ok(/cleanLedger\(body, env\.BOXY_CHECKOUT, env\.BOXY_ENTRY\)/.test(body),
+       'a name list never reaches the validator, so any name would do');
   });
   it('reads both of them back out again', () => {
     const at = idx.indexOf("path === '/api/boxy/person'");

@@ -182,3 +182,16 @@ BOXY_POINTS = "worked:2,volunteered:2,attended:1"
 # is hired. Empty means no spend can be recorded at all -- the safe failure
 # for a list that exists to put a name against stock going out the door.
 BOXY_CHECKOUT = "Jeremy DeFilippis,JJ McKenna,Joe Mangino,Cory Higgins"
+
+# Who can put Boxy Bucks on somebody by hand. The names offered by the
+# Add $$$ form, in the order they are listed.
+#
+# Names, not addresses, and a label rather than a permission: who may add
+# at all is BOXY_ADMINS above, and the sign-in behind every entry is stored
+# as added_by whatever this list says. So this going out of date makes the
+# dropdown wrong, never the record.
+#
+# Empty means no adjustment can be recorded. Same reasoning as
+# BOXY_CHECKOUT: a list that exists to put a name against money appearing
+# on a balance should fail closed.
+BOXY_ENTRY = "Jeremy,Joe,JJ"

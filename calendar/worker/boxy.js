@@ -129,8 +129,9 @@ export function cleanEntry(input, defaults) {
  */
 export const SAMPLE_PER_POINT = 1;
 
-/** Who may hand samples over, from config. Falls back to nobody, not to
- *  everybody: an empty list should stop a checkout being recorded against a
+/** A comma-separated list of names from config -- who may hand samples
+ *  over, and who may add Boxy Bucks by hand. Falls back to nobody, not to
+ *  everybody: an empty list should stop an entry being recorded against a
  *  name nobody can be held to, rather than let any name through. */
 export function checkoutNames(raw) {
   return String(raw || '').split(',').map((x) => x.trim())
@@ -149,7 +150,7 @@ export function cleanDate(v) {
  * over, which between them explain the entry better than a free-text note
  * ever did -- so the note is no longer required, only offered.
  */
-export function cleanLedger(input, checkout) {
+export function cleanLedger(input, checkout, entry) {
   const errors = [];
   const key = cleanKey(input && input.person);
   if (!key || !staffMember(key)) errors.push('Pick somebody on the staff list.');
@@ -166,12 +167,16 @@ export function cleanLedger(input, checkout) {
     errors.push('That is not a plausible number.');
   }
 
-  const names = checkoutNames(checkout);
+  // Both kinds carry a name, from different lists: who handed the samples
+  // over, and who put the Boxy Bucks on. Neither is the permission -- that
+  // is the sign-in, stored as added_by -- but an entry with no name on it
+  // is one nobody can be asked about.
+  const names = checkoutNames(kind === 'adjust' ? entry : checkout);
   const by = String((input && input.checkedBy) || '').trim();
-  // Only on a spend: a correction is bookkeeping, not a handover.
-  if (kind === 'spend') {
-    if (!by) errors.push('Who checked them out?');
-    else if (!names.includes(by)) errors.push('"' + by.slice(0, 40) + '" is not on the checkout list.');
+  if (!by) errors.push(kind === 'adjust' ? 'Who is entering this?' : 'Who checked them out?');
+  else if (!names.includes(by)) {
+    errors.push('"' + by.slice(0, 40) + '" is not on the '
+      + (kind === 'adjust' ? 'list of people who can add' : 'checkout list') + '.');
   }
 
   // Defaults to today, because that is the answer nearly every time -- but
@@ -202,7 +207,7 @@ export function cleanLedger(input, checkout) {
       points: kind === 'spend' ? -Math.abs(Math.round(n)) : Math.round(n),
       note,
       onDate: on,
-      checkedBy: kind === 'spend' ? by : '',
+      checkedBy: by,
     },
   };
 }

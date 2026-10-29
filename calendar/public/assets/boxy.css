@@ -148,15 +148,6 @@
   border:1px solid var(--surface-alt);background:var(--cell);color:var(--ink);
 }
 .bx-f-n{width:76px;font-family:var(--mono);font-variant-numeric:tabular-nums}
-/* Who entered it is read, not typed: it is whoever is signed in. Shaped
-   like the inputs beside it so the row still reads as one form, and
-   dimmed so it does not look like something to click into. */
-.bx-f-by{text-transform:none;letter-spacing:.04em}
-.bx-f-fixed{
-  font-family:var(--body);font-size:13.5px;padding:5px 8px;border-radius:7px;
-  border:1px dashed var(--surface-alt);background:transparent;color:var(--ink);
-  opacity:.78;display:inline-block;
-}
 .bx-f-go{display:flex;gap:8px;padding-bottom:1px}
 .bx-f-save,.bx-f-x{
   font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;

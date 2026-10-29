@@ -177,12 +177,19 @@
   // required: money appearing on a balance with nothing said about it is
   // the thing nobody can explain three months later.
   //
-  // Who entered it is not a field. It is whoever is signed in, which is
-  // what gets stored, and a box to type a name in is a box to type the
-  // wrong name in.
+  // Entered by is picked from a list rather than typed, the same way a
+  // checkout names who handed the samples over. It is a label on the
+  // entry, not the permission: who may add at all is decided at the door,
+  // and the sign-in behind it is stored either way.
   function addHtml(k, name, span) {
     var f = form[k] || {};
     var bal = ((D.board || []).filter(function (r) { return r.k === k; })[0] || {}).balance;
+    var admins = D.enteredBy || [];
+    var opts = ['<option value="">Entered by\u2026</option>'].concat(
+      admins.map(function (p) {
+        return '<option value="' + esc(p) + '"'
+          + (f.by === p ? ' selected' : '') + '>' + esc(p) + '</option>';
+      })).join('');
     return '<tr class="bx-frow"><td colspan="' + span + '">'
       + '<form class="bx-f bx-f-add" data-for="' + esc(k) + '">'
       + '<span class="bx-f-who">' + esc(name)
@@ -193,11 +200,15 @@
       + '<label class="bx-f-l bx-f-grow">Reason'
       + '<input class="bx-f-i" type="text" name="note" maxlength="200" '
       + 'value="' + esc(f.note || '') + '" placeholder="What they are for"></label>'
-      + '<span class="bx-f-l bx-f-by">Entered by'
-      + '<span class="bx-f-i bx-f-fixed">' + esc(D.you || 'you') + '</span></span>'
+      + '<label class="bx-f-l">Entered by'
+      + '<select class="bx-f-i" name="by"' + (admins.length ? '' : ' disabled')
+      + '>' + opts + '</select></label>'
       + '<span class="bx-f-go">'
       + '<button class="bx-f-save" type="submit">Add</button>'
       + '<button class="bx-f-x" type="button" data-cancel="1">Cancel</button></span>'
+      + (admins.length ? ''
+         : '<span class="bx-f-err">Nobody is set up to add Boxy Bucks. '
+           + 'Set BOXY_ENTRY.</span>')
       + (f.error ? '<span class="bx-f-err">' + esc(f.error) + '</span>' : '')
       + '</form></td></tr>';
   }
@@ -334,7 +345,7 @@
     var f = form[personKey] || {};
     var body = formKind === 'add'
       ? { person: personKey, kind: 'adjust', points: f.n,
-          note: (f.note || '').trim() }
+          checkedBy: f.by, note: (f.note || '').trim() }
       : { person: personKey, kind: 'spend', points: f.n,
           onDate: f.on == null ? (D.today || '') : f.on,
           checkedBy: f.by, note: (f.note || '').trim() };

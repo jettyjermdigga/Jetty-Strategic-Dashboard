@@ -107,6 +107,9 @@ const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], delete
 
 // The four who run the sample cupboard, as the Worker hands them over.
 const BOXY_CHECKOUT = ['Jeremy DeFilippis', 'JJ McKenna', 'Joe Mangino', 'Cory Higgins'];
+// Who may put Boxy Bucks on by hand. A different list: handing a sample
+// over and adding to a balance are different jobs.
+const BOXY_ENTRY = ['Jeremy', 'Joe', 'JJ'];
 
 // Who was at the open event, and the roster the picker offers.
 const BOXY_ROLES = [
@@ -228,7 +231,8 @@ await page.route('**/*', async (route) => {
       standings: { people: 3, onTheBoard: 2, earned: 19, spent: 4, outstanding: 15 },
       roles: BOXY_ROLES, points: { worked: 3, volunteered: 2, attended: 1 },
       rosterAsOf: '2026-10-26', you: 'jeremy@jettylife.com',
-      checkout: BOXY_CHECKOUT, samplePerPoint: 1, today: '2026-10-27',
+      checkout: BOXY_CHECKOUT, enteredBy: BOXY_ENTRY,
+      samplePerPoint: 1, today: '2026-10-27',
     } });
   }
   if (p === '/api/boxy/ledger' && method === 'POST') {
@@ -242,6 +246,9 @@ await page.route('**/*', async (route) => {
     }
     if (b.kind === 'adjust' && !b.note) {
       return route.fulfill({ status: 400, json: { errors: ['What are these for?'] } });
+    }
+    if (b.kind === 'adjust' && !BOXY_ENTRY.includes(b.checkedBy)) {
+      return route.fulfill({ status: 400, json: { errors: ['Who is entering this?'] } });
     }
     // A spend is entered positive and stored as a debit; an adjustment is
     // signed however it was typed.
@@ -1618,29 +1625,36 @@ await t('asks for an amount and a reason, and nothing else', async () => {
   await page.waitForSelector('.bx-f-add');
   const names = await page.locator('.bx-f-add [name]').evaluateAll(
     (els) => els.map((e) => e.name));
-  return names.join(',') === 'n,note';
+  return names.join(',') === 'n,note,by';
 });
-// Whoever is signed in is what gets stored, so a box to type a name in
-// would only be a box to type the wrong name in.
-await t('shows who it will be entered by without letting it be typed', async () => {
-  const txt = await page.locator('.bx-f-fixed').textContent();
-  return txt === 'jeremy@jettylife.com'
-    && (await page.locator('.bx-f-add input[name="by"]').count()) === 0;
+// Picked from a list rather than typed, the same way a checkout names
+// who handed the samples over.
+await t('offers the people who can add, and nobody else', async () => {
+  const opts = await page.locator('.bx-f-add [name="by"] option').allTextContents();
+  return opts.join(',') === 'Entered by\u2026,Jeremy,Joe,JJ';
 });
-await t('sends it as an adjustment, with the reason', async () => {
+// The checkout list is a different list: Cory hands samples over and is
+// not on this one.
+await t('does not offer the checkout list here', async () => {
+  const opts = await page.locator('.bx-f-add [name="by"] option').allTextContents();
+  return !opts.some((o) => /Cory|McKenna|DeFilippis/.test(o));
+});
+await t('sends it as an adjustment, with the reason and the name', async () => {
   await page.fill('.bx-f-add [name="n"]', '4');
   await page.fill('.bx-f-add [name="note"]', 'Ran the Asbury booth');
+  await page.selectOption('.bx-f-add [name="by"]', 'Joe');
   await page.locator('.bx-f-add .bx-f-save').click();
   await page.waitForFunction(() => !document.querySelector('.bx-f'));
   const b = seen.spent[seen.spent.length - 1];
   return b.person === 'katie-hehl' && b.kind === 'adjust' && b.points === '4'
-    && b.note === 'Ran the Asbury booth' && !b.checkedBy;
+    && b.note === 'Ran the Asbury booth' && b.checkedBy === 'Joe';
 });
 // The refusal belongs beside the form that caused it, same as a spend.
 await t('says what is missing without closing the form', async () => {
   await page.locator('.bx-t tbody tr:has([data-open="katie-hehl"]) .bx-add').click();
   await page.waitForSelector('.bx-f-add');
   await page.fill('.bx-f-add [name="n"]', '2');
+  await page.selectOption('.bx-f-add [name="by"]', 'Jeremy');
   await page.locator('.bx-f-add .bx-f-save').click();
   await page.waitForSelector('.bx-f-err');
   const err = await page.locator('.bx-f-err').textContent();
