@@ -96,15 +96,23 @@ fails if they ever disagree.
    one organisation, and has no consent screen, no callback and no refresh
    token to go stale. There is nobody whose leaving breaks the pull.
 
-   Tick exactly three scopes on it, all read-only:
+   Two scopes, both read-only:
 
-       accounting.invoices.read    the invoices and their line items
-       accounting.payments.read    the payments on them
-       accounting.settings.read    the chart of accounts, to find the codes
+       accounting.transactions.read   the invoices and the payments on them
+       accounting.settings.read       the chart of accounts, to find the codes
 
-   Asking for anything else -- `openid`, `offline_access`,
-   `accounting.transactions.read` -- is what `invalid_scope` means here: a
-   Custom Connection's scope list has none of them.
+   Those names are not negotiable and not guessable. Xero has no
+   `accounting.invoices` scope and no `accounting.payments` scope -- it does
+   not divide the ledger that finely, and invoices, payments, credit notes
+   and bank transactions all sit under `accounting.transactions`. A name
+   Xero does not have is dropped rather than refused, and once enough are
+   dropped the token request fails with *No valid scopes remaining after
+   filtering for grant type*, which sounds like a grant-type problem and is
+   really a spelling one. `tests/unit.mjs` pins every scope we ask for
+   against the list in Xero's OpenAPI spec so an invented one cannot ship.
+
+   `openid`, `profile`, `email` and `offline_access` are not on a Custom
+   Connection at all -- there is nobody to sign in and no refresh token.
 
    Put its client id in `XERO_CLIENT_ID` in `wrangler.toml` and its secret
    where secrets go:

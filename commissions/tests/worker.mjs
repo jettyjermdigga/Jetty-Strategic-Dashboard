@@ -173,8 +173,8 @@ await t('asks for a token with the Custom Connection scopes', async () => {
   const sent = new URLSearchParams(tok.opts.body);
   return r.status === 200 && r.body.tenant === 'Jetty Brand'
     && sent.get('grant_type') === 'client_credentials'
-    && sent.get('scope').includes('accounting.invoices.read')
-    && sent.get('scope').includes('accounting.payments.read')
+    && sent.get('scope').includes('accounting.transactions.read')
+    && sent.get('scope').includes('accounting.settings.read')
     && !sent.get('scope').includes('offline_access');
 });
 await t('sends the id and secret as Basic auth, not in the body', async () => {

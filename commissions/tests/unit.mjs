@@ -693,26 +693,46 @@ describe('what the pull asks Xero for', () => {
     eq(sinceHeader(null), null);
     eq(sinceHeader('not a date'), null);
   });
+  // Every accounting scope Xero has, read straight out of the
+  // securitySchemes block of its OpenAPI spec (XeroAPI/Xero-OpenAPI,
+  // xero_accounting.yaml). There is no accounting.invoices and no
+  // accounting.payments: Xero does not divide the ledger that finely.
+  const XERO_REAL_SCOPES = [
+    'accounting.attachments', 'accounting.attachments.read',
+    'accounting.budgets.read',
+    'accounting.contacts', 'accounting.contacts.read',
+    'accounting.journals.read',
+    'accounting.reports.read', 'accounting.reports.tenninetynine.read',
+    'accounting.settings', 'accounting.settings.read',
+    'accounting.transactions', 'accounting.transactions.read',
+  ];
+  // A scope Xero does not have is not refused. It is dropped, and when
+  // enough of them are dropped the token request fails with "No valid
+  // scopes remaining after filtering for grant type" -- which sounds like
+  // a grant-type problem and is really a spelling one. This is the check
+  // that catches an invented name before Xero does.
+  it('asks only for scopes Xero actually has', () => {
+    for (const x of XERO_SCOPES.split(' ')) {
+      ok(XERO_REAL_SCOPES.includes(x), x + ' is not a scope Xero has');
+    }
+  });
+  // getInvoices and getPayments both sit under accounting.transactions in
+  // the spec. The payments arrive nested inside each invoice; without the
+  // scope they would come back as an empty array, which reads as a quiet
+  // month rather than as a permissions problem.
+  it('asks for the transactions, where the invoices and payments live', () => {
+    const scopes = XERO_SCOPES.split(' ');
+    ok(scopes.includes('accounting.transactions.read'),
+       'invoices and payments are both accounting.transactions');
+    ok(scopes.includes('accounting.settings.read'), 'the chart of accounts needs this');
+  });
   // A Custom Connection is machine-to-machine: one organisation, no user
-  // and no consent screen. Asking for the user-facing scopes is exactly
-  // what Xero was refusing with invalid_scope.
+  // and no consent screen. There is nobody to sign in.
   it("asks for a Custom Connection's scopes, not a sign-in's", () => {
     const scopes = XERO_SCOPES.split(' ');
     for (const x of ['openid', 'profile', 'email', 'offline_access']) {
       ok(!scopes.includes(x), x + ' is not a scope a Custom Connection has');
     }
-    ok(!scopes.includes('accounting.transactions.read'),
-       'the umbrella scope exists only for the user-facing flow');
-  });
-  // The payments arrive nested inside each invoice. Without the scope they
-  // come back as an empty array, which reads as a quiet month rather than
-  // as a permissions problem -- the worst way for this to be wrong.
-  it('asks for the payments as well as the invoices', () => {
-    const scopes = XERO_SCOPES.split(' ');
-    ok(scopes.includes('accounting.invoices.read'));
-    ok(scopes.includes('accounting.payments.read'),
-       'invoices would come back with no payments on them');
-    ok(scopes.includes('accounting.settings.read'), 'the chart of accounts needs this');
   });
   it('asks for nothing that could write the books', () => {
     for (const x of XERO_SCOPES.split(' ')) ok(x.endsWith('.read'), x + ' is not read-only');

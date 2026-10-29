@@ -22,33 +22,35 @@ export const XERO_TOKEN = 'https://identity.xero.com/connect/token';
 export const XERO_CONNECTIONS = 'https://api.xero.com/connections';
 
 /**
- * The scopes a Custom Connection may ask for.
+ * The scopes this asks Xero for.
+ *
+ * Two, and these exact names. There is no accounting.invoices scope and no
+ * accounting.payments scope -- Xero does not break the ledger up that
+ * finely. Invoices, payments, credit notes and bank transactions all sit
+ * under accounting.transactions, and the chart of accounts sits under
+ * accounting.settings. Checked against the securitySchemes and the per-
+ * operation security blocks in Xero's own OpenAPI spec (XeroAPI/Xero-OpenAPI,
+ * xero_accounting.yaml): getInvoices and getPayments both require
+ * accounting.transactions, getAccounts requires accounting.settings. The
+ * full set of accounting scopes the spec knows is attachments, budgets.read,
+ * contacts, journals.read, reports.read, reports.tenninetynine.read,
+ * settings and transactions, each with a .read variant where one exists.
+ *
+ * Asking for a name Xero does not have is not ignored. It is dropped, and
+ * when enough of them are dropped the token request fails with "No valid
+ * scopes remaining after filtering for grant type" -- which sounds like a
+ * grant-type problem and is really a spelling one.
  *
  * A Custom Connection is machine-to-machine: one organisation, no user, no
  * consent screen. So there is no openid, no profile, no email and no
  * offline_access -- there is nobody to sign in and no refresh token to
  * rotate, because a token is just asked for again when it expires.
  *
- * The granular names, not accounting.transactions.read. That umbrella scope
- * exists only for the user-facing flow; a Custom Connection's list has
- * invoices and payments separately, and asking for the umbrella is what
- * Xero was refusing with invalid_scope.
- *
- * payments.read as well as invoices.read because what this reads IS the
- * payments -- they arrive nested inside each invoice, and a missing scope
- * there would return invoices with an empty Payments array. That reads as a
- * quiet month rather than as a permissions problem, which is the worst way
- * for this to be wrong.
- *
- * settings.read is for the chart of accounts, so the wholesale account can
- * be picked from a list.
- *
- * All read-only. This module reconciles what has already happened and has no
- * business being able to write anybody's books.
+ * Both read-only. This module reconciles what has already happened and has
+ * no business being able to write anybody's books.
  */
 export const XERO_SCOPES = [
-  'accounting.invoices.read',
-  'accounting.payments.read',
+  'accounting.transactions.read',
   'accounting.settings.read',
 ].join(' ');
 
