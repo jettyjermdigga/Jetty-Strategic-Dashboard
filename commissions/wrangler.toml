@@ -73,7 +73,7 @@ ACCESS_AUD = "8f073f894aae873a6934f611d6917d9d633a4706472c06b484f05107f0721718"
 # XERO_CLIENT_SECRET is NOT in this file and must never be. Nor is the refresh
 # token: Xero rotates it on every refresh, so it lives in the database where
 # the Worker can write it back. See the xero table in worker/schema.sql.
-XERO_CLIENT_ID = ""
+XERO_CLIENT_ID = "CF90B6EE8120441B9F1AAF9ECDA97F85"
 
 # The Xero account codes that mean wholesale revenue. An invoice counts when
 # any of its line items hits one of these.

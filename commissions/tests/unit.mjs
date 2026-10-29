@@ -13,7 +13,7 @@ import {
 import { cleanIncoming, cleanDate } from '../worker/ingest.js';
 import {
   msDate, accountCodes, isWholesale, rowsFromInvoice, rowsFromPage,
-  pageQuery, sinceHeader, SALES, XERO_SCOPES,
+  pageQuery, sinceHeader, SALES, XERO_SCOPES, revenueAccounts,
 } from '../worker/xero.js';
 import { sqlStatements } from '../worker/sql.js';
 import { buildWhere, monthRange, cleanYear, cleanLimit, STATUS_KEYS } from '../worker/filters.js';
@@ -621,11 +621,52 @@ describe('everything from Xero goes through the feed gate', () => {
     ok(stored > 0 && pulled > 0, 'one of the two is missing');
     ok(stored < pulled, 'the token is only stored after the pull');
   });
+  // And everywhere else that refreshes, not just the pull. Xero kills the
+  // old token the instant it issues a new one, so any refresh that is not
+  // written back leaves the connection working exactly once.
+  it('stores it everywhere it refreshes, not only in the pull', () => {
+    const sites = [...idx.matchAll(/await refreshAccess\(\{/g)].map((m) => m.index);
+    ok(sites.length >= 2, 'only ' + sites.length + ' refresh found');
+    for (const at of sites) {
+      const after = idx.slice(at, at + 700);
+      ok(/UPDATE xero SET refresh_token = \?/.test(after),
+         'a refresh at ' + at + ' never stores the token it was given');
+    }
+  });
   // Moving it after a run that stopped on a rate limit would skip whatever
   // was left behind.
   it('leaves the watermark alone when the run did not finish', () => {
     ok(/out\.more \? \(row\.watermark/.test(body),
        'the watermark moves even when the window was not finished');
+  });
+});
+
+describe('picking the wholesale account', () => {
+  const chart = { Accounts: [
+    { Code: '201', Name: 'DTC Revenue', Class: 'REVENUE', Status: 'ACTIVE', Type: 'REVENUE' },
+    { Code: '200', Name: 'Wholesale Revenue', Class: 'REVENUE', Status: 'ACTIVE', Type: 'REVENUE' },
+    { Code: '090', Name: 'Business Bank', Class: 'ASSET', Status: 'ACTIVE' },
+    { Code: '199', Name: 'Old Revenue', Class: 'REVENUE', Status: 'ARCHIVED' },
+    { Code: '', Name: 'Unnumbered', Class: 'REVENUE', Status: 'ACTIVE' },
+  ] };
+
+  // A wholesale payment lands on an income account; a bank account is not a
+  // choice and an archived one is not where this year's money is going.
+  it('offers the active revenue accounts and nothing else', () => {
+    eq(revenueAccounts(chart).map((a) => a.code), ['200', '201']);
+  });
+  // XERO_ACCOUNTS is a list of codes, so an account with none is no use.
+  it('leaves out an account with no code', () => {
+    ok(!revenueAccounts(chart).some((a) => !a.code));
+  });
+  it('sorts them, so the same chart reads the same way twice', () => {
+    const codes = revenueAccounts(chart).map((a) => a.code);
+    eq(codes, [...codes].sort());
+  });
+  it('copes with a chart that is not there', () => {
+    eq(revenueAccounts({}), []);
+    eq(revenueAccounts(null), []);
+    eq(revenueAccounts({ Accounts: [] }), []);
   });
 });
 
@@ -693,6 +734,12 @@ describe('who can open this', () => {
     ok(!/refresh_token/i.test(toml), 'a refresh token is committed');
     ok(/XERO_CLIENT_SECRET is NOT in this file/.test(toml),
        'nothing says where the secret lives');
+  });
+  // The Connect button goes nowhere without it, and the page says so
+  // rather than failing on the redirect.
+  it('names the Xero app it connects with', () => {
+    ok(/^XERO_CLIENT_ID = "[A-Za-z0-9]{16,}"/m.test(toml),
+       'XERO_CLIENT_ID is not set, so Connect Xero goes nowhere');
   });
   it('has an Access application to verify tokens against', () => {
     const aud = (toml.match(/^ACCESS_AUD = "([^"]*)"/m) || ['', ''])[1];

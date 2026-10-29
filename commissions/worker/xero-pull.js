@@ -5,7 +5,9 @@
 // tenant that has gone away -- are all testable without a live Xero account
 // and without anybody's real invoices.
 
-import { XERO_TOKEN, XERO_CONNECTIONS, XERO_API, pageQuery, sinceHeader, rowsFromPage } from './xero.js';
+import {
+  XERO_TOKEN, XERO_CONNECTIONS, XERO_API, pageQuery, sinceHeader, rowsFromPage,
+} from './xero.js';
 
 /**
  * Trade the stored refresh token for an access token.
@@ -75,6 +77,20 @@ export async function tenants({ access, get }) {
     throw new Error('Could not list the Xero organisations (HTTP ' + res.status + ').');
   }
   return json.map((c) => ({ tenantId: c.tenantId, name: c.tenantName || c.tenantId }));
+}
+
+/** The chart of accounts. One call, no paging -- a chart with more than a
+ *  few hundred accounts is not a thing. */
+export async function chartOfAccounts({ access, tenantId, get }) {
+  const res = await get(XERO_API + '/Accounts', {
+    headers: {
+      authorization: 'Bearer ' + access,
+      'xero-tenant-id': tenantId,
+      accept: 'application/json',
+    },
+  });
+  if (!res.ok) throw new Error('Xero answered ' + res.status + ' for the chart of accounts.');
+  return (await res.json().catch(() => null)) || {};
 }
 
 export const MAX_PAGES = 60;

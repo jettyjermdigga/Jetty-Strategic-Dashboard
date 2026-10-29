@@ -35,6 +35,27 @@ export const XERO_SCOPES = [
 export const SALES = 'ACCREC';
 
 /**
+ * The revenue accounts in the chart, so XERO_ACCOUNTS can be picked from a
+ * list rather than hunted for in Xero.
+ *
+ * Only REVENUE, and only ACTIVE: a wholesale payment lands on an income
+ * account, and an archived one is not where this year's money is going.
+ */
+export function revenueAccounts(body) {
+  const all = (body && Array.isArray(body.Accounts)) ? body.Accounts : [];
+  return all
+    .filter((a) => String(a.Class || '').toUpperCase() === 'REVENUE'
+      && String(a.Status || 'ACTIVE').toUpperCase() === 'ACTIVE'
+      && String(a.Code || '').trim())
+    .map((a) => ({
+      code: String(a.Code).trim(),
+      name: String(a.Name || '').slice(0, 120),
+      type: String(a.Type || ''),
+    }))
+    .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+}
+
+/**
  * Xero's JSON dates: /Date(1612137600000+0000)/.
  *
  * The offset is deliberately ignored. The number is already milliseconds

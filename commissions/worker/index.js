@@ -15,8 +15,10 @@ import { sqlStatements } from './sql.js';
 import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
 import { buildWhere, cleanLimit, STATUSES } from './filters.js';
-import { XERO_AUTHORIZE, XERO_SCOPES, accountCodes } from './xero.js';
-import { refreshAccess, exchangeCode, tenants, pullRows } from './xero-pull.js';
+import { XERO_AUTHORIZE, XERO_SCOPES, accountCodes, revenueAccounts } from './xero.js';
+import {
+  refreshAccess, exchangeCode, tenants, pullRows, chartOfAccounts,
+} from './xero-pull.js';
 import SCHEMA from './schema.sql';
 
 const json = (body, status) => new Response(JSON.stringify(body), {
@@ -266,6 +268,28 @@ async function handleApi(request, env, url, who) {
     // Back to the page rather than a wall of JSON: this is the end of a
     // journey somebody started by pressing a button.
     return new Response(null, { status: 302, headers: { location: '/?connected=' + encodeURIComponent(org.name) } });
+  }
+
+  // Which account codes could mean wholesale revenue. Read from Xero rather
+  // than typed from memory: an account code that matches nothing imports
+  // nothing, silently, and looks exactly like a quiet month.
+  if (path === '/api/xero/accounts' && method === 'GET') {
+    const row = await xeroRow(db);
+    if (!row || !row.refresh_token || !row.tenant_id) {
+      return json({ error: 'Xero is not connected yet.' }, 409);
+    }
+    const fresh = await refreshAccess({
+      refresh: row.refresh_token,
+      clientId: env.XERO_CLIENT_ID,
+      clientSecret: env.XERO_CLIENT_SECRET,
+      post: fetch,
+    });
+    await db.prepare('UPDATE xero SET refresh_token = ? WHERE id = 1')
+      .bind(fresh.refresh).run();
+    const body = await chartOfAccounts({
+      access: fresh.access, tenantId: row.tenant_id, get: fetch,
+    });
+    return json({ accounts: revenueAccounts(body), chosen: accountCodes(env.XERO_ACCOUNTS) });
   }
 
   if (path === '/api/xero/pull' && method === 'POST') {
