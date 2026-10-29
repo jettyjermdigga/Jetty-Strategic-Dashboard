@@ -2254,11 +2254,22 @@ describe('spending and corrections', () => {
   });
   // A correction can go either way.
   it('signs a correction however it was typed', () => {
-    eq(cleanLedger({ person: who, kind: 'adjust', points: '5' }, CO).row.points, 5);
-    eq(cleanLedger({ person: who, kind: 'adjust', points: '-5' }, CO).row.points, -5);
+    const add = (over) => cleanLedger(
+      Object.assign({ person: who, kind: 'adjust', note: 'Trade show' }, over), CO);
+    eq(add({ points: '5' }).row.points, 5);
+    eq(add({ points: '-5' }).row.points, -5);
   });
   it('refuses zero, which moves nothing', () => {
-    ok(cleanLedger({ person: who, kind: 'adjust', points: '0' }, CO).errors);
+    ok(cleanLedger({ person: who, kind: 'adjust', points: '0', note: 'x' }, CO).errors);
+  });
+  // A spend is explained by its own fields -- the day, the count, who
+  // handed the samples over. Boxy Bucks arriving on a balance have none
+  // of that, so the reason is the only record of why.
+  it('will not add Boxy Bucks with nothing said about them', () => {
+    const out = cleanLedger({ person: who, kind: 'adjust', points: '5' }, CO);
+    ok(out.errors && out.errors.join(' ').includes('What are these for?'));
+    ok(!cleanLedger({ person: who, kind: 'adjust', points: '5',
+                      note: 'Ran the Asbury booth' }, CO).errors);
   });
   it('refuses a kind it does not know', () => {
     ok(cleanLedger({ person: who, kind: 'earn', points: '5' }, CO).errors);
@@ -2344,7 +2355,8 @@ describe('spending and corrections', () => {
   });
   // A correction is bookkeeping, not a handover, so it asks for neither.
   it('asks a correction for neither a name nor a day', () => {
-    const r = cleanLedger({ person: who, kind: 'adjust', points: '5' }, CO).row;
+    const r = cleanLedger({ person: who, kind: 'adjust', points: '5',
+                            note: 'Trade show' }, CO).row;
     eq([r.checkedBy, r.onDate], ['', '']);
   });
 });

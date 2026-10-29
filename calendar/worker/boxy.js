@@ -185,6 +185,11 @@ export function cleanLedger(input, checkout) {
   }
 
   const note = String((input && input.note) || '').trim().slice(0, 200);
+  // Required on an adjustment, offered on a spend. A spend is explained by
+  // its own fields -- the day, the count, who handed the samples over --
+  // but Boxy Bucks appearing on a balance with nothing said about them is
+  // exactly the entry nobody can account for three months later.
+  if (kind === 'adjust' && !note) errors.push('What are these for?');
 
   if (errors.length) return { errors };
   return {

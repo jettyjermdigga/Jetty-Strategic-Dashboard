@@ -119,6 +119,13 @@ const BOXY_STAFF = [
   { k: 'katie-hehl', n: 'Katie Hehl', d: 'Marketing' },
   { k: 'joe-mangino', n: 'Joe Mangino', d: 'Sales (Mobile)' },
 ];
+// What each person has earned and spent, moved by the ledger stub so a
+// balance on screen is the one the posts add up to.
+const BOXY_BAL = [
+  { k: 'troy-taylor', earned: 12, spent: 4 },
+  { k: 'katie-hehl', earned: 7, spent: 0 },
+  { k: 'joe-mangino', earned: 0, spent: 0 },
+];
 let ATT = [
   { person: 'troy-taylor', name: 'Troy Taylor', role: 'worked', points: 3, note: '' },
 ];
@@ -227,19 +234,36 @@ await page.route('**/*', async (route) => {
   if (p === '/api/boxy/ledger' && method === 'POST') {
     const b = req.postDataJSON();
     seen.spent.push(b);
-    if (!b.checkedBy) {
+    // The same two rules the worker applies: a spend says who handed the
+    // samples over, an adjustment says what the Boxy Bucks are for.
+    if (b.kind === 'spend' && !b.checkedBy) {
       return route.fulfill({ status: 400,
         json: { errors: ['Who checked them out?'] } });
     }
+    if (b.kind === 'adjust' && !b.note) {
+      return route.fulfill({ status: 400, json: { errors: ['What are these for?'] } });
+    }
+    // A spend is entered positive and stored as a debit; an adjustment is
+    // signed however it was typed.
+    const n = Number(b.points);
+    BOXY_BAL.forEach((r) => {
+      if (r.k !== b.person) return;
+      if (b.kind === 'spend') r.spent += Math.abs(n); else r.earned += n;
+    });
     return route.fulfill({ json: {
       board: BOXY_STAFF.map((p2, i) => ({
         k: p2.k, name: p2.n, dept: p2.d, division: 'BRAND', loc: '176 E Bay',
-        earned: [12, 7, 0][i], spent: [4 + (i ? 0 : Number(b.points)), 0, 0][i],
-        balance: [8 - (i ? 0 : Number(b.points)), 7, 0][i], events: [3, 2, 0][i],
+        earned: BOXY_BAL[i].earned, spent: BOXY_BAL[i].spent,
+        balance: BOXY_BAL[i].earned - BOXY_BAL[i].spent, events: [3, 2, 0][i],
         byRole: { worked: [2, 1, 0][i], volunteered: [1, 0, 0][i], attended: [0, 1, 0][i] },
       })),
-      standings: { people: 3, onTheBoard: 2, earned: 19,
-                   spent: 4 + Number(b.points), outstanding: 15 - Number(b.points) },
+      standings: {
+        people: 3,
+        onTheBoard: 2,
+        earned: BOXY_BAL.reduce((t, r) => t + r.earned, 0),
+        spent: BOXY_BAL.reduce((t, r) => t + r.spent, 0),
+        outstanding: BOXY_BAL.reduce((t, r) => t + r.earned - r.spent, 0),
+      },
     } });
   }
   if (/\/attendance$/.test(p)) {
@@ -1486,6 +1510,44 @@ await t('does not spring back open when the filter is cleared', async () => {
   return whileHidden === 0 && (await page.locator('.bx-drow').count()) === 0;
 });
 
+// The list arrives ordered by what people earned and the rank column
+// counts that. Sorting changes what is on screen, not the standings.
+console.log('');
+console.log('ordering the board');
+await t('leads with the biggest balance', async () => {
+  const names = await page.locator('.bx-name').allTextContents();
+  return names[0] === 'Troy Taylor' && names[1] === 'Katie Hehl';
+});
+await t('goes alphabetical when asked', async () => {
+  await page.selectOption('#sort', 'name');
+  const names = await page.locator('.bx-name').allTextContents();
+  return names[0] === 'Katie Hehl' && names[1] === 'Troy Taylor';
+});
+// "3rd" has to mean the same thing whatever is on screen.
+await t('leaves the standings where they are', async () => {
+  const ranks = await page.locator('.bx-rank').allTextContents();
+  const names = await page.locator('.bx-name').allTextContents();
+  return names[0] === 'Katie Hehl' && ranks[0] === '2'
+    && names[1] === 'Troy Taylor' && ranks[1] === '1';
+});
+await t('still searches while sorted by name', async () => {
+  await page.fill('#q', 'katie');
+  const names = await page.locator('.bx-name').allTextContents();
+  await page.fill('#q', '');
+  return names.length === 1 && names[0] === 'Katie Hehl';
+});
+// Searching a department rather than a person is how you find the three
+// people on Mobile without knowing their names.
+await t('searches the department too, not only the name', async () => {
+  await page.selectOption('#filter', 'all');
+  await page.fill('#q', 'mobile');
+  const names = await page.locator('.bx-name').allTextContents();
+  await page.fill('#q', '');
+  await page.selectOption('#filter', 'earning');
+  await page.selectOption('#sort', 'balance');
+  return names.length === 1 && names[0] === 'Joe Mangino';
+});
+
 // A spend used to be two window.prompt boxes. One Boxy Buck is one free
 // sample, so a spend is stock going out the door, and a checkout needs the
 // day, the count and the name of whoever handed it over.
@@ -1539,8 +1601,69 @@ await t('sends all four fields', async () => {
     && b.onDate === '2026-10-27' && b.checkedBy === 'Cory Higgins'
     && b.note === 'Two tees and a hat';
 });
+// By their row, not by the first one: spending drops them down a list
+// ordered by balance, which is the whole point of that ordering.
 await t('moves the balance on the board without a reload', async () =>
-  (await page.locator('.bx-t tbody tr').first().locator('.bx-bal').textContent()) === '5');
+  (await page.locator('.bx-t tbody tr:has([data-open="troy-taylor"])')
+    .locator('.bx-bal').textContent()) === '5');
+// Adding Boxy Bucks by hand: an event the calendar never saw, a prize, a
+// correction upwards.
+console.log('');
+console.log('adding Boxy Bucks');
+await t('offers an Add alongside the Spend on every row', async () =>
+  (await page.locator('.bx-add').count())
+    === (await page.locator('.bx-give').count()));
+await t('asks for an amount and a reason, and nothing else', async () => {
+  await page.locator('.bx-t tbody tr:has([data-open="katie-hehl"]) .bx-add').click();
+  await page.waitForSelector('.bx-f-add');
+  const names = await page.locator('.bx-f-add [name]').evaluateAll(
+    (els) => els.map((e) => e.name));
+  return names.join(',') === 'n,note';
+});
+// Whoever is signed in is what gets stored, so a box to type a name in
+// would only be a box to type the wrong name in.
+await t('shows who it will be entered by without letting it be typed', async () => {
+  const txt = await page.locator('.bx-f-fixed').textContent();
+  return txt === 'jeremy@jettylife.com'
+    && (await page.locator('.bx-f-add input[name="by"]').count()) === 0;
+});
+await t('sends it as an adjustment, with the reason', async () => {
+  await page.fill('.bx-f-add [name="n"]', '4');
+  await page.fill('.bx-f-add [name="note"]', 'Ran the Asbury booth');
+  await page.locator('.bx-f-add .bx-f-save').click();
+  await page.waitForFunction(() => !document.querySelector('.bx-f'));
+  const b = seen.spent[seen.spent.length - 1];
+  return b.person === 'katie-hehl' && b.kind === 'adjust' && b.points === '4'
+    && b.note === 'Ran the Asbury booth' && !b.checkedBy;
+});
+// The refusal belongs beside the form that caused it, same as a spend.
+await t('says what is missing without closing the form', async () => {
+  await page.locator('.bx-t tbody tr:has([data-open="katie-hehl"]) .bx-add').click();
+  await page.waitForSelector('.bx-f-add');
+  await page.fill('.bx-f-add [name="n"]', '2');
+  await page.locator('.bx-f-add .bx-f-save').click();
+  await page.waitForSelector('.bx-f-err');
+  const err = await page.locator('.bx-f-err').textContent();
+  await page.locator('.bx-f-add [data-cancel]').click();
+  await page.waitForFunction(() => !document.querySelector('.bx-f'));
+  return err === 'What are these for?';
+});
+// A spend and an add on one row would be two ways to move the same
+// balance, both half-written.
+await t('swaps the form over rather than opening a second one', async () => {
+  await page.locator('.bx-t tbody tr:has([data-open="katie-hehl"]) .bx-add').click();
+  await page.waitForSelector('.bx-f-add');
+  await page.locator('.bx-t tbody tr:has([data-open="katie-hehl"]) .bx-give').click();
+  await page.waitForFunction(() => !document.querySelector('.bx-f-add'));
+  return (await page.locator('.bx-f').count()) === 1
+    && (await page.locator('.bx-f [name="by"]').count()) === 1;
+});
+await t('closes on the same button a second time', async () => {
+  await page.locator('.bx-t tbody tr:has([data-open="katie-hehl"]) .bx-give').click();
+  await page.waitForFunction(() => !document.querySelector('.bx-f'));
+  return (await page.locator('.bx-f').count()) === 0;
+});
+
 // It used to say "That did not save" in the notice strip above the table,
 // a long way from the form that failed.
 await t('puts a refusal next to the form, and keeps the form open', async () => {

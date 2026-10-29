@@ -11,15 +11,19 @@
 
   var D = null;
   var show = 'earning';
+  var sort = 'balance';
   var q = '';
   // Whose detail is open, and what we have already fetched. Cached so
   // opening and closing the same person does not go back to the server.
   var open = '';
   var detail = {};
-  // Whose spend form is open, and what has been typed into it. Kept out
-  // here rather than read off the inputs, because every render rebuilds
-  // the table and would otherwise throw away a half-filled form.
-  var spendFor = '';
+  // Whose form is open, which of the two it is, and what has been typed
+  // into it. Kept out here rather than read off the inputs, because every
+  // render rebuilds the table and would otherwise throw away a half-filled
+  // form. One at a time: a spend and an add on the same row would be two
+  // ways to change the same balance, both half-written.
+  var formFor = '';
+  var formKind = 'spend';
   var form = {};
 
   var SIGNED_OUT = 'Your sign-in has expired. Reload the page.';
@@ -65,7 +69,23 @@
         return (r.name + ' ' + r.dept + ' ' + r.loc).toLowerCase().indexOf(needle) >= 0;
       });
     }
-    return want;
+    // Sorting a copy, which filter() has already given us. The board
+    // arrives ordered by what people earned, and that order is what the
+    // rank column counts -- so this changes what is on screen and leaves
+    // the standings alone.
+    return want.sort(sort === 'name' ? byName : byBalance);
+  }
+
+  function byName(a, b) {
+    var x = String(a.name || '').toLowerCase();
+    var y = String(b.name || '').toLowerCase();
+    return x < y ? -1 : (x > y ? 1 : 0);
+  }
+
+  // Most to least. Earned breaks a tie before the name does, so two people
+  // level on balance sit in the order the board already had them.
+  function byBalance(a, b) {
+    return (b.balance - a.balance) || (b.earned - a.earned) || byName(a, b);
   }
 
   function when(iso) { return String(iso || '').slice(0, 10); }
@@ -149,6 +169,40 @@
   // three things a checkout actually has: how many went out, the day they
   // went, and who handed them over.
   function formHtml(k, name, span) {
+    return formKind === 'add' ? addHtml(k, name, span) : spendHtml(k, name, span);
+  }
+
+  // Putting Boxy Bucks on somebody by hand -- an event the calendar never
+  // saw, a prize, a correction upwards. The amount and the reason are both
+  // required: money appearing on a balance with nothing said about it is
+  // the thing nobody can explain three months later.
+  //
+  // Who entered it is not a field. It is whoever is signed in, which is
+  // what gets stored, and a box to type a name in is a box to type the
+  // wrong name in.
+  function addHtml(k, name, span) {
+    var f = form[k] || {};
+    var bal = ((D.board || []).filter(function (r) { return r.k === k; })[0] || {}).balance;
+    return '<tr class="bx-frow"><td colspan="' + span + '">'
+      + '<form class="bx-f bx-f-add" data-for="' + esc(k) + '">'
+      + '<span class="bx-f-who">' + esc(name)
+      + '<span class="bx-f-bal">' + (bal == null ? '' : bal + ' now') + '</span></span>'
+      + '<label class="bx-f-l">Boxy Bucks to add'
+      + '<input class="bx-f-i bx-f-n" type="number" name="n" min="1" step="1" '
+      + 'inputmode="numeric" value="' + esc(f.n == null ? '1' : f.n) + '"></label>'
+      + '<label class="bx-f-l bx-f-grow">Reason'
+      + '<input class="bx-f-i" type="text" name="note" maxlength="200" '
+      + 'value="' + esc(f.note || '') + '" placeholder="What they are for"></label>'
+      + '<span class="bx-f-l bx-f-by">Entered by'
+      + '<span class="bx-f-i bx-f-fixed">' + esc(D.you || 'you') + '</span></span>'
+      + '<span class="bx-f-go">'
+      + '<button class="bx-f-save" type="submit">Add</button>'
+      + '<button class="bx-f-x" type="button" data-cancel="1">Cancel</button></span>'
+      + (f.error ? '<span class="bx-f-err">' + esc(f.error) + '</span>' : '')
+      + '</form></td></tr>';
+  }
+
+  function spendHtml(k, name, span) {
     var f = form[k] || {};
     var people = D.checkout || [];
     var bal = ((D.board || []).filter(function (r) { return r.k === k; })[0] || {}).balance;
@@ -215,9 +269,12 @@
             + '<td class="bx-n' + (r.earned ? '' : ' bx-zero') + '">' + r.earned + '</td>'
             + '<td class="bx-n' + (r.spent ? '' : ' bx-zero') + '">' + r.spent + '</td>'
             + '<td class="bx-bal' + (r.balance ? '' : ' bx-zero') + '">' + r.balance + '</td>'
-            + '<td><button class="bx-give" type="button" data-person="' + esc(r.k) + '"'
-            + ' data-name="' + esc(r.name) + '">Spend</button></td></tr>'
-            + (spendFor === r.k
+            + '<td class="bx-acts">'
+            + '<button class="bx-give" type="button" data-person="' + esc(r.k) + '"'
+            + ' data-name="' + esc(r.name) + '">Spend</button>'
+            + '<button class="bx-add" type="button" data-person="' + esc(r.k) + '"'
+            + ' data-name="' + esc(r.name) + '">Add $$$</button></td></tr>'
+            + (formFor === r.k
                 ? formHtml(r.k, r.name, roles.length + 7) : '')
             + (open === r.k
                 ? '<tr class="bx-drow"><td colspan="' + (roles.length + 7) + '">'
@@ -259,8 +316,9 @@
 
   // Opening the form on somebody the current view is hiding would put it
   // nowhere, so the view gives way to the form rather than the other way round.
-  function openForm(k) {
-    spendFor = k;
+  function openForm(k, kind) {
+    formFor = k;
+    formKind = kind || 'spend';
     var visible = rows().some(function (r) { return r.k === k; });
     if (!visible) {
       show = 'all'; q = '';
@@ -274,17 +332,19 @@
 
   function record(personKey) {
     var f = form[personKey] || {};
+    var body = formKind === 'add'
+      ? { person: personKey, kind: 'adjust', points: f.n,
+          note: (f.note || '').trim() }
+      : { person: personKey, kind: 'spend', points: f.n,
+          onDate: f.on == null ? (D.today || '') : f.on,
+          checkedBy: f.by, note: (f.note || '').trim() };
     api('/api/boxy/ledger', {
       method: 'POST',
-      body: JSON.stringify({
-        person: personKey, kind: 'spend', points: f.n,
-        onDate: f.on == null ? (D.today || '') : f.on,
-        checkedBy: f.by, note: (f.note || '').trim(),
-      }),
+      body: JSON.stringify(body),
     }).then(function (r) {
       D.board = r.board;
       D.standings = r.standings;
-      spendFor = '';
+      formFor = '';
       delete form[personKey];
       // A balance that just moved is worth re-reading, not re-showing stale.
       delete detail[personKey];
@@ -300,15 +360,19 @@
 
   function bind() {
     $('#t').addEventListener('click', function (e) {
-      var b = e.target.closest('.bx-give');
+      var b = e.target.closest('.bx-give') || e.target.closest('.bx-add');
       if (b) {
         var pk = b.dataset.person;
-        if (spendFor === pk) { spendFor = ''; render(); return; }
-        openForm(pk);
+        var kind = b.classList.contains('bx-add') ? 'add' : 'spend';
+        // The same button again closes it; the other one swaps the form
+        // over rather than leaving the first one open underneath.
+        if (formFor === pk && formKind === kind) { formFor = ''; render(); return; }
+        delete form[pk];
+        openForm(pk, kind);
         return;
       }
       if (e.target.closest('[data-cancel]')) {
-        spendFor = ''; render(); return;
+        formFor = ''; render(); return;
       }
       var o = e.target.closest('.bx-open');
       if (!o) return;
@@ -357,10 +421,13 @@
     // Filtering or searching away the open person would leave their detail
     // attached to nothing.
     $('#filter').addEventListener('change', function (e) {
-      show = e.target.value; open = ''; spendFor = ''; render();
+      show = e.target.value; open = ''; formFor = ''; render();
+    });
+    $('#sort').addEventListener('change', function (e) {
+      sort = e.target.value; open = ''; formFor = ''; render();
     });
     $('#q').addEventListener('input', function (e) {
-      q = e.target.value.trim(); open = ''; spendFor = ''; render();
+      q = e.target.value.trim(); open = ''; formFor = ''; render();
     });
   }
 
