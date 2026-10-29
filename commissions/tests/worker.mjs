@@ -94,13 +94,13 @@ const t = async (name, fn) => {
 };
 const rows = (sql, ...b) => sqlite.prepare(sql).all(...b);
 
-// ── Xero, stubbed at the network ────────────────────────────────────────
+// ── Xero, stubbed at the network ────────────────────────
 //
 // globalThis.fetch is what the Worker reaches for, so that is what is
 // replaced. Everything below is Xero's real response shape, taken from its
 // OpenAPI spec -- including the Microsoft dates, which are the thing most
 // likely to be got wrong.
-const xero = { calls: [], refresh: 'refresh-1', issued: 0, invoicePages: {}, tokenStatus: 200 };
+const xero = { calls: [], issued: 0, invoicePages: {}, tokenStatus: 200, orgs: null };
 const msdate = (iso) => '/Date(' + Date.parse(iso) + '+0000)/';
 const invoice = (n, over) => Object.assign({
   Type: 'ACCREC', InvoiceID: 'inv-' + n, InvoiceNumber: String(22000 + n), Total: 610,
@@ -122,16 +122,21 @@ globalThis.fetch = async (url, opts) => {
   xero.calls.push({ url: u, opts });
   if (u.startsWith('https://identity.xero.com/connect/token')) {
     if (xero.tokenStatus !== 200) {
-      return reply(xero.tokenStatus, { error: 'invalid_grant',
-                                       error_description: 'refresh token expired' });
+      return reply(xero.tokenStatus, { error: 'invalid_scope',
+                                       error_description: 'Invalid scope' });
     }
     xero.issued += 1;
-    // Xero rotates the refresh token on every refresh and kills the old one.
-    xero.refresh = 'refresh-' + (xero.issued + 1);
-    return reply(200, { access_token: 'access-' + xero.issued, refresh_token: xero.refresh });
+    return reply(200, { access_token: 'access-' + xero.issued, expires_in: 1800 });
   }
   if (u === 'https://api.xero.com/connections') {
-    return reply(200, [{ tenantId: 'tenant-1', tenantName: 'Jetty Brand' }]);
+    return reply(200, xero.orgs === null
+      ? [{ tenantId: 'tenant-1', tenantName: 'Jetty Brand' }] : xero.orgs);
+  }
+  if (u.startsWith('https://api.xero.com/api.xro/2.0/Accounts')) {
+    return reply(200, { Accounts: [
+      { Code: '200', Name: 'Wholesale Revenue', Class: 'REVENUE', Status: 'ACTIVE' },
+      { Code: '090', Name: 'Bank', Class: 'ASSET', Status: 'ACTIVE' },
+    ] });
   }
   if (u.startsWith('https://api.xero.com/api.xro/2.0/Invoices')) {
     const page = Number(new URL(u).searchParams.get('page'));
@@ -142,58 +147,76 @@ globalThis.fetch = async (url, opts) => {
 
 const XENV = { ...ENV, XERO_CLIENT_ID: 'cid', XERO_CLIENT_SECRET: 'csecret',
                XERO_ACCOUNTS: '200' };
-const xcall = async (method, p, body) => {
+const xcall = async (method, p, body, env) => {
   const res = await worker.fetch(new Request('https://cm.test' + p, {
     method,
     headers: { 'content-type': 'application/json',
                'Cf-Access-Authenticated-User-Email': 'amy@jettylife.com' },
     body: body === undefined ? undefined : JSON.stringify(body),
-  }), XENV, { waitUntil() {} });
+  }), env || XENV, { waitUntil() {} });
   const text = await res.text();
   let json = null;
   try { json = JSON.parse(text); } catch (e) { /* not json */ }
-  return { status: res.status, body: json, text, headers: res.headers };
+  return { status: res.status, body: json, text };
 };
 
-console.log('connecting to Xero');
+console.log('talking to Xero');
 
-await t('says it is not connected yet', async () => {
+await t('says nothing has answered yet', async () => {
   const r = await xcall('GET', '/api/xero/status');
   return r.status === 200 && r.body.connected === false && r.body.configured === true;
 });
-// Without offline_access the link dies in half an hour, on a Sunday.
-await t('sends people to Xero asking for offline access', async () => {
-  const r = await xcall('GET', '/api/xero/connect');
-  const go = new URL(r.body.go);
-  return go.origin + go.pathname === 'https://login.xero.com/identity/connect/authorize'
-    && go.searchParams.get('scope').includes('offline_access')
-    && go.searchParams.get('redirect_uri') === 'https://cm.test/api/xero/callback'
-    && (go.searchParams.get('state') || '').length > 20;
+// A Custom Connection has no sign-in to send anybody to.
+await t('asks for a token with the Custom Connection scopes', async () => {
+  const r = await xcall('POST', '/api/xero/connect', {});
+  const tok = xero.calls.filter((c) => c.url.includes('/connect/token')).pop();
+  const sent = new URLSearchParams(tok.opts.body);
+  return r.status === 200 && r.body.tenant === 'Jetty Brand'
+    && sent.get('grant_type') === 'client_credentials'
+    && sent.get('scope').includes('accounting.invoices.read')
+    && sent.get('scope').includes('accounting.payments.read')
+    && !sent.get('scope').includes('offline_access');
 });
-await t('refuses a callback whose state it did not issue', async () =>
-  (await xcall('GET', '/api/xero/callback?code=abc&state=not-mine')).status === 400);
-await t('refuses a callback with no code at all', async () => {
-  const state = new URL((await xcall('GET', '/api/xero/connect')).body.go)
-    .searchParams.get('state');
-  return (await xcall('GET', '/api/xero/callback?state=' + state)).status === 400;
+await t('sends the id and secret as Basic auth, not in the body', async () => {
+  const tok = xero.calls.filter((c) => c.url.includes('/connect/token')).pop();
+  const sent = new URLSearchParams(tok.opts.body);
+  return tok.opts.headers.authorization === 'Basic ' + btoa('cid:csecret')
+    && !sent.get('client_secret');
 });
-await t('stores the organisation and the refresh token', async () => {
-  const state = new URL((await xcall('GET', '/api/xero/connect')).body.go)
-    .searchParams.get('state');
-  const r = await xcall('GET', '/api/xero/callback?code=abc&state=' + state);
+await t('remembers which organisation answered', async () => {
   const row = rows('SELECT * FROM xero WHERE id = 1')[0];
-  return r.status === 302 && row.tenant_id === 'tenant-1'
-    && row.tenant_name === 'Jetty Brand' && row.refresh_token
-    && row.connected_by === 'amy@jettylife.com';
+  const r = await xcall('GET', '/api/xero/status');
+  return row.tenant_id === 'tenant-1' && row.tenant_name === 'Jetty Brand'
+    && r.body.connected === true;
 });
-// One-time: a callback arriving twice is not the one we sent somebody off
-// with.
-await t('will not take the same state twice', async () => {
-  const state = new URL((await xcall('GET', '/api/xero/connect')).body.go)
-    .searchParams.get('state');
-  const first = await xcall('GET', '/api/xero/callback?code=abc&state=' + state);
-  const again = await xcall('GET', '/api/xero/callback?code=abc&state=' + state);
-  return first.status === 302 && again.status === 400;
+// There is nothing to store, so nothing to go stale or be stolen.
+await t('keeps no credential in the database', async () => {
+  const row = rows('SELECT * FROM xero WHERE id = 1')[0];
+  return !row.refresh_token && !row.oauth_state;
+});
+// invalid_scope is what sent us here in the first place.
+await t('says what Xero refused rather than swallowing it', async () => {
+  xero.tokenStatus = 400;
+  const r = await xcall('POST', '/api/xero/connect', {});
+  xero.tokenStatus = 200;
+  return r.status === 500 && /Invalid scope/.test(r.text);
+});
+await t('refuses outright when the credentials are not both set', async () => {
+  const r = await xcall('POST', '/api/xero/connect', {}, { ...XENV, XERO_CLIENT_SECRET: '' });
+  return r.status === 500 && /XERO_CLIENT_SECRET/.test(r.text);
+});
+// A Custom Connection that is not attached to an organisation would
+// otherwise pull nothing and say it worked.
+await t('refuses when the connection reaches no organisation', async () => {
+  xero.orgs = [];
+  const r = await xcall('POST', '/api/xero/connect', {});
+  xero.orgs = null;
+  return r.status === 500 && /no organisation/.test(r.text);
+});
+await t('reads the chart of accounts for the wholesale codes', async () => {
+  const r = await xcall('GET', '/api/xero/accounts');
+  return r.status === 200 && r.body.accounts.length === 1
+    && r.body.accounts[0].code === '200' && r.body.chosen.includes('200');
 });
 
 console.log('');
@@ -214,13 +237,10 @@ await t('writes nothing the second time the same window is pulled', async () => 
   return r.body.made === 0 && r.body.skipped === 3
     && rows("SELECT id FROM payments WHERE source = 'xero'").length === 3;
 });
-// Xero kills the old refresh token the moment it issues a new one, so a
-// stored token that is one behind means the next run cannot connect at all.
-await t('stores the rotated refresh token every time', async () => {
-  const before = rows('SELECT refresh_token FROM xero WHERE id = 1')[0].refresh_token;
+await t('gets a fresh token for every run', async () => {
+  const before = xero.issued;
   await xcall('POST', '/api/xero/pull', {});
-  const after = rows('SELECT refresh_token FROM xero WHERE id = 1')[0].refresh_token;
-  return before !== after && after === xero.refresh;
+  return xero.issued > before;
 });
 await t('ignores invoices that are not wholesale', async () => {
   xero.invoicePages = { 1: [
@@ -235,13 +255,8 @@ await t('ignores invoices that are not wholesale', async () => {
 });
 // Empty config must import nothing rather than everything.
 await t('refuses to pull when no wholesale account is configured', async () => {
-  const res = await worker.fetch(new Request('https://cm.test/api/xero/pull', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json',
-               'Cf-Access-Authenticated-User-Email': 'amy@jettylife.com' },
-    body: '{}',
-  }), { ...XENV, XERO_ACCOUNTS: '' }, { waitUntil() {} });
-  return res.status === 500 && /XERO_ACCOUNTS/.test(await res.text());
+  const r = await xcall('POST', '/api/xero/pull', {}, { ...XENV, XERO_ACCOUNTS: '' });
+  return r.status === 500 && /XERO_ACCOUNTS/.test(r.text);
 });
 await t('moves the watermark on so the next run asks for less', async () => {
   const w = rows('SELECT watermark FROM xero WHERE id = 1')[0].watermark;
@@ -257,7 +272,7 @@ await t('records why a pull failed rather than throwing it away', async () => {
   xero.tokenStatus = 400;
   const r = await xcall('POST', '/api/xero/pull', {});
   xero.tokenStatus = 200;
-  return r.status === 500 && /refresh token expired/.test(r.text);
+  return r.status === 500 && /Invalid scope/.test(r.text);
 });
 
 console.log('');

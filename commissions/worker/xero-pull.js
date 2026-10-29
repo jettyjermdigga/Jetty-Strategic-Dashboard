@@ -6,43 +6,27 @@
 // and without anybody's real invoices.
 
 import {
-  XERO_TOKEN, XERO_CONNECTIONS, XERO_API, pageQuery, sinceHeader, rowsFromPage,
+  XERO_TOKEN, XERO_CONNECTIONS, XERO_API, XERO_SCOPES,
+  pageQuery, sinceHeader, rowsFromPage,
 } from './xero.js';
 
 /**
- * Trade the stored refresh token for an access token.
+ * A token for the Custom Connection.
  *
- * Xero rotates the refresh token on every single refresh: the one just used
- * is dead, and the new one comes back in this response. If it is not written
- * back the connection works exactly once and then fails silently until
- * somebody reconnects by hand, so the caller is handed it and MUST store it.
+ * client_credentials: the app IS the credential, so there is no user to
+ * sign in, no authorization code to exchange and no refresh token to store
+ * or rotate. A token lasts about half an hour and the next run just asks
+ * for another one, which removes the whole class of failure that a rotating
+ * refresh token brings -- including the one where a connection unused for
+ * sixty days quietly dies.
  */
-export async function refreshAccess({ refresh, clientId, clientSecret, post }) {
-  if (!refresh) throw new Error('Xero is not connected yet.');
-  const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refresh });
-  const res = await post(XERO_TOKEN, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-      authorization: 'Basic ' + btoa(clientId + ':' + clientSecret),
-    },
-    body: body.toString(),
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok || !json || !json.access_token) {
-    // A refresh token that has expired (60 days unused) or been revoked
-    // comes back here. Saying which is the difference between reconnecting
-    // and hunting a bug.
-    const why = (json && (json.error_description || json.error)) || ('HTTP ' + res.status);
-    throw new Error('Xero refused the refresh: ' + why);
+export async function accessToken({ clientId, clientSecret, post }) {
+  if (!clientId || !clientSecret) {
+    throw new Error('XERO_CLIENT_ID and the XERO_CLIENT_SECRET secret are not both set.');
   }
-  return { access: json.access_token, refresh: json.refresh_token || refresh };
-}
-
-/** Swap the authorization code for the first pair of tokens. */
-export async function exchangeCode({ code, redirect, clientId, clientSecret, post }) {
   const body = new URLSearchParams({
-    grant_type: 'authorization_code', code, redirect_uri: redirect,
+    grant_type: 'client_credentials',
+    scope: XERO_SCOPES,
   });
   const res = await post(XERO_TOKEN, {
     method: 'POST',
@@ -54,20 +38,18 @@ export async function exchangeCode({ code, redirect, clientId, clientSecret, pos
   });
   const json = await res.json().catch(() => null);
   if (!res.ok || !json || !json.access_token) {
+    // invalid_client is a wrong id or secret; invalid_scope is a scope the
+    // Custom Connection was not given. Saying which is the difference
+    // between fixing it in Cloudflare and fixing it in Xero.
     const why = (json && (json.error_description || json.error)) || ('HTTP ' + res.status);
-    throw new Error('Xero refused the code: ' + why);
+    throw new Error('Xero refused the credentials: ' + why);
   }
-  if (!json.refresh_token) {
-    // Without offline_access there is no refresh token and the link dies in
-    // half an hour. Better to refuse the connection than to store one that
-    // will stop working on its own.
-    throw new Error('Xero sent no refresh token. The app needs the offline_access scope.');
-  }
-  return { access: json.access_token, refresh: json.refresh_token };
+  return { access: json.access_token };
 }
 
-/** Which Xero organisation this is. A token can reach several; the one we
- *  want is named rather than assumed to be the only one. */
+/** Which Xero organisation this is. A Custom Connection reaches exactly
+ *  one, but the tenant id still has to come from somewhere and this is
+ *  where Xero keeps it. */
 export async function tenants({ access, get }) {
   const res = await get(XERO_CONNECTIONS, {
     headers: { authorization: 'Bearer ' + access, accept: 'application/json' },

@@ -13,7 +13,7 @@ import {
 import { cleanIncoming, cleanDate } from '../worker/ingest.js';
 import {
   msDate, accountCodes, isWholesale, rowsFromInvoice, rowsFromPage,
-  pageQuery, sinceHeader, SALES, XERO_SCOPES, revenueAccounts, authorizeUrl,
+  pageQuery, sinceHeader, SALES, XERO_SCOPES, revenueAccounts,
 } from '../worker/xero.js';
 import { sqlStatements } from '../worker/sql.js';
 import { buildWhere, monthRange, cleanYear, cleanLimit, STATUS_KEYS } from '../worker/filters.js';
@@ -613,25 +613,27 @@ describe('everything from Xero goes through the feed gate', () => {
       ok(!cols.includes("'" + banned + "'"), 'a pull can write ' + banned);
     }
   });
-  // The old one is dead the instant the new one is issued, so a pull that
-  // throws halfway must not take the only working credential with it.
-  it('stores the rotated refresh token before it pulls anything', () => {
-    const stored = body.indexOf('SET refresh_token = ?');
-    const pulled = body.indexOf('await pullRows(');
-    ok(stored > 0 && pulled > 0, 'one of the two is missing');
-    ok(stored < pulled, 'the token is only stored after the pull');
+  // Nothing is stored to be stolen or to go stale: a client_credentials
+  // token lasts about half an hour and the next run asks for another.
+  it('keeps no Xero credential in the database', () => {
+    ok(!/SET refresh_token = \?/.test(idx), 'a refresh token is still being stored');
+    ok(!/refreshAccess|exchangeCode/.test(idx), 'the sign-in flow is still wired in');
   });
-  // And everywhere else that refreshes, not just the pull. Xero kills the
-  // old token the instant it issues a new one, so any refresh that is not
-  // written back leaves the connection working exactly once.
-  it('stores it everywhere it refreshes, not only in the pull', () => {
-    const sites = [...idx.matchAll(/await refreshAccess\(\{/g)].map((m) => m.index);
-    ok(sites.length >= 2, 'only ' + sites.length + ' refresh found');
-    for (const at of sites) {
-      const after = idx.slice(at, at + 700);
-      ok(/UPDATE xero SET refresh_token = \?/.test(after),
-         'a refresh at ' + at + ' never stores the token it was given');
-    }
+  // One place that gets a token and the organisation, so the pull and the
+  // chart of accounts cannot drift into asking for them differently.
+  it('gets its token and its organisation in one place', () => {
+    ok(/async function xeroSession\(env, db\)/.test(idx), 'there is no session helper');
+    eq([...idx.matchAll(/await accessToken\(\{/g)].length, 1,
+       'a token is asked for in more than one place');
+    ok([...idx.matchAll(/await xeroSession\(env, db\)/g)].length >= 3,
+       'the session helper is not used by every caller');
+  });
+  // A cached tenant id that has gone stale is a pull that writes nothing
+  // and says it worked.
+  it('reads the organisation each time rather than trusting a stored one', () => {
+    const at = idx.indexOf('async function xeroSession');
+    const fn = idx.slice(at, idx.indexOf('\nconst PAYMENT_COLS', at));
+    ok(/await tenants\(\{/.test(fn), 'the tenant id is never read from Xero');
   });
   // Moving it after a run that stopped on a rate limit would skip whatever
   // was left behind.
@@ -691,41 +693,29 @@ describe('what the pull asks Xero for', () => {
     eq(sinceHeader(null), null);
     eq(sinceHeader('not a date'), null);
   });
-  // Without offline_access there is no refresh token and the link dies in
-  // half an hour, on a Sunday, silently.
-  it('asks for offline access and nothing it does not need', () => {
+  // A Custom Connection is machine-to-machine: one organisation, no user
+  // and no consent screen. Asking for the user-facing scopes is exactly
+  // what Xero was refusing with invalid_scope.
+  it("asks for a Custom Connection's scopes, not a sign-in's", () => {
     const scopes = XERO_SCOPES.split(' ');
-    ok(scopes.includes('offline_access'), 'the connection would expire in 30 minutes');
-    ok(scopes.includes('accounting.transactions.read'));
-    ok(!scopes.some((x) => x === 'accounting.transactions' || x === 'accounting.settings'),
-       'it asks for write access to the books');
-  });
-  // Xero refuses the whole sign-in with invalid_scope without these, which
-  // is what it did. Every example in Xero's own SDK asks for all three.
-  it('asks for the identity scopes Xero insists on', () => {
-    const scopes = XERO_SCOPES.split(' ');
-    for (const s of ['openid', 'profile', 'email']) {
-      ok(scopes.includes(s), 'Xero will answer invalid_scope without ' + s);
+    for (const x of ['openid', 'profile', 'email', 'offline_access']) {
+      ok(!scopes.includes(x), x + ' is not a scope a Custom Connection has');
     }
+    ok(!scopes.includes('accounting.transactions.read'),
+       'the umbrella scope exists only for the user-facing flow');
   });
-  it('sends people to Xero with everything the sign-in needs', () => {
-    const u = new URL(authorizeUrl({
-      clientId: 'CID', redirect: 'https://x.test/api/xero/callback', state: 'st',
-    }));
-    eq(u.origin + u.pathname, 'https://login.xero.com/identity/connect/authorize');
-    eq(u.searchParams.get('response_type'), 'code');
-    eq(u.searchParams.get('client_id'), 'CID');
-    eq(u.searchParams.get('redirect_uri'), 'https://x.test/api/xero/callback');
-    eq(u.searchParams.get('state'), 'st');
-    eq(u.searchParams.get('scope'), XERO_SCOPES);
+  // The payments arrive nested inside each invoice. Without the scope they
+  // come back as an empty array, which reads as a quiet month rather than
+  // as a permissions problem -- the worst way for this to be wrong.
+  it('asks for the payments as well as the invoices', () => {
+    const scopes = XERO_SCOPES.split(' ');
+    ok(scopes.includes('accounting.invoices.read'));
+    ok(scopes.includes('accounting.payments.read'),
+       'invoices would come back with no payments on them');
+    ok(scopes.includes('accounting.settings.read'), 'the chart of accounts needs this');
   });
-  // "+" is the HTML form convention, not the URL one. The scope parameter
-  // is a space-separated list, so a "+" risks arriving as a literal plus in
-  // the middle of a scope name.
-  it('separates the scopes with %20 rather than a plus', () => {
-    const raw = authorizeUrl({ clientId: 'C', redirect: 'https://x.test/cb', state: 's' });
-    ok(raw.includes('scope=openid%20profile%20email%20'), raw);
-    ok(!raw.includes('+'), 'a space was encoded as a plus');
+  it('asks for nothing that could write the books', () => {
+    for (const x of XERO_SCOPES.split(' ')) ok(x.endsWith('.read'), x + ' is not read-only');
   });
 });
 
@@ -759,7 +749,7 @@ describe('who can open this', () => {
   it('keeps the Xero secret and the refresh token out of the file', () => {
     ok(!/^XERO_CLIENT_SECRET\s*=/m.test(toml), 'the Xero secret is committed');
     ok(!/refresh_token/i.test(toml), 'a refresh token is committed');
-    ok(/XERO_CLIENT_SECRET is NOT in this file/.test(toml),
+    ok(/set in Cloudflare rather than here/.test(toml),
        'nothing says where the secret lives');
   });
   // The Connect button goes nowhere without it, and the page says so

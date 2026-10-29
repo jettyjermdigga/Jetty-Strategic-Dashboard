@@ -64,8 +64,9 @@ fails if they ever disagree.
   now button. Each run moves a watermark so the next one asks only for what
   changed -- except when it stopped early on a rate limit, where the watermark
   stays put so nothing is skipped.
-* **Connecting to Xero**, from the line above the queue. What the last run did
-  is shown there too, including why it failed.
+* **Checking Xero**, from the line above the queue. It asks for a token and
+  names the organisation that answered. What the last run did is shown there
+  too, including why it failed.
 
 ## What is not built yet
 
@@ -90,16 +91,38 @@ fails if they ever disagree.
    on a verified Access token, and with a team domain set and no audience
    there is nothing to verify against. It fails closed rather than falling
    back to trusting a header anyone can send.
-3. **Make a Xero app** at developer.xero.com, of type *Web app*, with the
-   redirect URI set to `<this module's URL>/api/xero/callback`. Put its client
-   id in `XERO_CLIENT_ID` in `wrangler.toml` and its secret where secrets go:
+3. **Make a Xero Custom Connection** -- not a Web app. A Custom Connection is
+   machine-to-machine: it signs in as itself rather than as a person, holds
+   one organisation, and has no consent screen, no callback and no refresh
+   token to go stale. There is nobody whose leaving breaks the pull.
+
+   Tick exactly three scopes on it, all read-only:
+
+       accounting.invoices.read    the invoices and their line items
+       accounting.payments.read    the payments on them
+       accounting.settings.read    the chart of accounts, to find the codes
+
+   Asking for anything else -- `openid`, `offline_access`,
+   `accounting.transactions.read` -- is what `invalid_scope` means here: a
+   Custom Connection's scope list has none of them.
+
+   Put its client id in `XERO_CLIENT_ID` in `wrangler.toml` and its secret
+   where secrets go:
 
        cd commissions && npx wrangler secret put XERO_CLIENT_SECRET
 
-   Then set `XERO_ACCOUNTS` to the account code or codes that mean wholesale
-   revenue in your chart of accounts, and press **Connect Xero**. Until
-   `XERO_ACCOUNTS` is set a pull refuses outright rather than quietly
-   importing nothing.
+   Not in `[vars]`: a deploy overwrites every var in that file and leaves
+   secrets alone.
+
+   Then press **Check Xero**, which asks for a token and reports which
+   organisation answered. Open `/api/xero/accounts` to see the chart of
+   accounts, and set `XERO_ACCOUNTS` to the code or codes that mean wholesale
+   revenue. Until `XERO_ACCOUNTS` is set a pull refuses outright rather than
+   quietly importing nothing.
+
+   Nothing is stored: every run asks for a fresh token, so there is no
+   credential in the database to leak and nothing to re-authorise in sixty
+   days' time.
 4. **Import the history.** Run the *Import commissions from Airtable*
    workflow. Leave `apply` unticked for a dry run; it reports what it would
    write without touching D1. It is keyed on Airtable record ids, so running

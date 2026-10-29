@@ -15,10 +15,8 @@ import { sqlStatements } from './sql.js';
 import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
 import { buildWhere, cleanLimit, STATUSES } from './filters.js';
-import { XERO_SCOPES, accountCodes, revenueAccounts, authorizeUrl } from './xero.js';
-import {
-  refreshAccess, exchangeCode, tenants, pullRows, chartOfAccounts,
-} from './xero-pull.js';
+import { XERO_SCOPES, accountCodes, revenueAccounts } from './xero.js';
+import { accessToken, tenants, pullRows, chartOfAccounts } from './xero-pull.js';
 import SCHEMA from './schema.sql';
 
 const json = (body, status) => new Response(JSON.stringify(body), {
@@ -73,6 +71,33 @@ async function xeroRow(db) {
   return db.prepare('SELECT * FROM xero WHERE id = 1').first();
 }
 
+/**
+ * A token, and the organisation it reaches.
+ *
+ * Asked for on every run rather than stored: a client_credentials token
+ * lasts about half an hour and there is nothing to keep. The tenant id is
+ * read each time too -- it is one extra call on a nightly job, and a cached
+ * one that has gone stale is a pull that writes nothing and says it worked.
+ */
+async function xeroSession(env, db) {
+  const tok = await accessToken({
+    clientId: env.XERO_CLIENT_ID,
+    clientSecret: env.XERO_CLIENT_SECRET,
+    post: fetch,
+  });
+  const orgs = await tenants({ access: tok.access, get: fetch });
+  if (!orgs.length) {
+    throw new Error('The Xero connection reaches no organisation. '
+      + 'Check the Custom Connection is connected to one in Xero.');
+  }
+  const org = orgs[0];
+  await xeroRow(db);
+  await db.prepare(
+    'UPDATE xero SET tenant_id = ?, tenant_name = ?, connected_at = ? WHERE id = 1')
+    .bind(org.tenantId, org.name, new Date().toISOString()).run();
+  return { access: tok.access, tenantId: org.tenantId, tenantName: org.name };
+}
+
 const PAYMENT_COLS = ['source', 'source_ref', 'paid_on', 'invoice_no', 'retailer',
   'customer', 'payment_method', 'gross', 'cc_fee', 'cad', 'usd_net', 'partial',
   'currency', 'xero_invoice_id'];
@@ -94,24 +119,13 @@ async function runPull(env, db, who, { full } = {}) {
     throw new Error('XERO_ACCOUNTS is not set, so nothing would be recognised as wholesale.');
   }
   const row = await xeroRow(db);
-  if (!row || !row.refresh_token || !row.tenant_id) throw new Error('Xero is not connected yet.');
-
-  const fresh = await refreshAccess({
-    refresh: row.refresh_token,
-    clientId: env.XERO_CLIENT_ID,
-    clientSecret: env.XERO_CLIENT_SECRET,
-    post: fetch,
-  });
-  // Stored BEFORE the pull. Xero has already killed the old one, so a pull
-  // that throws halfway must not take the only working credential with it.
-  await db.prepare('UPDATE xero SET refresh_token = ? WHERE id = 1')
-    .bind(fresh.refresh).run();
+  const session = await xeroSession(env, db);
 
   const out = await pullRows({
-    access: fresh.access,
-    tenantId: row.tenant_id,
+    access: session.access,
+    tenantId: session.tenantId,
     codes,
-    since: full ? null : row.watermark,
+    since: full ? null : (row && row.watermark),
     get: fetch,
   });
 
@@ -206,7 +220,10 @@ async function handleApi(request, env, url, who) {
   if (path === '/api/xero/status' && method === 'GET') {
     const row = await xeroRow(db);
     return json({
-      connected: Boolean(row && row.refresh_token && row.tenant_id),
+      // There is nothing stored to be "connected" with -- the credentials
+      // either work when asked or they do not. What is recorded is the last
+      // time they did.
+      connected: Boolean(row && row.tenant_id),
       tenant: (row && row.tenant_name) || null,
       connectedBy: (row && row.connected_by) || null,
       connectedAt: (row && row.connected_at) || null,
@@ -220,71 +237,21 @@ async function handleApi(request, env, url, who) {
     });
   }
 
-  if (path === '/api/xero/connect' && method === 'GET') {
-    if (!env.XERO_CLIENT_ID || !env.XERO_CLIENT_SECRET) {
-      return json({ error: 'XERO_CLIENT_ID and XERO_CLIENT_SECRET are not set.' }, 503);
-    }
-    await xeroRow(db);
-    const state = crypto.randomUUID();
-    await db.prepare('UPDATE xero SET oauth_state = ?, oauth_at = ? WHERE id = 1')
-      .bind(state, new Date().toISOString()).run();
-    return json({ go: authorizeUrl({
-      clientId: env.XERO_CLIENT_ID,
-      redirect: url.origin + '/api/xero/callback',
-      state,
-    }) });
-  }
-
-  if (path === '/api/xero/callback' && method === 'GET') {
-    const row = await xeroRow(db);
-    const state = url.searchParams.get('state') || '';
-    const code = url.searchParams.get('code') || '';
-    // One-time, and only for a few minutes: a callback arriving with a stale
-    // or borrowed state is not the one we sent somebody off with.
-    const issued = row && row.oauth_at ? Date.parse(row.oauth_at) : 0;
-    const fresh = issued && (Date.now() - issued) < 15 * 60 * 1000;
-    if (!code || !state || !row || !row.oauth_state || state !== row.oauth_state || !fresh) {
-      return json({ error: 'That sign-in did not match the one this module started.' }, 400);
-    }
-    await db.prepare('UPDATE xero SET oauth_state = NULL WHERE id = 1').run();
-
-    const tok = await exchangeCode({
-      code,
-      redirect: url.origin + '/api/xero/callback',
-      clientId: env.XERO_CLIENT_ID,
-      clientSecret: env.XERO_CLIENT_SECRET,
-      post: fetch,
-    });
-    const orgs = await tenants({ access: tok.access, get: fetch });
-    if (!orgs.length) return json({ error: 'That Xero login reaches no organisations.' }, 400);
-    const org = orgs[0];
-    await db.prepare(
-      'UPDATE xero SET tenant_id = ?, tenant_name = ?, refresh_token = ?, '
-      + 'connected_by = ?, connected_at = ? WHERE id = 1')
-      .bind(org.tenantId, org.name, tok.refresh, who.email, new Date().toISOString()).run();
-    // Back to the page rather than a wall of JSON: this is the end of a
-    // journey somebody started by pressing a button.
-    return new Response(null, { status: 302, headers: { location: '/?connected=' + encodeURIComponent(org.name) } });
+  // There is no sign-in to send anybody to. This asks Xero for a token and
+  // says which organisation came back, which is the only thing there is to
+  // check before a pull.
+  if (path === '/api/xero/connect' && method === 'POST') {
+    const session = await xeroSession(env, db);
+    return json({ connected: true, tenant: session.tenantName });
   }
 
   // Which account codes could mean wholesale revenue. Read from Xero rather
   // than typed from memory: an account code that matches nothing imports
   // nothing, silently, and looks exactly like a quiet month.
   if (path === '/api/xero/accounts' && method === 'GET') {
-    const row = await xeroRow(db);
-    if (!row || !row.refresh_token || !row.tenant_id) {
-      return json({ error: 'Xero is not connected yet.' }, 409);
-    }
-    const fresh = await refreshAccess({
-      refresh: row.refresh_token,
-      clientId: env.XERO_CLIENT_ID,
-      clientSecret: env.XERO_CLIENT_SECRET,
-      post: fetch,
-    });
-    await db.prepare('UPDATE xero SET refresh_token = ? WHERE id = 1')
-      .bind(fresh.refresh).run();
+    const session = await xeroSession(env, db);
     const body = await chartOfAccounts({
-      access: fresh.access, tenantId: row.tenant_id, get: fetch,
+      access: session.access, tenantId: session.tenantId, get: fetch,
     });
     return json({ accounts: revenueAccounts(body), chosen: accountCodes(env.XERO_ACCOUNTS) });
   }

@@ -110,10 +110,15 @@ CREATE INDEX IF NOT EXISTS idx_stmt_period ON statements(year, month);
 
 -- The Xero connection. One row, because there is one Xero organisation.
 --
--- refresh_token is the live credential and it ROTATES: Xero issues a new one
--- on every single refresh and kills the old one. Not writing it back means
--- the connection works exactly once and then fails quietly, which is why it
--- lives in a table rather than in a secret nobody can rewrite.
+-- There is no credential in here. This is a Custom Connection, which is
+-- machine-to-machine: the app id and secret ARE the credential, a token is
+-- asked for when one is needed and lasts about half an hour, and there is
+-- no refresh token to store or rotate.
+--
+-- refresh_token and the oauth_ columns are left over from the user sign-in
+-- flow this replaced. Nothing reads or writes them; they stay because
+-- dropping a column in SQLite is a table rebuild and an unused column is
+-- cheaper than that.
 CREATE TABLE IF NOT EXISTS xero (
   id            INTEGER PRIMARY KEY CHECK (id = 1),
   tenant_id     TEXT,

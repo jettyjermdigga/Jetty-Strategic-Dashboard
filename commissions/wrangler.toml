@@ -66,13 +66,17 @@ ACCESS_DOMAINS = "jettylife.com"
 ACCESS_TEAM_DOMAIN = "wild-pine-bbc7.cloudflareaccess.com"
 ACCESS_AUD = "8f073f894aae873a6934f611d6917d9d633a4706472c06b484f05107f0721718"
 
-# The Xero app this connects with. The id is not a secret; the secret is.
+# The Xero Custom Connection this reads through. The id is not a secret; the
+# secret is, and it is set in Cloudflare rather than here --- a deploy
+# overwrites every var in this file and leaves secrets alone.
 #
-#   cd commissions && npx wrangler secret put XERO_CLIENT_SECRET
+# A Custom Connection is machine-to-machine: one organisation, no user
+# sign-in, no consent screen and no refresh token. The id and secret ARE the
+# credential, so these two are the whole of it.
 #
-# XERO_CLIENT_SECRET is NOT in this file and must never be. Nor is the refresh
-# token: Xero rotates it on every refresh, so it lives in the database where
-# the Worker can write it back. See the xero table in worker/schema.sql.
+# Its scopes are set on the app in Xero and must include
+# accounting.invoices.read, accounting.payments.read and
+# accounting.settings.read. See XERO_SCOPES in worker/xero.js for why each.
 XERO_CLIENT_ID = "CF90B6EE8120441B9F1AAF9ECDA97F85"
 
 # The Xero account codes that mean wholesale revenue. An invoice counts when

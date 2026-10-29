@@ -205,9 +205,10 @@
         + '<span>XERO_CLIENT_ID and the XERO_CLIENT_SECRET secret are both needed.</span>';
     }
     if (!xero.connected) {
-      return '<span class="cm-x-off">Not connected to Xero.</span>'
+      return '<span class="cm-x-off">Xero has not answered yet.</span>'
+        + '<span>Custom Connection \u2014 there is no sign-in, just credentials.</span>'
         + '<span class="cm-grow"></span>'
-        + '<button class="cm-x-btn" type="button" id="xConnect">Connect Xero</button>';
+        + '<button class="cm-x-btn" type="button" id="xConnect">Check Xero</button>';
     }
     var r = xero.lastResult || {};
     var last = xero.lastRunAt
@@ -374,9 +375,15 @@
     // Delegated, because the strip is redrawn on every render.
     document.addEventListener('click', function (e) {
       if (e.target.id === 'xConnect') {
-        api('/api/xero/connect')
-          .then(function (r) { window.location.href = r.go; })
-          .catch(function (err) { say(err.message || 'Could not start that.'); });
+        e.target.disabled = true;
+        e.target.textContent = 'Checking\u2026';
+        api('/api/xero/connect', { method: 'POST', body: '{}' })
+          .then(function () { return refreshXero(); })
+          .then(render)
+          .catch(function (err) {
+            say(err.message || 'Xero did not answer.');
+            return refreshXero().then(render);
+          });
         return;
       }
       if (e.target.id === 'xPull') {
