@@ -26,6 +26,10 @@
     // question, which is why an untouched calendar shows everything and why
     // clicking one chip cannot be vetoed by an axis nobody has touched.
     sel: { kinds: [], depts: [], subs: [], vehicles: [], stats: [] },
+    // A day picked out of the grid, as YYYY-MM-DD. Not a filter: it narrows
+    // the list beside the grid to one day without changing what the grid
+    // paints, so the month stays readable while you read the day.
+    day: '',
     printing: false,   // drawing for paper rather than for a screen
     attachments: [],   // of the event currently open, fetched on demand
     comments: [],      // likewise
@@ -129,6 +133,11 @@
   function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
   function addMonths(d, n) { return new Date(d.getFullYear(), d.getMonth() + n, 1); }
   function todayYmd() { return ymd(new Date()); }
+
+  function longDay(key) {
+    var d = fromYmd(key);
+    return DOW[d.getDay()] + ' ' + MONTHS[d.getMonth()] + ' ' + d.getDate();
+  }
 
   function esc(s) {
     return String(s == null ? '' : s)
@@ -751,30 +760,61 @@
     var panel = $('#listPanel');
     if (!panel) return;
     var any = AXES.some(function (a) { return state.sel[a].length; });
-    if (!any && !NARROW) { panel.hidden = true; $('#shell').classList.remove('split'); return; }
+    if (!any && !state.day && !NARROW) {
+      // Emptied, not just hidden. A hidden panel holding last month's list
+      // still answers querySelector, still reads aloud and still prints --
+      // and a control left in it can be found and clicked by anything that
+      // goes looking.
+      panel.hidden = true;
+      panel.innerHTML = '';
+      $('#shell').classList.remove('split');
+      return;
+    }
 
     var c = state.cursor;
     var from = ymd(new Date(c.getFullYear(), c.getMonth(), 1));
     var to = ymd(new Date(c.getFullYear(), c.getMonth() + 1, 0));
-    var pool = visible()
+    var onDay = state.day;
+    var pool = (onDay ? itemsOn(onDay) : visible()
       .filter(function (it) { return it.end_date >= from && it.start_date <= to; })
       .sort(function (a, b) {
         return a.start_date.localeCompare(b.start_date)
           || (b.all_day - a.all_day)
           || (a.start_time || '').localeCompare(b.start_time || '')
           || a.title.localeCompare(b.title);
-      });
+      }));
 
     panel.hidden = false;
     $('#shell').classList.toggle('split', !NARROW);
 
-    var head = '<div class="cl-head">' + esc(periodLabel()) + '<span>'
-      + pool.length + (pool.length === 1 ? ' event' : ' events') + '</span></div>';
+    var label = onDay ? longDay(onDay) : periodLabel();
+    var head = '<div class="cl-head">' + esc(label) + '<span>'
+      + pool.length + (pool.length === 1 ? ' event' : ' events') + '</span>'
+      + (onDay ? '<button class="cl-x" type="button" id="dayClear" '
+                 + 'aria-label="Back to the month">Back to the month</button>' : '')
+      + '</div>';
+
+    // The day a grid cell used to open the new-event form directly. It
+    // opens this instead, so the add has to be offered here or there is no
+    // longer a one-click way to put something on a day.
+    var add = onDay && state.me.canEdit
+      ? '<button class="cl-add" type="button" data-add="' + esc(onDay) + '">'
+        + 'Add an event on this day</button>'
+      : '';
 
     if (!pool.length) {
-      panel.innerHTML = head
-        + '<p class="cl-empty">Nothing this month matches what you have picked. '
-        + 'Try another month, or take a filter off.</p>';
+      panel.innerHTML = head + add
+        + '<p class="cl-empty">'
+        + (onDay ? 'Nothing on this day' + (any ? ' matches what you have picked.' : ' yet.')
+                 : 'Nothing this month matches what you have picked. '
+                   + 'Try another month, or take a filter off.')
+        + '</p>';
+      return;
+    }
+
+    if (onDay) {
+      panel.innerHTML = head + add + '<div class="cl-body">'
+        + pool.map(rowHtml).join('') + '</div>';
       return;
     }
 
@@ -932,32 +972,18 @@
     }).join('');
   }
 
-  // A month cell holds three chips and hands the rest to "+N more". That
-  // link used to carry the same data-day as the cell around it, so clicking
-  // it fell through to the new-event form -- the one thing it must not do.
-  // It opens the whole day instead, in time order and with the detail the
-  // chips had no room for. Not gated on canEdit: reading a busy day is not
-  // an editor's privilege, and a viewer clicking it got nothing at all.
-  function showDay(ds) {
-    var d = fromYmd(ds);
-    var on = itemsOn(ds);
-    var title = DOW_LONG[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' '
-      + d.getDate() + ', ' + d.getFullYear();
-    // No .day-wrap here: the modal body brings its own padding.
-    var body = '<div class="day-sub">' + on.length
-        + (on.length === 1 ? ' event' : ' events') + '</div>'
-      + (on.length
-          ? '<div class="day-list">'
-            + on.map(function (it) { return rowHtml(it); }).join('')
-            + '</div>'
-          : '<p class="cl-empty">Nothing on this day.</p>');
-    var foot = (state.me.canEdit
-        ? '<button class="cal-btn primary" data-act="day-add" data-day="'
-          + esc(ds) + '">Add event</button>'
-        : '')
-      + '<div class="grow"></div>'
-      + '<button class="cal-btn" data-act="close">Close</button>';
-    openModal(title, body, foot);
+  // A day picked out of the grid. The list beside the grid shows it, in
+  // time order and with the detail the chips had no room for -- where a
+  // modal used to. One place to read a day rather than two, and the month
+  // stays on screen beside it.
+  //
+  // Not gated on canEdit: reading a busy day is not an editor's privilege.
+  // The same day again puts the month back, so the cell is a toggle.
+  function pickDay(ds) {
+    state.day = state.day === ds ? '' : ds;
+    render();
+    var panel = $('#listPanel');
+    if (panel && !panel.hidden) panel.scrollTop = 0;
   }
 
   // The attachment list is not carried on every event in the month -- only a
@@ -2654,24 +2680,25 @@
       // Before the [data-day] branch at the bottom: "+N more" sits inside a
       // day cell and carries the same attribute, so it would otherwise be
       // read as a click on open space and open the new-event form.
+      // Before the [data-add] and [data-day] branches: "+N more" sits in a
+      // day cell and carries both, and it means this day rather than a new
+      // event on it.
       var more = e.target.closest('.mo-more');
-      if (more) { showDay(more.dataset.day); return; }
+      if (more) { pickDay(more.dataset.day); return; }
       var adder = e.target.closest('[data-add]');
       if (adder && state.me.canEdit) { showForm(null, adder.dataset.add); return; }
       var chip = e.target.closest('[data-id]');
       if (chip) { showDetail(chip.dataset.id); return; }
+      // Anywhere else in a day -- the number, the empty space under the
+      // events -- reads as "show me this day" rather than "start writing
+      // one". Everybody can ask; adding is still behind canEdit.
       var cell = e.target.closest('[data-day]');
-      if (cell && state.me.canEdit) showForm(null, cell.dataset.day);
+      if (cell) pickDay(cell.dataset.day);
     }
     $('#view').addEventListener('click', openFromClick);
-    $('#listPanel').addEventListener('click', openFromClick);
-
-    // The day list lives in the modal body, which openFromClick deliberately
-    // does not watch. Scoped to the list rather than the body, for the same
-    // reason: the modal's own controls must not open an event behind it.
-    $('#modalBody').addEventListener('click', function (e) {
-      var row = e.target.closest('.day-list [data-id]');
-      if (row) showDetail(row.dataset.id);
+    $('#listPanel').addEventListener('click', function (e) {
+      if (e.target.closest('#dayClear')) { state.day = ''; render(); return; }
+      openFromClick(e);
     });
 
     // The sync panel lives in the modal body, which showForm also uses -- so
@@ -2744,7 +2771,6 @@
         return;
       }
 
-      if (act === 'day-add') return showForm(null, b.dataset.day);
 
       if (act === 'announce') {
         var said = $('#postSaid');

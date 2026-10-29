@@ -514,26 +514,82 @@ await t('moves a month at a time', async () => {
   return a === NEXT_MONTH_LABEL;
 });
 
+console.log('picking a day out of the grid');
+// A day cell used to open the new-event form on any click, so reading a
+// day meant starting to write one and backing out of it.
+await t('shows the day beside the grid instead of the new-event form', async () => {
+  await page.locator('.mo-cell[data-day="' + dayThis(8) + '"] .mo-num').click();
+  await page.waitForSelector('#dayClear');
+  return (await page.locator('#modal').isVisible()) === false
+    && (await page.locator('#listPanel .cl-body .day-item').count()) === 4;
+});
+// Still one click to put something on that day, which the cell used to be.
+await t('offers the add on the day it is showing', async () => {
+  const add = page.locator('#listPanel .cl-add');
+  return (await add.count()) === 1
+    && (await add.getAttribute('data-add')) === dayThis(8);
+});
+// The date is on a later step of the form, so what is checked here is
+// that the button opens the form at all and carries the day it is for.
+await t('opens the new-event form from there', async () => {
+  await page.locator('#listPanel .cl-add').click();
+  await page.waitForSelector('#stepTrail');
+  const trail = await page.locator('.trail-n').textContent();
+  await page.locator('#modalX').click();
+  await page.waitForFunction(() => document.querySelector('#modal').hidden);
+  return trail.includes('of');
+});
+// The same cell again, so the grid is never stuck showing one day.
+await t('puts the month back on a second click', async () => {
+  await page.locator('.mo-cell[data-day="' + dayThis(8) + '"] .mo-num').click();
+  await page.waitForFunction(() => !document.querySelector('#dayClear'));
+  return (await page.locator('#listPanel').isVisible()) === false;
+});
+// An empty day is a real answer, and the one most likely to be clicked by
+// somebody meaning to add something.
+await t('says so when the day is empty, and still offers the add', async () => {
+  await page.locator('.mo-cell[data-day="' + dayThis(23) + '"] .mo-num').click();
+  await page.waitForSelector('#dayClear');
+  const txt = await page.locator('#listPanel .cl-empty').textContent();
+  const add = await page.locator('#listPanel .cl-add').count();
+  await page.locator('#dayClear').click();
+  await page.waitForFunction(() => !document.querySelector('#dayClear'));
+  return txt.includes('Nothing on this day') && add === 1;
+});
+
 console.log('a crowded day');
-// The cell draws three and hides the rest behind "+N more". That control used
-// to carry the cell's own data-day, so clicking it opened the new-event form
-// and the hidden events stayed hidden.
+// The cell draws three and hides the rest behind "+N more". That control
+// used to carry the cell's own data-day, so clicking it opened the
+// new-event form and the hidden events stayed hidden. It shows the day in
+// the list beside the grid now, where a day picked any other way shows.
 await t('opens the day from "+N more" rather than the new-event form', async () => {
   await page.locator('.mo-cell[data-day="' + dayThis(8) + '"] .mo-more').click();
-  const title = await page.locator('#modalTitle').textContent();
-  return await page.locator('#modal').isVisible()
-    && (await page.locator('#modalBody .day-list').count()) === 1
-    && !title.includes('Add event')
-    && title.includes(String(NOW.getFullYear()));
+  await page.waitForSelector('#listPanel .cl-body');
+  return (await page.locator('#modal').isVisible()) === false
+    && (await page.locator('#listPanel').isVisible())
+    && (await page.locator('#listPanel .cl-head').textContent()).includes('8');
 });
 await t('shows the whole day, not only the part that was hidden', async () =>
-  (await page.locator('#modalBody .day-list .day-item').count()) === 4);
+  (await page.locator('#listPanel .cl-body .day-item').count()) === 4);
 await t('opens an event from a row in it', async () => {
-  await page.locator('#modalBody .day-list .day-item').first().click();
-  return (await page.locator('.det-title').count()) === 1;
+  await page.locator('#listPanel .cl-body .day-item').first().click();
+  const got = (await page.locator('.det-title').count()) === 1;
+  await page.locator('#modalX').click();
+  await page.waitForFunction(() => document.querySelector('#modal').hidden);
+  return got;
 });
-await page.locator('button[data-act="close"]').click();
-await page.waitForFunction(() => document.querySelector('#modal').hidden);
+// The month is still painted behind it, which is the reason this is not a
+// modal: you pick a day to read it against the rest of the month.
+await t('leaves the month on screen beside the day', async () =>
+  (await page.locator('.mo-cell').count()) > 27);
+await t('puts the month back', async () => {
+  await page.locator('#dayClear').click();
+  await page.waitForFunction(() => !document.querySelector('#dayClear'));
+  return (await page.locator('#listPanel').isVisible()) === false;
+});
+// A hidden panel still holding last month's list reads aloud and prints.
+await t('empties the panel rather than only hiding it', async () =>
+  (await page.locator('#listPanel').innerHTML()) === '');
 
 console.log('the download');
 await t('caps a crowded day on screen', async () => {
