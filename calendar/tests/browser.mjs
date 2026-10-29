@@ -64,6 +64,16 @@ const ITEMS = [
   ev({ id: '33333333-3333-4333-8333-333333333333', title: 'Fall Email',
        event_type: 'marketing', department: 'marketing', sub_types: 'email',
        start_date: dayThis(14), end_date: dayThis(14) }),
+  // Two asking for the Website Events page: one still owed, one already
+  // done. The pair is the point -- a list that only ever showed the
+  // outstanding ones could not show a tick being taken back.
+  ev({ id: 'aaaaaaaa-1111-4111-8111-111111111111', title: 'Pumpkin Picking',
+       department: 'culture', needs: 'website-listing',
+       start_date: dayThis(19), end_date: dayThis(19) }),
+  ev({ id: 'aaaaaaaa-2222-4222-8222-222222222222', title: 'Harvest Market',
+       department: 'culture', needs: 'website-listing,sound',
+       listed_at: '2026-10-02T14:00:00.000Z', listed_by: 'k.hehl@jettylife.com',
+       start_date: dayThis(20), end_date: dayThis(20) }),
   ev({ id: 'bbbbbbbb-4444-4444-8444-444444444444', title: 'Buy Plan Meeting',
        event_type: 'meeting', department: '',
        start_date: dayThis(17), end_date: dayThis(17) }),
@@ -103,7 +113,8 @@ const seen = { posted: null, patched: null, uploads: [], uploadSlots: [], delete
                deletedComments: [], commented: null, savedFilters: null, resets: 0,
                mentionsSeen: 0, announced: [], announceFails: false,
                announceNoFile: false, attAdded: [], attDeleted: [],
-               personLoaded: [], spent: [], rosterAsked: 0 };
+               personLoaded: [], spent: [], rosterAsked: 0,
+               listed: [], listedFails: false };
 
 // The four who run the sample cupboard, as the Worker hands them over.
 const BOXY_CHECKOUT = ['Jeremy DeFilippis', 'JJ McKenna', 'Joe Mangino', 'Cory Higgins'];
@@ -356,6 +367,20 @@ await page.route('**/*', async (route) => {
     }
     return route.fulfill({ json: feedRow });
   }
+  const listed = p.match(/^\/api\/items\/([0-9a-f-]+)\/listed$/i);
+  if (listed && method === 'POST') {
+    const want = JSON.parse(req.postData());
+    seen.listed.push({ id: listed[1], done: want.done });
+    if (seen.listedFails) {
+      return route.fulfill({ status: 400,
+        json: { error: 'That event is not asking to go on the Website Events page.' } });
+    }
+    const at = want.done ? '2026-10-29T12:00:00.000Z' : null;
+    const row = ITEMS.filter((x) => x.id === listed[1])[0];
+    if (row) { row.listed_at = at; row.listed_by = want.done ? 'jeremy@jettylife.com' : null; }
+    return route.fulfill({ json: { id: listed[1], listed_at: at,
+      listed_by: want.done ? 'jeremy@jettylife.com' : null } });
+  }
   if (p === '/api/items' && method === 'POST') {
     seen.posted = JSON.parse(req.postData());
     return route.fulfill({ status: 201, json: { item: ev({ id: '66666666-6666-4666-8666-666666666666' }) } });
@@ -512,6 +537,93 @@ await t('moves a month at a time', async () => {
   const a = (await page.locator('#period').textContent()).trim();
   await page.locator('#prev').click();
   return a === NEXT_MONTH_LABEL;
+});
+
+console.log('what the website still owes');
+// Ticking "Add to Website Events page" is the request. Whether it has
+// been done is a different question, and the one Katie works from.
+await t('offers the listing next to Website, not as a tenth sub-type', async () => {
+  // By the row's own label, not by text anywhere in it: "Marketing" is
+  // also a chip on the Kind row.
+  const row = page.locator('.frow').filter({
+    has: page.locator('.fhint', { hasText: /^Marketing$/ }) }).first();
+  const labels = await row.locator('.fchip').allTextContents();
+  const at = labels.findIndex((x) => x.startsWith('Website listing'));
+  return at > 0 && labels[at - 1].startsWith('Website')
+    && (await row.locator('.fsep').count()) > 0;
+});
+await t('narrows to the events that asked for it', async () => {
+  await page.locator('.fchip[data-axis="needs"][data-key="website-listing"]').click();
+  await page.waitForSelector('#listPanel .cl-body');
+  const titles = await page.locator('#listPanel .day-title').allTextContents();
+  return titles.length === 2 && titles.includes('Pumpkin Picking')
+    && titles.includes('Harvest Market');
+});
+// The count says what clicking the chip would give, which for a need on
+// a month of mostly non-marketing events is a small number.
+await t('counts only the events that asked', async () => {
+  const txt = await page.locator(
+    '.fchip[data-axis="needs"][data-key="website-listing"] .fn').textContent();
+  return txt === '2';
+});
+await t('says which are on the site and which are still owed', async () => {
+  const rows = page.locator('#listPanel .day-item');
+  const done = await rows.filter({ hasText: 'Harvest Market' })
+    .locator('.day-listed').getAttribute('class');
+  const owed = await rows.filter({ hasText: 'Pumpkin Picking' })
+    .locator('.day-listed').getAttribute('class');
+  return done.includes('is-on') && !owed.includes('is-on');
+});
+// Waiting on the row in question rather than on "some row somewhere":
+// the other one is already in the state being waited for, so a loose
+// wait returns before the server has answered and the next click lands
+// in the middle of a re-render.
+const listedOn = (title, want) => page.waitForFunction(
+  ([t, w]) => [...document.querySelectorAll('#listPanel .day-item')]
+    .filter((el) => el.textContent.includes(t))
+    .some((el) => Boolean(el.querySelector('.day-listed.is-on')) === w),
+  [title, want]);
+
+await t('ticks one off without opening the event', async () => {
+  await page.locator('#listPanel .day-item', { hasText: 'Pumpkin Picking' })
+    .locator('.ls-box').check();
+  await listedOn('Pumpkin Picking', true);
+  const last = seen.listed[seen.listed.length - 1];
+  return last.id === 'aaaaaaaa-1111-4111-8111-111111111111' && last.done === true
+    && (await page.locator('#modal').isVisible()) === false;
+});
+// Taking it back is the same action in reverse, and has to be possible:
+// the page can be wrong in both directions.
+await t('takes a tick back', async () => {
+  await page.locator('#listPanel .day-item', { hasText: 'Harvest Market' })
+    .locator('.ls-box').uncheck();
+  await listedOn('Harvest Market', false);
+  const last = seen.listed[seen.listed.length - 1];
+  return last.id === 'aaaaaaaa-2222-4222-8222-222222222222' && last.done === false;
+});
+// A box that springs back with no explanation is what makes somebody
+// stop trusting the list.
+await t('puts the box back and says so when the server refuses', async () => {
+  seen.listedFails = true;
+  let said = '';
+  // A page-wide handler already accepts dialogs, so this only reads the
+  // message -- answering it here would be the second answer to it.
+  page.once('dialog', (d) => { said = d.message(); });
+  // click, not uncheck: uncheck re-asserts the box ends up clear, and the
+  // whole point here is that it comes back.
+  await page.locator('#listPanel .day-item', { hasText: 'Pumpkin Picking' })
+    .locator('.ls-box').click();
+  await listedOn('Pumpkin Picking', true);
+  seen.listedFails = false;
+  const back = await page.locator('#listPanel .day-item', { hasText: 'Pumpkin Picking' })
+    .locator('.ls-box').isChecked();
+  return back === true && said.includes('not asking');
+});
+
+await t('leaves the chip when it is taken off', async () => {
+  await page.locator('.fchip[data-axis="needs"][data-key="website-listing"]').click();
+  await page.waitForFunction(() => document.querySelector('#listPanel').hidden);
+  return true;
 });
 
 console.log('picking a day out of the grid');

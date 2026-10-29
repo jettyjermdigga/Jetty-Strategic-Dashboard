@@ -1699,6 +1699,61 @@ describe('what the website channel is told, and when', () => {
   });
 });
 
+// ── Whether the listing has actually been done ─────────────────────────
+//
+// Ticking the box is the request. This is the answer to it, and they are
+// deliberately two columns: an event can be asked for and not done yet,
+// which is the whole state the list exists to show.
+
+describe('marking a website listing done', () => {
+  const idx = fs.readFileSync(root('worker/index.js'), 'utf8');
+  const at2 = idx.indexOf('const listedMatch');
+  const body = idx.slice(at2, idx.indexOf('if (announceMatch)', at2));
+
+  it('is its own endpoint rather than a field on the form', () => {
+    ok(/\^\/api\/items\/\(' \+ UUID \+ '\)\/listed\$/.test(body),
+       'there is no endpoint for it');
+    ok(/method !== 'POST'/.test(body), 'any method would do');
+  });
+  // Reading the calendar is open; saying a job is done is not.
+  it('is closed to anybody who cannot edit', () => {
+    ok(/requireEditor\(\)/.test(body), 'a reader could tick it off');
+  });
+  // A tick on an event that never asked for a listing is one nobody can
+  // explain, and it would vanish the moment the page reloaded.
+  it('refuses an event that never asked for a listing', () => {
+    ok(/listingNeeded\(item\)/.test(body), 'anything could be marked listed');
+    ok(body.indexOf('listingNeeded(item)') < body.indexOf('UPDATE items SET listed_at'),
+       'it is checked after the write, which is no check at all');
+  });
+  it('clears the answer as well as setting it', () => {
+    ok(/const at = done \? new Date\(\)\.toISOString\(\) : null/.test(body),
+       'unticking leaves the old timestamp behind');
+    ok(/listed_by = \?/.test(body) && /who\.email/.test(body),
+       'nothing records who said it was done');
+  });
+  // Taking the request off withdraws it. Otherwise re-ticking the box
+  // months later shows the event as already on the page, on the strength
+  // of a listing that came down when the need did.
+  it('forgets the answer when the request is withdrawn', () => {
+    const save = idx.slice(idx.indexOf("if (method === 'PATCH'"));
+    ok(/listingNeeded\(existing\) && !listingNeeded\(row\)/.test(save),
+       'a withdrawn request keeps its tick');
+    ok(/UPDATE items SET listed_at = NULL, listed_by = NULL/.test(save));
+  });
+  // The items table predates this, and CREATE TABLE IF NOT EXISTS does
+  // not revisit a table that exists.
+  it('adds its columns to a database that already exists', () => {
+    const added = idx.slice(idx.indexOf('const ADDED_COLUMNS'));
+    const list = added.slice(0, added.indexOf('];'));
+    ok(/'listed_at TEXT'/.test(list) && /'listed_by TEXT'/.test(list),
+       'the columns reach schema.sql but never the live database');
+    const sql = fs.readFileSync(root('worker/schema.sql'), 'utf8');
+    ok(/listed_at\s+TEXT/.test(sql) && /listed_by\s+TEXT/.test(sql),
+       'a fresh database would not have them at all');
+  });
+});
+
 describe('the website channel message', () => {
   const item = { title: 'Sample Sale', start_date: '2026-11-07', end_date: '2026-11-08',
                  all_day: 1, status: 'Booked', venue: 'Jetty Flagship',

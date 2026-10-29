@@ -25,7 +25,7 @@
     // What is SELECTED on each axis. Empty means that axis is not asking a
     // question, which is why an untouched calendar shows everything and why
     // clicking one chip cannot be vetoed by an axis nobody has touched.
-    sel: { kinds: [], depts: [], subs: [], vehicles: [], stats: [] },
+    sel: { kinds: [], depts: [], subs: [], vehicles: [], stats: [], needs: [] },
     // A day picked out of the grid, as YYYY-MM-DD. Not a filter: it narrows
     // the list beside the grid to one day without changing what the grid
     // paints, so the month stays readable while you read the day.
@@ -54,7 +54,11 @@
   // blocked storage all throw, and none of that should stop the calendar
   // rendering.
 
-  var AXES = ['kinds', 'depts', 'subs', 'vehicles', 'stats'];
+  var AXES = ['kinds', 'depts', 'subs', 'vehicles', 'stats', 'needs'];
+  // The one need that is also a filter. The others say what an event wants
+  // on the day; this one is a job for somebody who is not at the event, and
+  // the list of outstanding ones is the thing they work from.
+  var WEBSITE_NEED = 'website-listing';
   // A department is a whole view, not one term in a query. "What is Wholesale
   // doing" means everything Wholesale is on -- its events, its marketing, its
   // meetings, whatever it has to drive there. Combining it with a chip from
@@ -96,6 +100,7 @@
     if (axis === 'kinds') return tax('eventTypes').map(function (x) { return x.key; });
     if (axis === 'subs') return tax('subTypes').map(function (x) { return x.key; });
     if (axis === 'vehicles') return tax('vehicles').map(function (x) { return x.key; });
+    if (axis === 'needs') return tax('needs').map(function (x) { return x.key; });
     if (axis === 'stats') return tax('statuses').slice();
     return tax('departments').map(function (x) { return x.key; }).concat([NO_DEPT]);
   }
@@ -293,7 +298,8 @@
       && passesAxis(item.status ? [item.status] : [], state.sel.stats)
       && passesAxis(deptsOf(item), state.sel.depts)
       && passesAxis(subsOf(item), state.sel.subs)
-      && passesAxis(vehiclesOf(item), state.sel.vehicles);
+      && passesAxis(vehiclesOf(item), state.sel.vehicles)
+      && passesAxis(needsOf(item), state.sel.needs);
   }
 
   function visible() { return state.items.filter(passes); }
@@ -394,6 +400,11 @@
       .filter(function (st) { return st.department === 'marketing'; })
       .map(function (st) { return { axis: 'subs', key: st.key, label: st.label }; });
 
+    // Next to Website, because it is the same subject from the other end:
+    // Website is what the event is about, this is what the website still
+    // owes it. Behind a separator so it does not read as a tenth sub-type.
+    var listing = [{ axis: 'needs', key: WEBSITE_NEED, label: 'Website listing' }];
+
     var vehicles = tax('vehicles').map(function (v) {
       return { axis: 'vehicles', key: v.key, label: v.label, icon: VEHICLE_ICONS[v.key] };
     });
@@ -405,7 +416,7 @@
     return [
       { label: 'Kind', chips: kinds },
       { label: 'Department', chips: depts },
-      { label: 'Marketing', chips: marketing },
+      { label: 'Marketing', chips: [].concat(marketing, [null], listing) },
       { label: 'Vehicle schedule', chips: [].concat(vehicles, [null], pending) },
     ];
   }
@@ -423,7 +434,8 @@
           && passesAxis(it.status ? [it.status] : [], others.stats)
           && passesAxis(deptsOf(it), others.depts)
           && passesAxis(subsOf(it), others.subs)
-          && passesAxis(vehiclesOf(it), others.vehicles);
+          && passesAxis(vehiclesOf(it), others.vehicles)
+          && passesAxis(needsOf(it), others.needs);
       });
       var bucket = {};
       pool.forEach(function (it) {
@@ -431,6 +443,7 @@
           : axis === 'stats' ? [it.status]
           : axis === 'depts' ? deptsOf(it)
           : axis === 'subs' ? subsOf(it)
+          : axis === 'needs' ? needsOf(it)
           : vehiclesOf(it);
         vals = vals.filter(Boolean);
         if (!vals.length) vals = [NO_DEPT];
@@ -718,7 +731,31 @@
       + '<div class="day-when">' + esc(when) + '</div>'
       + '<div><div class="day-title">' + esc(it.title) + '</div>'
       + '<div class="day-meta">' + meta.map(function (m) { return '<span>' + esc(m) + '</span>'; }).join('')
-      + '</div></div></div>';
+      + '</div>' + listedHtml(it) + '</div></div>';
+  }
+
+  // Whether this one has actually been put on the Website Events page.
+  //
+  // Only on events that asked for it, and only in the list: the grid has
+  // no room, and a tick box in a month cell would be clicked by accident
+  // by everybody trying to open the event.
+  //
+  // A box for an editor, a sentence for everybody else. Somebody who
+  // cannot act on it should still be able to see whether it is done
+  // rather than wonder.
+  function listedHtml(it) {
+    if (needsOf(it).indexOf(WEBSITE_NEED) < 0) return '';
+    var done = Boolean(it.listed_at);
+    var said = done
+      ? 'On the site' + (it.listed_at ? ' \u00b7 ' + esc(String(it.listed_at).slice(0, 10)) : '')
+      : 'Not on the site yet';
+    if (!state.me.canEdit) {
+      return '<div class="day-listed' + (done ? ' is-on' : '') + '">' + said + '</div>';
+    }
+    return '<label class="day-listed' + (done ? ' is-on' : '') + '">'
+      + '<input type="checkbox" class="ls-box" data-listed="' + esc(it.id) + '"'
+      + (done ? ' checked' : '') + '>'
+      + '<span>' + said + '</span></label>';
   }
 
   function emptyHtml(head, body) {
@@ -970,6 +1007,28 @@
             : '')
         + '</div>';
     }).join('');
+  }
+
+  // Ticked by hand, so the box is believed until the server disagrees --
+  // and put back if it does. A box that springs back with no explanation
+  // is the thing that makes somebody stop trusting the list.
+  function setListed(id, done) {
+    var it = state.items.filter(function (x) { return x.id === id; })[0];
+    if (!it) return;
+    var was = it.listed_at || null;
+    it.listed_at = done ? new Date().toISOString() : null;
+    render();
+    api('/api/items/' + encodeURIComponent(id) + '/listed', {
+      method: 'POST', body: JSON.stringify({ done: Boolean(done) }),
+    }).then(function (r) {
+      it.listed_at = r.listed_at || null;
+      it.listed_by = r.listed_by || null;
+      render();
+    }).catch(function (err) {
+      it.listed_at = was;
+      render();
+      alert(err.message || 'That did not save.');
+    });
   }
 
   // A day picked out of the grid. The list beside the grid shows it, in
@@ -2698,7 +2757,14 @@
     $('#view').addEventListener('click', openFromClick);
     $('#listPanel').addEventListener('click', function (e) {
       if (e.target.closest('#dayClear')) { state.day = ''; render(); return; }
+      // The tick box sits inside a row that opens the event, so its own
+      // click has to stop here or every tick opens the form behind it.
+      if (e.target.closest('.day-listed')) return;
       openFromClick(e);
+    });
+    $('#listPanel').addEventListener('change', function (e) {
+      var box = e.target.closest ? e.target.closest('.ls-box') : null;
+      if (box) setListed(box.dataset.listed, box.checked);
     });
 
     // The sync panel lives in the modal body, which showForm also uses -- so

@@ -51,6 +51,13 @@ CREATE TABLE IF NOT EXISTS items (
   -- typed in, which is what keeps those from being moved or deleted under
   -- them when an unrelated Paid Advo item changes.
   deadline_for TEXT,
+  -- When the event was actually put on the Website Events page, and by
+  -- whom. Ticking "Add to Website Events page" is the request; this is the
+  -- answer to it, and the two are deliberately separate -- an event can be
+  -- asked for and not done yet, which is the state the whole list exists to
+  -- show.
+  listed_at   TEXT,
+  listed_by   TEXT,
   results_posted_at TEXT,                 -- when the sales report was announced in
                                           -- Slack. Set once; it is what stops the
                                           -- announcement firing again on every

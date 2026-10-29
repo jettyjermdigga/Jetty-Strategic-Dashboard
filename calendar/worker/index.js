@@ -27,7 +27,9 @@ import { commentMessage, dmMentions, displayName, eventUrl,
 import { rollPlaces, FIELDS as PLACE_FIELDS } from './places.js';
 import { noticeBody, countUnread, CALENDAR_AUTHOR } from './notices.js';
 import { readyToPost, salesMessage, deliver, RESULTS_SLOT } from './sales.js';
-import { listingAction, listingMessage, WEBSITE_NEED } from './listing.js';
+import {
+  listingAction, listingMessage, needed as listingNeeded, WEBSITE_NEED,
+} from './listing.js';
 import { deadlineFor, deadlineAction, PREFIX as DEADLINE_PREFIX } from './deadlines.js';
 import {
   ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, cleanKey as boxyKey,
@@ -102,6 +104,8 @@ const ADDED_COLUMNS = [
   'results_posted_at TEXT',
   // Same again for the deadlines the Worker sets for itself.
   'deadline_for TEXT',
+  // And for whether a website listing has actually been done.
+  'listed_at TEXT', 'listed_by TEXT',
 ];
 
 // Same idea, on the attachments table.
@@ -1645,6 +1649,35 @@ async function handleApi(request, env, url, who, ctx) {
   // worth saying out loud, and refusing would send somebody to the
   // database to clear a timestamp.
   const announceMatch = path.match(new RegExp('^/api/items/(' + UUID + ')/announce$', 'i'));
+  // Whether an event asked for on the Website Events page has been put
+  // there yet. A separate verb from editing the event: it is Katie saying
+  // "done", not a change to what the event is, and the two are different
+  // enough that tying them together would mean reopening the form and
+  // saving an event to tick one box.
+  const listedMatch = path.match(new RegExp('^/api/items/(' + UUID + ')/listed$', 'i'));
+  if (listedMatch) {
+    if (method !== 'POST') return json({ error: 'Method not allowed.' }, 405);
+    const denied = requireEditor(); if (denied) return denied;
+
+    const item = await db.prepare('SELECT * FROM items WHERE id = ?')
+      .bind(listedMatch[1]).first();
+    if (!item) return json({ error: 'No calendar item with that id.' }, 404);
+    // Refused rather than quietly allowed: a listing marked done on an
+    // event that never asked for one is a tick nobody can explain, and it
+    // would vanish from the list the moment the page reloaded.
+    if (!listingNeeded(item)) {
+      return json({ error: 'That event is not asking to go on the Website '
+        + 'Events page.' }, 400);
+    }
+
+    const body = await request.json().catch(() => null);
+    const done = Boolean(body && body.done);
+    const at = done ? new Date().toISOString() : null;
+    await db.prepare('UPDATE items SET listed_at = ?, listed_by = ? WHERE id = ?')
+      .bind(at, done ? who.email : null, item.id).run();
+    return json({ id: item.id, listed_at: at, listed_by: done ? who.email : null });
+  }
+
   if (announceMatch) {
     if (method !== 'POST') return json({ error: 'Method not allowed.' }, 405);
     const denied = requireEditor(); if (denied) return denied;
@@ -1916,6 +1949,15 @@ async function handleApi(request, env, url, who, ctx) {
       ).bind(...COLS.map((c) => row[c]), who.email, now, id).run();
       tellWatchers('changed', existing, { id, ...row });
       tellWebsite(existing, { id, ...row });
+      // Taking the request off withdraws it, so the answer to it goes too.
+      // Otherwise re-ticking the box months later would show the event as
+      // already on the page, on the strength of a listing that was taken
+      // down when the need came off.
+      if (listingNeeded(existing) && !listingNeeded(row)) {
+        await db.prepare(
+          'UPDATE items SET listed_at = NULL, listed_by = NULL WHERE id = ?')
+          .bind(id).run();
+      }
       // The other one.
       announceResults(id);
       const moved = await keepDeadline({ id, ...row });
