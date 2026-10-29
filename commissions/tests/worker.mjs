@@ -100,7 +100,7 @@ const rows = (sql, ...b) => sqlite.prepare(sql).all(...b);
 // replaced. Everything below is Xero's real response shape, taken from its
 // OpenAPI spec -- including the Microsoft dates, which are the thing most
 // likely to be got wrong.
-const xero = { calls: [], issued: 0, invoicePages: {}, tokenStatus: 200, orgs: null,
+const xero = { calls: [], issued: 0, invoicePages: {}, tokenStatus: 200, orgs: null, orgHeaders: null,
                granted: null, refuseNamed: false,
                holds: ['accounting.invoices.read', 'accounting.payments.read',
                        'accounting.settings.read'] };
@@ -163,9 +163,17 @@ globalThis.fetch = async (url, opts) => {
     xero.issued += 1;
     return reply(200, { access_token: token(xero.issued), expires_in: 1800 });
   }
+  // A Custom Connection cannot use /connections at all: it wants a tenant
+  // or user header to filter by, and answers 400 without one.
   if (u === 'https://api.xero.com/connections') {
+    return reply(400, '{"Title":"BadRequest","Detail":"Xero-User-Id and/or '
+      + 'Xero-Tenant-Id header must be supplied."}');
+  }
+  if (u === 'https://api.xero.com/api.xro/2.0/Organisation') {
+    xero.orgHeaders = opts.headers;
     return reply(200, xero.orgs === null
-      ? [{ tenantId: 'tenant-1', tenantName: 'Jetty Brand' }] : xero.orgs);
+      ? { Organisations: [{ OrganisationID: 'tenant-1', Name: 'Jetty Brand' }] }
+      : xero.orgs);
   }
   if (u.startsWith('https://api.xero.com/api.xro/2.0/Accounts')) {
     return reply(200, { Accounts: [
@@ -273,17 +281,29 @@ await t('refuses outright when the credentials are not both set', async () => {
 });
 // A Custom Connection that is not attached to an organisation would
 // otherwise pull nothing and say it worked.
-await t('refuses when the connection reaches no organisation', async () => {
-  xero.orgs = [];
+await t('refuses when no organisation answers', async () => {
+  xero.orgs = { Organisations: [] };
   const r = await xcall('POST', '/api/xero/connect', {});
   xero.orgs = null;
-  return r.status === 500 && /no organisation/.test(r.text);
+  return r.status === 500 && /Could not read the Xero organisation/.test(r.text);
+});
+// The circle this replaced: /connections wants the tenant id we would be
+// calling it to learn, and a Custom Connection has no user to ask about
+// instead.
+await t('never calls the endpoint a Custom Connection cannot use', async () => {
+  return !xero.calls.some((c) => c.url === 'https://api.xero.com/connections');
+});
+// Sending an empty tenant header is worse than sending none.
+await t('sends no tenant header, rather than an empty one', async () => {
+  await xcall('POST', '/api/xero/connect', {});
+  return xero.orgHeaders && !('xero-tenant-id' in xero.orgHeaders)
+    && xero.orgHeaders.authorization.startsWith('Bearer ');
 });
 // A bare status names neither the problem nor where to fix it, and this
 // is the one call standing between a working token and the first pull.
-await t('quotes what Xero said when the organisations cannot be listed', async () => {
+await t('quotes what Xero said when the organisation cannot be read', async () => {
   const real = globalThis.fetch;
-  globalThis.fetch = async (u, o) => (String(u) === 'https://api.xero.com/connections'
+  globalThis.fetch = async (u, o) => (String(u).endsWith('/Organisation')
     ? reply(400, '{"Title":"Bad Request","Detail":"something specific"}') : real(u, o));
   const r = await xcall('POST', '/api/xero/connect', {});
   globalThis.fetch = real;
@@ -291,21 +311,21 @@ await t('quotes what Xero said when the organisations cannot be listed', async (
 });
 await t('says so plainly when the reason comes back empty', async () => {
   const real = globalThis.fetch;
-  globalThis.fetch = async (u, o) => (String(u) === 'https://api.xero.com/connections'
+  globalThis.fetch = async (u, o) => (String(u).endsWith('/Organisation')
     ? reply(400, '') : real(u, o));
   const r = await xcall('POST', '/api/xero/connect', {});
   globalThis.fetch = real;
   return r.status === 500 && /no reason given/.test(r.text);
 });
 // The probe makes the same call so the next round needs one look, not two.
-await t('shows the organisations call verbatim in the probe', async () => {
+await t('shows the organisation call verbatim in the probe', async () => {
   const real = globalThis.fetch;
-  globalThis.fetch = async (u, o) => (String(u) === 'https://api.xero.com/connections'
+  globalThis.fetch = async (u, o) => (String(u).endsWith('/Organisation')
     ? reply(400, '{"Detail":"why it refused"}') : real(u, o));
   const r = await xcall('GET', '/api/xero/probe');
   globalThis.fetch = real;
-  return r.body.connections.status === 400
-    && /why it refused/.test(r.body.connections.body);
+  return r.body.organisation.status === 400
+    && /why it refused/.test(r.body.organisation.body);
 });
 // Claim values are not printed unless they could name the organisation.
 await t('shows the token claims without printing their values', async () => {

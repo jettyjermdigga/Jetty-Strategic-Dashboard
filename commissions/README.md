@@ -116,6 +116,20 @@ fails if they ever disagree.
    Xero does not let an existing Custom Connection be widened, so a missing
    scope means making a new one.
 
+   **Nothing calls `GET /connections`.** That is the documented way to find
+   the tenant id, and a Custom Connection cannot use it: it wants a
+   `xero-tenant-id` or `xero-user-id` header to filter by and answers 400
+   without one -- *Xero-User-Id and/or Xero-Tenant-Id header must be
+   supplied* -- while the tenant id is the very thing we would be calling it
+   to learn. There is no user on a Custom Connection, so there is no way out
+   of that circle.
+
+   There is no need to be in it. A Custom Connection reaches exactly one
+   organisation and its token is bound to that organisation, so no call
+   carries a tenant header at all and `GET /Organisation` simply answers for
+   whichever one it is. That is both the name the page shows and proof the
+   credentials reach real books.
+
    **The token request names no scope at all.** That is deliberate and it is
    not an oversight. A Custom Connection already knows its grant, and asking
    Xero to narrow it was refused here for every scope name alike -- with two

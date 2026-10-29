@@ -6,7 +6,7 @@
 // and without anybody's real invoices.
 
 import {
-  XERO_TOKEN, XERO_CONNECTIONS, XERO_API,
+  XERO_TOKEN, XERO_API,
   heldScopes, pageQuery, sinceHeader, rowsFromPage,
 } from './xero.js';
 
@@ -46,6 +46,19 @@ export async function accessToken({ clientId, clientSecret, post, scope }) {
     throw new Error('Xero refused the credentials: ' + why);
   }
   return { access: json.access_token, scopes: heldScopes(json.access_token) };
+}
+
+/**
+ * The headers every call to the accounting API carries.
+ *
+ * xero-tenant-id only when there is one. A Custom Connection does not need
+ * it -- its token reaches one organisation and no other -- and sending an
+ * empty one is worse than sending none.
+ */
+export function xeroHeaders(access, tenantId) {
+  const h = { authorization: 'Bearer ' + access, accept: 'application/json' };
+  if (tenantId) h['xero-tenant-id'] = tenantId;
+  return h;
 }
 
 /**
@@ -97,35 +110,43 @@ export async function probeScopes({ clientId, clientSecret, post, scopes }) {
   return out;
 }
 
-/** Which Xero organisation this is. A Custom Connection reaches exactly
- *  one, but the tenant id still has to come from somewhere and this is
- *  where Xero keeps it. */
-export async function tenants({ access, get }) {
-  const res = await get(XERO_CONNECTIONS, {
-    headers: { authorization: 'Bearer ' + access, accept: 'application/json' },
-  });
-  // The body, not just the status. A bare "HTTP 400" names neither the
-  // problem nor where to fix it, and this is the one call standing between
-  // a working token and the first pull.
+/**
+ * Which Xero organisation this is.
+ *
+ * Not from GET /connections, which a Custom Connection cannot use: that
+ * endpoint wants a xero-tenant-id or xero-user-id header to filter by and
+ * answers 400 without one -- "Xero-User-Id and/or Xero-Tenant-Id header
+ * must be supplied" -- while the tenant id is the very thing we would be
+ * calling it to learn. There is no user on a Custom Connection, so there
+ * is no way out of that circle.
+ *
+ * There is no need to be in it either. A Custom Connection reaches exactly
+ * one organisation and its token is bound to that organisation, so API
+ * calls carry no tenant header and GET /Organisation simply answers for
+ * whichever one it is. That is both the name to show and proof the
+ * credentials reach real books.
+ */
+export async function organisation({ access, get }) {
+  const res = await get(XERO_API + '/Organisation', { headers: xeroHeaders(access, '') });
   const text = await res.text().catch(() => '');
-  let json = null;
-  try { json = JSON.parse(text); } catch (err) { json = null; }
-  if (!res.ok || !Array.isArray(json)) {
-    throw new Error('Could not list the Xero organisations (HTTP ' + res.status + '): '
+  let body = null;
+  try { body = JSON.parse(text); } catch (err) { body = null; }
+  const one = body && Array.isArray(body.Organisations) ? body.Organisations[0] : null;
+  if (!res.ok || !one) {
+    throw new Error('Could not read the Xero organisation (HTTP ' + res.status + '): '
       + (text ? text.slice(0, 400) : 'no reason given'));
   }
-  return json.map((c) => ({ tenantId: c.tenantId, name: c.tenantName || c.tenantId }));
+  return {
+    tenantId: one.OrganisationID || '',
+    name: one.Name || one.LegalName || one.OrganisationID || 'the Xero organisation',
+  };
 }
 
 /** The chart of accounts. One call, no paging -- a chart with more than a
  *  few hundred accounts is not a thing. */
 export async function chartOfAccounts({ access, tenantId, get }) {
   const res = await get(XERO_API + '/Accounts', {
-    headers: {
-      authorization: 'Bearer ' + access,
-      'xero-tenant-id': tenantId,
-      accept: 'application/json',
-    },
+    headers: xeroHeaders(access, tenantId),
   });
   if (!res.ok) throw new Error('Xero answered ' + res.status + ' for the chart of accounts.');
   return (await res.json().catch(() => null)) || {};
@@ -143,11 +164,7 @@ export const MAX_PAGES = 60;
  */
 export async function pullRows({ access, tenantId, codes, since, get, maxPages }) {
   const cap = maxPages || MAX_PAGES;
-  const headers = {
-    authorization: 'Bearer ' + access,
-    'xero-tenant-id': tenantId,
-    accept: 'application/json',
-  };
+  const headers = xeroHeaders(access, tenantId);
   const stamp = sinceHeader(since);
   if (stamp) headers['If-Modified-Since'] = stamp;
 

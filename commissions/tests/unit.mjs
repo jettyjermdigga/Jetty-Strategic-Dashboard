@@ -640,7 +640,7 @@ describe('everything from Xero goes through the feed gate', () => {
   it('reads the organisation each time rather than trusting a stored one', () => {
     const at = idx.indexOf('async function xeroSession');
     const fn = idx.slice(at, idx.indexOf('\nconst PAYMENT_COLS', at));
-    ok(/await tenants\(\{/.test(fn), 'the tenant id is never read from Xero');
+    ok(/await organisation\(\{/.test(fn), 'the organisation is never read from Xero');
   });
   // Moving it after a run that stopped on a rate limit would skip whatever
   // was left behind.

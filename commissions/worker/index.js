@@ -16,11 +16,11 @@ import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
 import { buildWhere, cleanLimit, STATUSES } from './filters.js';
 import {
-  XERO_SCOPES, XERO_CONNECTIONS, missingScopes, tokenClaims, accountCodes,
+  XERO_SCOPES, XERO_API, missingScopes, tokenClaims, accountCodes,
   revenueAccounts,
 } from './xero.js';
 import {
-  accessToken, probeScopes, tenants, pullRows, chartOfAccounts,
+  accessToken, probeScopes, organisation, xeroHeaders, pullRows, chartOfAccounts,
 } from './xero-pull.js';
 import SCHEMA from './schema.sql';
 
@@ -130,12 +130,7 @@ async function xeroSession(env, db) {
       + '. Scopes are set when the connection is made and cannot be widened '
       + 'afterwards, so this needs a new Custom Connection in Xero.');
   }
-  const orgs = await tenants({ access: tok.access, get: fetch });
-  if (!orgs.length) {
-    throw new Error('The Xero connection reaches no organisation. '
-      + 'Check the Custom Connection is connected to one in Xero.');
-  }
-  const org = orgs[0];
+  const org = await organisation({ access: tok.access, get: fetch });
   await xeroRow(db);
   await db.prepare(
     'UPDATE xero SET tenant_id = ?, tenant_name = ?, connected_at = ? WHERE id = 1')
@@ -311,15 +306,15 @@ async function handleApi(request, env, url, who) {
     const holds = bare ? bare.scopes : null;
     // The call that stands between a working token and the first pull.
     // Verbatim, because its status alone says nothing.
-    let connections = null;
+    let org = null;
     if (bare) {
       try {
-        const res = await fetch(XERO_CONNECTIONS, {
-          headers: { authorization: 'Bearer ' + bare.access, accept: 'application/json' },
+        const res = await fetch(XERO_API + '/Organisation', {
+          headers: xeroHeaders(bare.access, ''),
         });
-        connections = { status: res.status, body: (await res.text()).slice(0, 600) };
+        org = { status: res.status, body: (await res.text()).slice(0, 600) };
       } catch (err) {
-        connections = { status: 0, body: String((err && err.message) || err) };
+        org = { status: 0, body: String((err && err.message) || err) };
       }
     }
     // Claim names only, and the ones that carry no secret. Enough to see
@@ -343,7 +338,7 @@ async function handleApi(request, env, url, who) {
       missing: short,
       namedScopesAccepted: results.filter((r) => r.ok && r.scope !== '(no scope named)')
         .map((r) => r.scope),
-      connections,
+      organisation: org,
       claims,
       results,
       reading: reading(bare, bareWhy, holds, short),
