@@ -104,9 +104,15 @@ export async function tenants({ access, get }) {
   const res = await get(XERO_CONNECTIONS, {
     headers: { authorization: 'Bearer ' + access, accept: 'application/json' },
   });
-  const json = await res.json().catch(() => null);
+  // The body, not just the status. A bare "HTTP 400" names neither the
+  // problem nor where to fix it, and this is the one call standing between
+  // a working token and the first pull.
+  const text = await res.text().catch(() => '');
+  let json = null;
+  try { json = JSON.parse(text); } catch (err) { json = null; }
   if (!res.ok || !Array.isArray(json)) {
-    throw new Error('Could not list the Xero organisations (HTTP ' + res.status + ').');
+    throw new Error('Could not list the Xero organisations (HTTP ' + res.status + '): '
+      + (text ? text.slice(0, 400) : 'no reason given'));
   }
   return json.map((c) => ({ tenantId: c.tenantId, name: c.tenantName || c.tenantId }));
 }

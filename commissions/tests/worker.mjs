@@ -126,6 +126,9 @@ const reply = (status, body) => ({
   ok: status >= 200 && status < 300,
   status,
   json: async () => body,
+  // tenants() reads the body as text so a failure can quote it, so the
+  // stub has to be able to hand out both.
+  text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
 });
 
 globalThis.fetch = async (url, opts) => {
@@ -276,6 +279,41 @@ await t('refuses when the connection reaches no organisation', async () => {
   xero.orgs = null;
   return r.status === 500 && /no organisation/.test(r.text);
 });
+// A bare status names neither the problem nor where to fix it, and this
+// is the one call standing between a working token and the first pull.
+await t('quotes what Xero said when the organisations cannot be listed', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (u, o) => (String(u) === 'https://api.xero.com/connections'
+    ? reply(400, '{"Title":"Bad Request","Detail":"something specific"}') : real(u, o));
+  const r = await xcall('POST', '/api/xero/connect', {});
+  globalThis.fetch = real;
+  return r.status === 500 && /something specific/.test(r.text) && /400/.test(r.text);
+});
+await t('says so plainly when the reason comes back empty', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (u, o) => (String(u) === 'https://api.xero.com/connections'
+    ? reply(400, '') : real(u, o));
+  const r = await xcall('POST', '/api/xero/connect', {});
+  globalThis.fetch = real;
+  return r.status === 500 && /no reason given/.test(r.text);
+});
+// The probe makes the same call so the next round needs one look, not two.
+await t('shows the organisations call verbatim in the probe', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (u, o) => (String(u) === 'https://api.xero.com/connections'
+    ? reply(400, '{"Detail":"why it refused"}') : real(u, o));
+  const r = await xcall('GET', '/api/xero/probe');
+  globalThis.fetch = real;
+  return r.body.connections.status === 400
+    && /why it refused/.test(r.body.connections.body);
+});
+// Claim values are not printed unless they could name the organisation.
+await t('shows the token claims without printing their values', async () => {
+  const r = await xcall('GET', '/api/xero/probe');
+  return r.body.claims && r.body.claims.sub === '(present)'
+    && typeof r.body.claims.scope === 'string';
+});
+
 await t('reads the chart of accounts for the wholesale codes', async () => {
   const r = await xcall('GET', '/api/xero/accounts');
   return r.status === 200 && r.body.accounts.length === 1

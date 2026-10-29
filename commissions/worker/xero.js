@@ -62,16 +62,20 @@ export const XERO_SCOPES = [
  * a token whose scopes could not be read, and treating the second as the
  * first would refuse to start over a token that is perfectly good.
  */
-export function heldScopes(access) {
+export function tokenClaims(access) {
   const parts = String(access || '').split('.');
   if (parts.length < 2) return null;
-  let claims = null;
   try {
     const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    claims = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)));
+    const out = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)));
+    return out && typeof out === 'object' ? out : null;
   } catch (err) {
     return null;
   }
+}
+
+export function heldScopes(access) {
+  const claims = tokenClaims(access);
   if (!claims || claims.scope == null) return null;
   const list = Array.isArray(claims.scope) ? claims.scope : String(claims.scope).split(' ');
   return list.filter(Boolean);

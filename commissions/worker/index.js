@@ -16,7 +16,8 @@ import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
 import { buildWhere, cleanLimit, STATUSES } from './filters.js';
 import {
-  XERO_SCOPES, missingScopes, accountCodes, revenueAccounts,
+  XERO_SCOPES, XERO_CONNECTIONS, missingScopes, tokenClaims, accountCodes,
+  revenueAccounts,
 } from './xero.js';
 import {
   accessToken, probeScopes, tenants, pullRows, chartOfAccounts,
@@ -308,6 +309,30 @@ async function handleApi(request, env, url, who) {
       bareWhy = String((err && err.message) || err);
     }
     const holds = bare ? bare.scopes : null;
+    // The call that stands between a working token and the first pull.
+    // Verbatim, because its status alone says nothing.
+    let connections = null;
+    if (bare) {
+      try {
+        const res = await fetch(XERO_CONNECTIONS, {
+          headers: { authorization: 'Bearer ' + bare.access, accept: 'application/json' },
+        });
+        connections = { status: res.status, body: (await res.text()).slice(0, 600) };
+      } catch (err) {
+        connections = { status: 0, body: String((err && err.message) || err) };
+      }
+    }
+    // Claim names only, and the ones that carry no secret. Enough to see
+    // whether the organisation is named in the token itself.
+    let claims = null;
+    if (bare) {
+      const safe = {};
+      const all = tokenClaims(bare.access) || {};
+      for (const k of Object.keys(all)) {
+        safe[k] = /tenant|org|scope|aud|iss/i.test(k) ? all[k] : '(present)';
+      }
+      claims = safe;
+    }
     const results = await probeScopes({
       clientId: env.XERO_CLIENT_ID, clientSecret: env.XERO_CLIENT_SECRET, post: fetch,
     });
@@ -318,6 +343,8 @@ async function handleApi(request, env, url, who) {
       missing: short,
       namedScopesAccepted: results.filter((r) => r.ok && r.scope !== '(no scope named)')
         .map((r) => r.scope),
+      connections,
+      claims,
       results,
       reading: reading(bare, bareWhy, holds, short),
     });
