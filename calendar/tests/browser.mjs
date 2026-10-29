@@ -552,6 +552,19 @@ await t('offers the listing next to Website, not as a tenth sub-type', async () 
   return at > 0 && labels[at - 1].startsWith('Website')
     && (await row.locator('.fsep').count()) > 0;
 });
+// A picked day owns the panel. Changing a filter while one is picked
+// used to leave the panel on that day, so the chip counts moved, the
+// list did not, and the filter looked broken.
+await t('hands the panel back when a filter is touched', async () => {
+  await page.locator('.mo-cell[data-day="' + dayThis(19) + '"] .mo-num').click();
+  await page.waitForSelector('#dayClear');
+  await page.locator('.fchip[data-axis="needs"][data-key="website-listing"]').click();
+  await page.waitForFunction(() => !document.querySelector('#dayClear'));
+  const titles = await page.locator('#listPanel .day-title').allTextContents();
+  // Put it back the way the tests after this one expect it.
+  await page.locator('.fchip[data-axis="needs"][data-key="website-listing"]').click();
+  return titles.length === 2;
+});
 await t('narrows to the events that asked for it', async () => {
   await page.locator('.fchip[data-axis="needs"][data-key="website-listing"]').click();
   await page.waitForSelector('#listPanel .cl-body');
@@ -667,6 +680,16 @@ await t('says so when the day is empty, and still offers the add', async () => {
   await page.locator('#dayClear').click();
   await page.waitForFunction(() => !document.querySelector('#dayClear'));
   return txt.includes('Nothing on this day') && add === 1;
+});
+
+// The day belonged to the month being left.
+await t('lets the month go when the month changes', async () => {
+  await page.locator('.mo-cell[data-day="' + dayThis(19) + '"] .mo-num').click();
+  await page.waitForSelector('#dayClear');
+  await page.locator('#next').click();
+  await page.waitForFunction(() => !document.querySelector('#dayClear'));
+  await page.locator('#prev').click();
+  return (await page.locator('#listPanel').isVisible()) === false;
 });
 
 console.log('a crowded day');

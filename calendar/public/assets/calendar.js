@@ -2685,13 +2685,20 @@
 
   function shift(dir) {
     state.cursor = addMonths(state.cursor, dir);
+    // The day belonged to the month being left. Keeping it would show a
+    // day from November beside December's grid.
+    state.day = '';
     render();
   }
 
   function wire() {
     $('#prev').addEventListener('click', function () { shift(-1); });
     $('#next').addEventListener('click', function () { shift(1); });
-    $('#today').addEventListener('click', function () { state.cursor = new Date(); render(); });
+    $('#today').addEventListener('click', function () {
+      state.cursor = new Date();
+      state.day = '';
+      render();
+    });
     $('#forMe').addEventListener('click', showForMe);
     $('#subscribe').addEventListener('click', showSubscribe);
     $('#addBtn').addEventListener('click', function () {
@@ -2713,6 +2720,11 @@
       // because they are alternatives; a chip on another row is kept, because
       // the levels narrow together. Clicking the lit one turns that level off.
       state.sel[axis] = state.sel[axis].indexOf(key) >= 0 ? [] : [key];
+      // A picked day owns the panel, so a filter changed while one is
+      // picked would narrow a list nobody can see -- the chip counts move,
+      // the panel still shows the day, and the filter looks broken.
+      // Touching the filters means you are asking about the month again.
+      state.day = '';
       savePrefs();
       renderAll();
     });
@@ -2728,6 +2740,7 @@
         if (at < 0) return;
         list.splice(at, 1);
       }
+      state.day = '';
       savePrefs();
       renderAll();
     });
