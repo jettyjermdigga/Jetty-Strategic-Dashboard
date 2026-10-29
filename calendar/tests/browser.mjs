@@ -579,13 +579,43 @@ await t('counts only the events that asked', async () => {
     '.fchip[data-axis="needs"][data-key="website-listing"] .fn').textContent();
   return txt === '2';
 });
+// One label in two colours. A label that rewrites itself as you tick it
+// is one you have to read twice to be sure which way it went.
+await t('asks the same question whichever way it is answered', async () => {
+  const labels = await page.locator('#listPanel .day-listed').allTextContents();
+  return labels.length === 2
+    && labels.every((x) => x.trim() === 'Added to website');
+});
 await t('says which are on the site and which are still owed', async () => {
   const rows = page.locator('#listPanel .day-item');
   const done = await rows.filter({ hasText: 'Harvest Market' })
     .locator('.day-listed').getAttribute('class');
   const owed = await rows.filter({ hasText: 'Pumpkin Picking' })
     .locator('.day-listed').getAttribute('class');
-  return done.includes('is-on') && !owed.includes('is-on');
+  return done.includes('is-on') && !done.includes('is-off')
+    && owed.includes('is-off') && !owed.includes('is-on');
+});
+// Red and green carry the answer, so they have to be the ones actually
+// painted -- and painted differently from each other.
+await t('paints the two answers apart, in both themes', async () => {
+  const colourOf = (title) => page.locator('#listPanel .day-item', { hasText: title })
+    .locator('.day-listed')
+    .evaluate((el) => getComputedStyle(el).color);
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((t2) => document.documentElement.setAttribute('data-theme', t2), theme);
+    const on = await colourOf('Harvest Market');
+    const off = await colourOf('Pumpkin Picking');
+    if (on === off) return false;
+  }
+  await page.evaluate(() => document.documentElement.removeAttribute('data-theme'));
+  return true;
+});
+// The date and the name are recorded, and belong where they do not
+// compete with the label.
+await t('keeps when and who in the tooltip', async () => {
+  const t2 = await page.locator('#listPanel .day-item', { hasText: 'Harvest Market' })
+    .locator('.day-listed').getAttribute('title');
+  return t2.includes('2026-10-02') && t2.includes('k.hehl@jettylife.com');
 });
 // Waiting on the row in question rather than on "some row somewhere":
 // the other one is already in the state being waited for, so a loose

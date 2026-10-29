@@ -740,22 +740,32 @@
   // no room, and a tick box in a month cell would be clicked by accident
   // by everybody trying to open the event.
   //
-  // A box for an editor, a sentence for everybody else. Somebody who
-  // cannot act on it should still be able to see whether it is done
-  // rather than wonder.
+  // One label in two colours rather than two labels. "Added to website"
+  // is the question being answered either way, so the words stay put and
+  // the colour carries the answer -- red for still owed, green for done.
+  // A label that rewrites itself as it is ticked is one you have to read
+  // twice to be sure which way it went.
+  //
+  // A box for an editor, the same words for everybody else. Somebody who
+  // cannot act on it should still see where it stands.
   function listedHtml(it) {
     if (needsOf(it).indexOf(WEBSITE_NEED) < 0) return '';
     var done = Boolean(it.listed_at);
+    var cls = 'day-listed ' + (done ? 'is-on' : 'is-off');
+    // When and who are recorded; they go in the tooltip rather than the
+    // label, which has one job.
     var said = done
-      ? 'On the site' + (it.listed_at ? ' \u00b7 ' + esc(String(it.listed_at).slice(0, 10)) : '')
-      : 'Not on the site yet';
+      ? 'Added ' + String(it.listed_at).slice(0, 10)
+        + (it.listed_by ? ' by ' + it.listed_by : '')
+      : 'Not on the Website Events page yet';
     if (!state.me.canEdit) {
-      return '<div class="day-listed' + (done ? ' is-on' : '') + '">' + said + '</div>';
+      return '<div class="' + cls + '" title="' + esc(said) + '">'
+        + 'Added to website</div>';
     }
-    return '<label class="day-listed' + (done ? ' is-on' : '') + '">'
+    return '<label class="' + cls + '" title="' + esc(said) + '">'
       + '<input type="checkbox" class="ls-box" data-listed="' + esc(it.id) + '"'
       + (done ? ' checked' : '') + '>'
-      + '<span>' + said + '</span></label>';
+      + '<span>Added to website</span></label>';
   }
 
   function emptyHtml(head, body) {
