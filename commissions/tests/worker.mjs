@@ -169,6 +169,9 @@ globalThis.fetch = async (url, opts) => {
     return reply(400, '{"Title":"BadRequest","Detail":"Xero-User-Id and/or '
       + 'Xero-Tenant-Id header must be supplied."}');
   }
+  if (u.startsWith('https://api.xero.com/api.xro/2.0/')) {
+    if (!('xero-tenant-id' in (opts.headers || {}))) return reply(403, '');
+  }
   if (u === 'https://api.xero.com/api.xro/2.0/Organisation') {
     xero.orgHeaders = opts.headers;
     return reply(200, xero.orgs === null
@@ -293,10 +296,13 @@ await t('refuses when no organisation answers', async () => {
 await t('never calls the endpoint a Custom Connection cannot use', async () => {
   return !xero.calls.some((c) => c.url === 'https://api.xero.com/connections');
 });
-// Sending an empty tenant header is worse than sending none.
-await t('sends no tenant header, rather than an empty one', async () => {
+// Omitting the header answers 403 with no body at all. Sending it empty
+// is what works, and is what Xero's own SDK does -- the organisation
+// rides on the token and the header is a formality the API insists on.
+await t('sends the tenant header empty rather than leaving it out', async () => {
   await xcall('POST', '/api/xero/connect', {});
-  return xero.orgHeaders && !('xero-tenant-id' in xero.orgHeaders)
+  return xero.orgHeaders && 'xero-tenant-id' in xero.orgHeaders
+    && xero.orgHeaders['xero-tenant-id'] === ''
     && xero.orgHeaders.authorization.startsWith('Bearer ');
 });
 // A bare status names neither the problem nor where to fix it, and this

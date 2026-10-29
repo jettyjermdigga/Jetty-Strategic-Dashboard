@@ -125,10 +125,19 @@ fails if they ever disagree.
    of that circle.
 
    There is no need to be in it. A Custom Connection reaches exactly one
-   organisation and its token is bound to that organisation, so no call
-   carries a tenant header at all and `GET /Organisation` simply answers for
-   whichever one it is. That is both the name the page shows and proof the
+   organisation and its token is bound to it, so `GET /Organisation` simply
+   answers for whichever one it is -- the name the page shows, and proof the
    credentials reach real books.
+
+   **Every call still carries `xero-tenant-id`, empty.** Leaving the header
+   out answers 403 with no body, which is the least helpful refusal Xero
+   has. Sending it blank works, and is what Xero's own SDK does -- from the
+   `xero-node` README, *"Because Custom Connections are only valid for a
+   single organisation you don't need to pass the `xero-tenant-id` ...
+   `xeroTenantId` can be an empty string"*, and the generated client then
+   sets the header from that empty string unconditionally. Present and
+   blank, not absent. The organisation rides on the token; the header is a
+   formality the API insists on anyway.
 
    **The token request names no scope at all.** That is deliberate and it is
    not an oversight. A Custom Connection already knows its grant, and asking

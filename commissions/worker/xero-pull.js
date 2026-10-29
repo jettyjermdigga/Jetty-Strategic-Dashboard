@@ -51,14 +51,24 @@ export async function accessToken({ clientId, clientSecret, post, scope }) {
 /**
  * The headers every call to the accounting API carries.
  *
- * xero-tenant-id only when there is one. A Custom Connection does not need
- * it -- its token reaches one organisation and no other -- and sending an
- * empty one is worse than sending none.
+ * xero-tenant-id always, empty when there is nothing to put in it. Omitting
+ * it answers 403 with no body at all, which is the least helpful refusal
+ * Xero has; sending it empty is what works, and it is what Xero's own SDK
+ * does. From the xero-node README: "Because Custom Connections are only
+ * valid for a single organisation you don't need to pass the xero-tenant-id
+ * ... xeroTenantId can be an empty string." The generated client then sets
+ * the header from that empty string unconditionally -- present and blank,
+ * not absent.
+ *
+ * So the organisation is carried by the token and the header is a formality
+ * the API still insists on.
  */
 export function xeroHeaders(access, tenantId) {
-  const h = { authorization: 'Bearer ' + access, accept: 'application/json' };
-  if (tenantId) h['xero-tenant-id'] = tenantId;
-  return h;
+  return {
+    authorization: 'Bearer ' + access,
+    'xero-tenant-id': tenantId || '',
+    accept: 'application/json',
+  };
 }
 
 /**
