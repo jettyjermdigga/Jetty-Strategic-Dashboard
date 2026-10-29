@@ -100,7 +100,8 @@ const rows = (sql, ...b) => sqlite.prepare(sql).all(...b);
 // replaced. Everything below is Xero's real response shape, taken from its
 // OpenAPI spec -- including the Microsoft dates, which are the thing most
 // likely to be got wrong.
-const xero = { calls: [], issued: 0, invoicePages: {}, tokenStatus: 200, orgs: null };
+const xero = { calls: [], issued: 0, invoicePages: {}, tokenStatus: 200, orgs: null,
+               granted: null };
 const msdate = (iso) => '/Date(' + Date.parse(iso) + '+0000)/';
 const invoice = (n, over) => Object.assign({
   Type: 'ACCREC', InvoiceID: 'inv-' + n, InvoiceNumber: String(22000 + n), Total: 610,
@@ -124,6 +125,21 @@ globalThis.fetch = async (url, opts) => {
     if (xero.tokenStatus !== 200) {
       return reply(xero.tokenStatus, { error: 'invalid_scope',
                                        error_description: 'Invalid scope' });
+    }
+    // Xero filters the requested scopes down to the ones this app was
+    // granted, then fails only when nothing survives -- which is why a
+    // single wrong name goes unnoticed and a list of them does not.
+    if (xero.granted) {
+      // Naming no scope and naming an empty one are different requests:
+      // the first asks for everything granted, the second asks for nothing.
+      const sent = new URLSearchParams(opts.body);
+      const kept = sent.has('scope')
+        ? sent.get('scope').split(' ').filter((x) => xero.granted.includes(x))
+        : xero.granted;
+      if (!kept.length) {
+        return reply(400, { error: 'invalid_scope',
+          error_description: 'No valid scopes remaining after filtering for grant type' });
+      }
     }
     xero.issued += 1;
     return reply(200, { access_token: 'access-' + xero.issued, expires_in: 1800 });
@@ -217,6 +233,39 @@ await t('reads the chart of accounts for the wholesale codes', async () => {
   const r = await xcall('GET', '/api/xero/accounts');
   return r.status === 200 && r.body.accounts.length === 1
     && r.body.accounts[0].code === '200' && r.body.chosen.includes('200');
+});
+
+// The probe exists because one sentence from Xero covers three different
+// causes. These are the two readings that matter.
+await t('names the scopes the connection actually holds', async () => {
+  xero.granted = ['accounting.transactions.read', 'accounting.contacts.read'];
+  const r = await xcall('GET', '/api/xero/probe');
+  xero.granted = null;
+  const held = r.body.held;
+  return r.status === 200 && held.includes('accounting.transactions.read')
+    && held.includes('accounting.contacts.read')
+    && !held.includes('accounting.settings.read')
+    && !held.includes('offline_access')
+    && r.body.asking.includes('accounting.settings.read');
+});
+// Every scope refused, the one naming no scope included, is the app type
+// rather than the list -- client_credentials only works on a Custom
+// Connection.
+await t('says it is the app when nothing at all is granted', async () => {
+  xero.granted = [];
+  const r = await xcall('GET', '/api/xero/probe');
+  xero.granted = null;
+  return r.status === 200 && r.body.held.length === 0
+    && /Custom Connection/.test(r.body.reading)
+    && r.body.results.every((x) => x.ok === false)
+    && /No valid scopes remaining/.test(r.body.results[0].why);
+});
+await t('asks about a bare request as well as each scope', async () => {
+  xero.granted = ['accounting.settings.read'];
+  const r = await xcall('GET', '/api/xero/probe');
+  xero.granted = null;
+  const bare = r.body.results[0];
+  return bare.scope === '(no scope named)' && bare.ok === true;
 });
 
 console.log('');

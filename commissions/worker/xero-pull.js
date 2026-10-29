@@ -20,14 +20,16 @@ import {
  * refresh token brings -- including the one where a connection unused for
  * sixty days quietly dies.
  */
-export async function accessToken({ clientId, clientSecret, post }) {
+export async function accessToken({ clientId, clientSecret, post, scope }) {
   if (!clientId || !clientSecret) {
     throw new Error('XERO_CLIENT_ID and the XERO_CLIENT_SECRET secret are not both set.');
   }
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    scope: XERO_SCOPES,
-  });
+  // scope is overridable only so the probe below can ask for one at a time.
+  // Undefined means the real set; the empty string means send no scope at
+  // all, which is a different request from sending an empty one.
+  const want = scope === undefined ? XERO_SCOPES : scope;
+  const body = new URLSearchParams({ grant_type: 'client_credentials' });
+  if (want) body.set('scope', want);
   const res = await post(XERO_TOKEN, {
     method: 'POST',
     headers: {
@@ -45,6 +47,54 @@ export async function accessToken({ clientId, clientSecret, post }) {
     throw new Error('Xero refused the credentials: ' + why);
   }
   return { access: json.access_token };
+}
+
+/**
+ * Every scope worth asking Xero about, one at a time.
+ *
+ * Xero drops a scope it does not recognise and a scope the connection was
+ * not granted, both silently, and only complains once nothing is left. So
+ * a failure of the real request says "no valid scopes remaining" whether
+ * the names are wrong, the grants are missing, or the app is not a Custom
+ * Connection at all -- three different fixes behind one sentence.
+ *
+ * Asking for each on its own separates them. A scope that comes back ok is
+ * one this connection really holds; if every one fails, including the
+ * request that names no scope, the problem is the app and not the list.
+ */
+export const PROBE_SCOPES = [
+  '',
+  'accounting.transactions.read',
+  'accounting.transactions',
+  'accounting.settings.read',
+  'accounting.settings',
+  'accounting.contacts.read',
+  'accounting.reports.read',
+  'accounting.journals.read',
+  'accounting.budgets.read',
+  'accounting.attachments.read',
+  'offline_access',
+];
+
+/**
+ * Ask for each scope separately and report what Xero said.
+ *
+ * Read-only in every sense: it gets tokens and throws them away. Tokens are
+ * cheap and this runs once, by hand, when the connection will not start.
+ */
+export async function probeScopes({ clientId, clientSecret, post, scopes }) {
+  const out = [];
+  for (const scope of (scopes || PROBE_SCOPES)) {
+    try {
+      await accessToken({ clientId, clientSecret, post, scope });
+      out.push({ scope: scope || '(no scope named)', ok: true, why: '' });
+    } catch (err) {
+      const why = String((err && err.message) || err)
+        .replace('Xero refused the credentials: ', '');
+      out.push({ scope: scope || '(no scope named)', ok: false, why });
+    }
+  }
+  return out;
 }
 
 /** Which Xero organisation this is. A Custom Connection reaches exactly

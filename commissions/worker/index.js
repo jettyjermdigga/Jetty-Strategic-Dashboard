@@ -16,7 +16,9 @@ import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
 import { buildWhere, cleanLimit, STATUSES } from './filters.js';
 import { XERO_SCOPES, accountCodes, revenueAccounts } from './xero.js';
-import { accessToken, tenants, pullRows, chartOfAccounts } from './xero-pull.js';
+import {
+  accessToken, probeScopes, tenants, pullRows, chartOfAccounts,
+} from './xero-pull.js';
 import SCHEMA from './schema.sql';
 
 const json = (body, status) => new Response(JSON.stringify(body), {
@@ -243,6 +245,30 @@ async function handleApi(request, env, url, who) {
   if (path === '/api/xero/connect' && method === 'POST') {
     const session = await xeroSession(env, db);
     return json({ connected: true, tenant: session.tenantName });
+  }
+
+  // What this Custom Connection will actually let us ask for.
+  //
+  // Only useful when Check Xero will not start, and only by hand -- open it
+  // in a browser and read the list. Nothing calls it and nothing depends on
+  // it, which is why it is allowed to be slow: it makes one token request
+  // per scope.
+  if (path === '/api/xero/probe' && method === 'GET') {
+    const results = await probeScopes({
+      clientId: env.XERO_CLIENT_ID, clientSecret: env.XERO_CLIENT_SECRET, post: fetch,
+    });
+    const held = results.filter((r) => r.ok).map((r) => r.scope);
+    return json({
+      asking: XERO_SCOPES.split(' '),
+      held,
+      results,
+      reading: held.length
+        ? 'These are the scopes the connection holds. XERO_SCOPES must be a subset.'
+        : 'Nothing was granted, not even a request naming no scope at all. '
+          + 'That is the app rather than the scope list: client_credentials '
+          + 'works only on a Custom Connection, so a Web app or a Mobile or '
+          + 'desktop app will refuse every scope this way.',
+    });
   }
 
   // Which account codes could mean wholesale revenue. Read from Xero rather

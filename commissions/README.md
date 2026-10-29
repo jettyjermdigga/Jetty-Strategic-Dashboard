@@ -122,6 +122,16 @@ fails if they ever disagree.
    Not in `[vars]`: a deploy overwrites every var in that file and leaves
    secrets alone.
 
+   If Check Xero says *No valid scopes remaining after filtering for grant
+   type*, open `/api/xero/probe`. That asks Xero for each scope on its own
+   and reports which ones the connection holds. Xero drops a scope it does
+   not recognise and a scope the connection was not granted, both silently,
+   and complains only once nothing is left -- so that one sentence covers a
+   wrong name, a missing grant and the wrong kind of app. The probe tells
+   them apart. If every scope is refused, including the request that names
+   none, the app is not a Custom Connection: `client_credentials` works on
+   nothing else.
+
    Then press **Check Xero**, which asks for a token and reports which
    organisation answered. Open `/api/xero/accounts` to see the chart of
    accounts, and set `XERO_ACCOUNTS` to the code or codes that mean wholesale
