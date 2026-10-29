@@ -1,7 +1,7 @@
 /* Labor planning. Shares the budget's chrome -- same bar, same sticky
    sheet, same pinned footer -- and adds what a roster needs that a list of
-   ledger lines does not: a department band you can collapse, a chip saying
-   what somebody is, and a row you can strike off. */
+   ledger lines does not: a chip saying what somebody is, a filter bar in
+   place of department bands, and a row you can strike off. */
 
 .lb-add{
   font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
@@ -10,8 +10,17 @@
 }
 .lb-add:hover{background:var(--card-hover)}
 
-/* The name column carries the most, so it gets the most room. */
-.lb-t th:first-child,.lb-t td:first-child{min-width:248px;max-width:248px}
+/* The name column carries the most, so it gets the most room -- and it
+   stays put, because at thirteen columns the figure under the cursor is
+   meaningless without knowing whose it is. */
+.lb-t th:first-child,.lb-t td:first-child{min-width:228px;max-width:228px}
+/* Everything else is as narrow as its contents. The sheet is wider than
+   the window on purpose and scrolls sideways; what it must not do is
+   stretch six columns of figures across a screen because there was room. */
+.lb-t{width:auto;min-width:100%}
+.lb-t th,.lb-t td{padding:6px 9px}
+.lb-t .lb-in{width:74px}
+.lb-t .lb-sel{max-width:132px}
 
 .lb-head{display:flex;align-items:center;gap:9px;width:100%}
 .lb-head .lb-caret{
@@ -59,12 +68,42 @@
 }
 .lb-x:hover{border-color:var(--bd-watch);color:var(--bd-watch)}
 
-.lb-dept td,.lb-dept:hover td{
-  background:var(--bd-row);font-family:var(--mono);font-size:10px;
-  letter-spacing:.1em;text-transform:uppercase;font-weight:700;text-align:left;
+/* The totals of what is on screen. Filtering to a department and reading
+   its payroll off the bottom is what the department bands used to do. */
+.lb-foot td,.lb-foot:hover td{
+  background:var(--bd-row);font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.06em;font-weight:700;border-top:1px solid var(--edge);
 }
-.lb-dept td:first-child{background:var(--bd-row)}
-.lb-dept .lb-sum{text-align:right;font-size:11px;letter-spacing:0;text-transform:none}
+
+/* The baseline year, tinted as one block so the eye can tell which half of
+   a thirteen-column row it is in without reading the header again. */
+.lb-y1{background:var(--bd-row)}
+.lb-t tbody tr:hover .lb-y1{background:var(--bd-row)}
+.lb-tot{font-weight:700}
+.lb-fact{font-family:var(--body);font-size:12.5px;opacity:.85;white-space:nowrap}
+.lb-fact-in{max-width:132px}
+
+/* The filter bar. A search box and one control per column that can be
+   picked from a list; the numbers are filtered by the questions they
+   answer -- still to decide, not split -- rather than by value. */
+.lb-q{
+  font-family:var(--body);font-size:13px;padding:5px 9px;border-radius:7px;
+  border:1px solid var(--field-line);background:var(--field);color:var(--ink);
+  min-width:168px;
+}
+.lb-clr{
+  font-family:var(--mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;
+  padding:5px 9px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--field-line);background:var(--field);color:var(--ink);
+}
+.lb-clr:hover{border-color:var(--bd-pick)}
+.lb-bulk{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  background:var(--card);border:1px solid var(--edge);border-radius:10px;
+  padding:9px 14px;margin:0 0 12px;
+}
+.lb-bulk[hidden]{display:none}
+.lb-bulk-n{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;opacity:.8}
 
 /* A write-in. Marked down the left edge, because the one thing that must
    never be ambiguous on this sheet is which of these people already work
@@ -100,7 +139,7 @@
    direct, all of Finance is G&A. */
 .lb-cls{max-width:128px}
 .lb-dsel{
-  margin-left:auto;font-family:var(--mono);font-size:10px;letter-spacing:.04em;
+  font-family:var(--mono);font-size:10px;letter-spacing:.04em;
   text-transform:none;font-weight:400;padding:3px 6px;border-radius:5px;
   border:1px solid var(--field-line);background:var(--field);color:var(--ink);
   max-width:168px;

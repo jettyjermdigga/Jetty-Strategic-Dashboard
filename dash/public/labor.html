@@ -31,14 +31,14 @@
   <div class="bd-bar" id="bar" hidden>
     <a class="bd-go" href="/budget.html">&larr; Budget</a>
 
-    <span class="bd-lbl">Show</span>
-    <select id="filter" class="bd-sel" aria-label="Which people to show">
-      <option value="all">Everybody</option>
-      <option value="todo">Still to decide</option>
-      <option value="tbh">To be hired</option>
-      <option value="payroll">Payroll only</option>
-      <option value="unsplit">Not split yet</option>
-    </select>
+    <input id="q" class="lb-q" type="search" placeholder="Find a person&hellip;"
+           autocomplete="off" aria-label="Search by name, title or department">
+    <select id="fDiv" class="bd-sel" aria-label="Which division"></select>
+    <select id="fDept" class="bd-sel" aria-label="Which department"></select>
+    <select id="fPay" class="bd-sel" aria-label="How they are paid"></select>
+    <select id="fCls" class="bd-sel" aria-label="Direct labor or G&amp;A"></select>
+    <select id="filter" class="bd-sel" aria-label="Which people to show"></select>
+    <button class="lb-clr" id="clr" type="button" hidden>Clear</button>
 
     <button class="lb-add" id="add" type="button">+ Add a post</button>
 
@@ -47,6 +47,11 @@
     <span class="bd-prog" id="prog"></span>
     <a class="bd-dl" id="dl" download>Download CSV</a>
   </div>
+
+  <!-- Set direct-or-G&A on everybody the filters are showing. The bar is
+       how the sheet is narrowed now, so the bulk setter follows it rather
+       than keeping a department list of its own. -->
+  <div class="lb-bulk" id="bulk" hidden></div>
 
   <p class="bd-rc" id="rc"></p>
   <p class="bd-say" id="say"></p>

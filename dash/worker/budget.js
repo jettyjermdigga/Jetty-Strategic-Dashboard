@@ -83,6 +83,20 @@ export const WEEK_CURVE = [
   0.028741, 0.026205, 0.020287, 0.013525,
 ];
 
+/**
+ * A year the LABOR plan will answer for, or 0.
+ *
+ * One year wider at the bottom than the budget. 2026 cannot be budgeted --
+ * budgeting the year you are quoting against is circular -- but it can be
+ * recorded, and it has to be: what somebody was paid this year is the
+ * thing next year's figure is estimated from, and a plan that cannot hold
+ * the comparison makes you keep it somewhere else.
+ */
+export function cleanLaborYear(v) {
+  const y = Math.trunc(Number(v));
+  return Number.isFinite(y) && y >= BASELINE_YEAR && y <= LAST_YEAR ? y : 0;
+}
+
 /** A year this builder will answer for, or 0. */
 export function cleanYear(v) {
   const y = Math.trunc(Number(v));

@@ -15,6 +15,7 @@ import {
 } from '../worker/budget.js';
 import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
+  withPrior as laborWithPrior, SHOWS as LABOR_SHOWS,
   PEOPLE as ROSTER, ROSTER_AS_OF, SEPARATE_DIVISIONS, PAY_TYPES, CLASSES,
   ROLLUPS, FULL_TIME_HOURS,
 } from '../worker/labor.js';
@@ -167,6 +168,11 @@ const CASES = [
     path: 'labor.html', wait: '.lb-sel', select: ['#filter', 'tbh'], after: '.lb-chip.tbh' },
   { file: 'labor-unsplit', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'labor.html', wait: '.lb-sel', select: ['#filter', 'unsplit'], after: '.lb-cls' },
+  // One department, which is the shape this page is read in most: the
+  // filters doing what the department bands used to do.
+  { file: 'labor-dept', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'labor.html', wait: '.lb-sel',
+    select: ['#fDept', 'Flagship Store'], after: '.lb-foot' },
   { file: 'labor-shut-out', scheme: 'light', who: full('amy@jettylife.com'),
     path: 'labor.html', wait: '.notice', noBudget: true },
   { file: 'budget-shut-out', scheme: 'dark', who: full('amy@jettylife.com'),
@@ -244,10 +250,26 @@ const PLANNED = (() => {
   return out;
 })();
 
+// What the baseline looks like part way through a backfill: most of it
+// in, some of it not. A sheet where every baseline cell is full says
+// nothing about how the half-done state reads.
+const BASELINE = (() => {
+  const out = {};
+  Object.keys(PLANNED).forEach((k, i) => {
+    if (i % 4 === 3) return;
+    const d = PLANNED[k];
+    out[k] = d.pay === 'hourly'
+      ? { pay: 'hourly', rate: (d.rate || 20) - 2, hours: d.hours }
+      : { pay: 'salary', salary: Math.round((d.salary || 60000) * 0.96) };
+  });
+  return out;
+})();
+
 const LABOR = (() => {
-  const people = laborRows(PLANNED);
+  const people = laborWithPrior(laborRows(PLANNED), BASELINE);
   return {
-    year: FIRST_YEAR, you: 'jeremy@jettylife.com',
+    year: FIRST_YEAR, baseYear: FIRST_YEAR - 1, shows: LABOR_SHOWS,
+    you: 'jeremy@jettylife.com',
     rosterAsOf: ROSTER_AS_OF, rosterSize: ROSTER.length,
     separate: SEPARATE_DIVISIONS.join(', '),
     payTypes: PAY_TYPES, classes: CLASSES, rollups: ROLLUPS,
@@ -424,7 +446,7 @@ for (const c of CASES) {
       .map((c) => Math.round(c.getBoundingClientRect().top)));
     return { over: el.scrollWidth - el.clientWidth, rows: tops.size };
   });
-  console.log(c.file + '  ' + (await page.locator('.cb, .tl, .row').count()) + ' items'
+  console.log(c.file + '  ' + (await page.locator('.cb, .tl, .row, tr[data-k]').count()) + ' items'
     + (bar ? '  row: ' + bar.rows + ' line' + (bar.rows === 1 ? '' : 's')
              + (bar.over > 0 ? ', OVERFLOWS by ' + bar.over + 'px' : ', fits') : '')
     + (outward.length ? '  NOT OPENING OUT: ' + outward.join(', ') : '')

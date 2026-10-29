@@ -205,6 +205,86 @@ export function rows(saved) {
   return out;
 }
 
+/**
+ * The same people with last year's figures alongside.
+ *
+ * Two rows in the labor table, one per year, joined on the person. Not two
+ * sets of columns on one row: a year is a year, the second one is next
+ * year's, and a sixth year would otherwise be six more columns on a table
+ * that already has thirteen.
+ *
+ * The prior year keeps its OWN pay type. Somebody hourly in 2026 and
+ * salaried in 2027 is an ordinary thing, and costing their 2026 against a
+ * 2027 salary would be nonsense in the one column meant to be the fact.
+ */
+export function withPrior(rs, priorSaved) {
+  const s = priorSaved || {};
+  return (rs || []).map((r) => {
+    const d = s[r.k] || null;
+    const prior = {
+      pay: (d && d.pay) || r.pay,
+      rate: d && d.rate != null ? d.rate : null,
+      salary: d && d.salary != null ? d.salary : null,
+      hours: d && d.hours != null ? d.hours : null,
+    };
+    prior.cost = cost(prior);
+    return { ...r, prior };
+  });
+}
+
+/**
+ * The ways of narrowing the sheet, and what each one asks.
+ *
+ * Here rather than on the page because two of them are arithmetic -- what
+ * counts as decided is the same question cost() answers -- and a rule the
+ * page re-implements is a rule that drifts.
+ */
+export const SHOWS = [
+  { key: 'all', label: 'Everybody' },
+  { key: 'todo', label: 'No plan-year total' },
+  { key: 'base-todo', label: 'No baseline total' },
+  { key: 'tbh', label: 'To be hired' },
+  { key: 'payroll', label: 'Payroll only' },
+  { key: 'unsplit', label: 'Not split yet' },
+];
+
+const isPayroll = (r) => {
+  const t = payType(r.pay);
+  return Boolean(t && t.roll === 'payroll');
+};
+
+/**
+ * Whether one person survives the filter bar.
+ *
+ * Every field is AND: picking Brand and then Finance means Brand Finance,
+ * not Brand or Finance. An empty field asks nothing, which is why an
+ * untouched bar shows everybody.
+ */
+export function matches(row, f) {
+  const r = row || {};
+  const q = String((f && f.q) || '').trim().toLowerCase();
+  if (q) {
+    const hay = [r.n, r.t, r.d, r.v].map((x) => String(x || '').toLowerCase());
+    if (!hay.some((x) => x.indexOf(q) >= 0)) return false;
+  }
+  if (f && f.division && String(r.v || '') !== f.division) return false;
+  if (f && f.dept && String(r.d || '') !== f.dept) return false;
+  if (f && f.pay && String(r.pay || '') !== f.pay) return false;
+  // '-' means the ones nobody has split yet, which is a real answer and
+  // not the same as asking nothing.
+  if (f && f.cls) {
+    const want = f.cls === '-' ? '' : f.cls;
+    if (String(r.cls || '') !== want) return false;
+  }
+  const show = (f && f.show) || 'all';
+  if (show === 'todo' && cost(r) != null) return false;
+  if (show === 'base-todo' && r.prior && r.prior.cost != null) return false;
+  if (show === 'tbh' && !r.tbh) return false;
+  if (show === 'payroll' && !isPayroll(r)) return false;
+  if (show === 'unsplit' && !(isPayroll(r) && !r.cls)) return false;
+  return true;
+}
+
 /** The sheet as the page draws it: departments, each with its people. */
 export function byDepartment(rs) {
   const seen = new Map();
@@ -338,24 +418,38 @@ const cell = (v) => {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
 
-export function csv(rs, year) {
+export function csv(rs, year, baseYear) {
   const label = (k) => (payType(k) || { label: '' }).label;
+  // The baseline columns only when there is a baseline to put in them, so
+  // a download of the plan alone is not six empty columns wide.
+  const withBase = Boolean(baseYear) && rs.some((r) => r.prior);
   const head = ['Department', 'Name', 'Job title', 'Status', 'Division', 'Full/part time',
-                'Paid', 'Direct or G&A', 'Rate ($/hr)', 'Salary (annual)',
-                'Est. hours (annual)', year + ' projection', 'Rolls into', 'Note'];
+                'Paid', 'Direct or G&A'];
+  if (withBase) {
+    head.push(baseYear + ' rate ($/hr)', baseYear + ' hours', baseYear + ' salary',
+              baseYear + ' total');
+  }
+  head.push(year + ' rate ($/hr)', year + ' hours', year + ' salary',
+            year + ' projection', 'Rolls into', 'Note');
   const out = [head.map(cell).join(',')];
+  const n = (v) => (v == null ? '' : v);
   for (const g of byDepartment(rs)) {
     for (const r of g.people) {
       const c = cost(r);
-      out.push([
+      const line = [
         g.dept, r.n, r.t, r.tbh ? 'To be hired' : 'Active', r.v, r.ft,
         label(r.pay), (classOf(r.cls) || { label: '' }).label,
-        r.rate == null ? '' : r.rate,
-        r.salary == null ? '' : r.salary, r.hours == null ? '' : r.hours,
-        c == null ? '' : Math.round(c),
-        (ROLLUPS.find((x) => x.key === rollOf(r)) || {}).label || '',
-        r.note,
-      ].map(cell).join(','));
+      ];
+      if (withBase) {
+        const p = r.prior || {};
+        line.push(n(p.rate), n(p.hours), n(p.salary),
+                  p.cost == null ? '' : Math.round(p.cost));
+      }
+      line.push(n(r.rate), n(r.hours), n(r.salary),
+                c == null ? '' : Math.round(c),
+                (ROLLUPS.find((x) => x.key === rollOf(r)) || {}).label || '',
+                r.note);
+      out.push(line.map(cell).join(','));
     }
   }
   return out.join('\n') + '\n';

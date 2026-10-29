@@ -14,13 +14,14 @@ import { canonicalTarget } from './canon.js';
 import { visibleTiles, dashCategories, linkCats, greeting } from './tiles.js';
 import {
   rows as budgetRows, calendar as budgetCalendar,
-  csv as budgetCsv, cleanYear, cleanCadence, cleanBase,
+  csv as budgetCsv, cleanYear, cleanLaborYear, cleanCadence, cleanBase,
   GROUPS as BUDGET_GROUPS, BASES, CADENCES, LINES as BUDGET_LINES,
   BASELINE_YEAR, WEEK_CURVE, CURVE_IS_PLACEHOLDER, FIRST_YEAR,
 } from './budget.js';
 import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
   csv as laborCsv, cleanKey as laborKey,
+  withPrior as laborWithPrior, SHOWS as LABOR_SHOWS,
   PEOPLE as ROSTER, ROSTER_AS_OF, SEPARATE_DIVISIONS, PAY_TYPES, CLASSES,
   ROLLUPS, FULL_TIME_HOURS,
 } from './labor.js';
@@ -301,13 +302,18 @@ async function labor(request, env, url, who) {
 
   const what = url.pathname.slice('/api/labor'.length);
   const year = cleanYear(url.searchParams.get('year')) || FIRST_YEAR;
+  // What next year is estimated from. One year back, always -- the plan is
+  // "what changes from this year", and a baseline you can choose is a
+  // baseline somebody will compare the wrong pair against.
+  const baseYear = year - 1;
 
   if (what === '' && request.method === 'GET') {
     const saved = await readLabor(env.DB, year);
-    const rs = laborRows(saved);
+    const rs = laborWithPrior(laborRows(saved), await readLabor(env.DB, baseYear));
     const sum = laborSummary(rs);
     return json({
-      year, you: who.email,
+      year, baseYear, you: who.email,
+      shows: LABOR_SHOWS,
       rosterAsOf: ROSTER_AS_OF, rosterSize: ROSTER.length,
       // Said on the page rather than left as a silently shorter list: two
       // people are missing from it on purpose.
@@ -324,7 +330,10 @@ async function labor(request, env, url, who) {
   }
 
   if (what === '.csv' && request.method === 'GET') {
-    const body = laborCsv(laborRows(await readLabor(env.DB, year)), year);
+    const body = laborCsv(
+      laborWithPrior(laborRows(await readLabor(env.DB, year)),
+                     await readLabor(env.DB, baseYear)),
+      year, baseYear);
     return new Response(body, {
       headers: {
         'content-type': 'text/csv; charset=utf-8',
@@ -355,7 +364,8 @@ async function labor(request, env, url, who) {
     if (!keys.length) return json({ errors: ['Nobody to classify.'] }, 400);
 
     await classifyPeople(env.DB, year, keys, cls, who.email);
-    const rs = laborRows(await readLabor(env.DB, year));
+    const rs = laborWithPrior(laborRows(await readLabor(env.DB, year)),
+                              await readLabor(env.DB, baseYear));
     return json({
       ok: true, set: keys.length, people: rs,
       against: laborAgainst(laborSummary(rs), await readBudget(env.DB, year), 'proj'),
@@ -379,16 +389,27 @@ async function labor(request, env, url, who) {
     }
     if (!key) return json({ errors: ['That is not a person.'] }, 400);
 
+    // Which year the figure belongs to. The baseline is recorded here as
+    // well as the plan, so the grid edits both -- but only within the two
+    // this page shows, and a year outside that is refused rather than
+    // silently written to the plan.
+    const onYear = body.year == null ? year : cleanLaborYear(body.year);
+    if (!onYear || (onYear !== year && onYear !== baseYear)) {
+      return json({ errors: ['That is not a year this plan holds.'] }, 400);
+    }
+    // Taking somebody off takes them off the plan, not off one year of it:
+    // a person struck off who came back the moment you looked at the
+    // baseline would be the same bug this codebase has had six times.
     const out = what === '/person/remove'
       ? await removeLaborPerson(env.DB, year, key, Boolean(body.added), who.email)
-      : await saveLaborPerson(env.DB, year, key, body, who.email);
+      : await saveLaborPerson(env.DB, onYear, key, body, who.email);
     if (out.errors) return json(out, 400);
 
     // The whole sheet back: the footer is a total over all of it and the
     // count is a count of all of it, so a reply about one person would
     // leave both to be guessed at.
     const saved = await readLabor(env.DB, year);
-    const rs = laborRows(saved);
+    const rs = laborWithPrior(laborRows(saved), await readLabor(env.DB, baseYear));
     return json({
       ok: true, key, people: rs,
       against: laborAgainst(laborSummary(rs), await readBudget(env.DB, year), 'proj'),

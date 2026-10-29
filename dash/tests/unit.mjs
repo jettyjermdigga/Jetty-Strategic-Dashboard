@@ -11,7 +11,8 @@ import { canonicalTarget } from '../worker/canon.js';
 import {
   rows as budgetRows, value, spread, summary, csv, cleanLine, cleanYear,
   calendar, WEEK_CURVE, CURVE_IS_PLACEHOLDER, LINES as BUDGET_LINES, NEW_LINES,
-  BASELINE_YEAR, FIRST_YEAR, GROUPS as BUDGET_GROUPS, CADENCES,
+  BASELINE_YEAR, FIRST_YEAR, LAST_YEAR, cleanLaborYear,
+  GROUPS as BUDGET_GROUPS, CADENCES,
 } from '../worker/budget.js';
 import { periods, weekCounts, weekStart } from '../worker/retail.js';
 import { LINES as SEED_LINES } from '../worker/budget-seed.js';
@@ -20,7 +21,9 @@ import {
   against, cleanPerson as cleanLaborPerson, cleanKey as laborKey, csv as laborCsv,
   num, rollOf, PEOPLE as ROSTER, ON_STAFF, SEPARATE_DIVISIONS,
   PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS, ROSTER_AS_OF,
+  withPrior, matches, SHOWS,
 } from '../worker/labor.js';
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1452,6 +1455,194 @@ describe('labor planning is gated and reachable', () => {
   it('gets back to the budget from the labor page', () => {
     const labourPage = fs.readFileSync(path.join(HERE, '..', 'public', 'labor.html'), 'utf8');
     ok(/href="\/budget\.html"/.test(labourPage), 'no way back to the budget');
+  });
+});
+
+// ── Two years on one sheet ──────────────────────────────────────────────
+//
+// The plan year is what is being budgeted; the year before it is what
+// people were actually paid, which is the thing the budget is estimated
+// from. Both are typed into the same grid and stored as two rows in the
+// labor table, joined on the person.
+
+describe('the baseline year beside the plan', () => {
+  const HERE2 = path.dirname(fileURLToPath(import.meta.url));
+  const rd = (f) => fs.readFileSync(path.join(HERE2, '..', f), 'utf8');
+
+  // 2026 cannot be budgeted -- budgeting the year you quote against is
+  // circular -- but it has to be recordable, or the comparison lives
+  // somewhere else.
+  it('records a year the budget will not plan', () => {
+    eq(cleanYear(BASELINE_YEAR), 0, 'the budget would plan the baseline');
+    eq(cleanLaborYear(BASELINE_YEAR), BASELINE_YEAR);
+    eq(cleanLaborYear(FIRST_YEAR), FIRST_YEAR);
+    eq(cleanLaborYear(LAST_YEAR), LAST_YEAR);
+  });
+  it('still refuses a year on neither side of that', () => {
+    eq(cleanLaborYear(BASELINE_YEAR - 1), 0);
+    eq(cleanLaborYear(LAST_YEAR + 1), 0);
+    eq(cleanLaborYear('nineteen'), 0);
+  });
+
+  const one = (over) => Object.assign(
+    { k: 'ann', n: 'Ann Lee', t: 'Manager', d: 'Finance', v: 'BRAND',
+      pay: 'salary', cls: 'gna', rate: null, salary: 80000, hours: null,
+      tbh: false, added: false, note: '' }, over || {});
+
+  it('hangs last year on the same person', () => {
+    const r = withPrior([one()], { ann: { pay: 'salary', salary: 72000 } })[0];
+    eq(r.prior.salary, 72000);
+    eq(r.prior.cost, 72000);
+    eq(r.salary, 80000, 'the plan year was overwritten by the baseline');
+  });
+  // Somebody hourly last year and salaried this year is ordinary. Costing
+  // their 2026 against a 2027 salary would be nonsense in the one column
+  // meant to be the fact.
+  it('costs the baseline against the way they were paid then', () => {
+    const r = withPrior([one()], { ann: { pay: 'hourly', rate: 30, hours: 1800 } })[0];
+    eq(r.prior.cost, 54000);
+    eq(r.prior.pay, 'hourly');
+  });
+  it('leaves the baseline empty rather than guessing it', () => {
+    const r = withPrior([one()], {})[0];
+    eq(r.prior.cost, null);
+    eq(r.prior.salary, null);
+    eq(r.prior.pay, 'salary', 'with nothing recorded, this year is the best guess at how');
+  });
+  // Half a figure is not a cost. The same rule the plan year is under.
+  it('will not cost an hourly baseline from a rate alone', () => {
+    const r = withPrior([one()], { ann: { pay: 'hourly', rate: 30 } })[0];
+    eq(r.prior.cost, null);
+  });
+
+  it('puts both years in the download, and neither twice', () => {
+    const rs = withPrior([one()], { ann: { pay: 'salary', salary: 72000 } });
+    const out = laborCsv(rs, 2027, 2026).split('\n');
+    const head = out[0];
+    ok(head.includes('2026 total') && head.includes('2027 projection'), head);
+    eq(head.split(',').length, out[1].split(',').length, 'a row is a different width');
+    ok(out[1].includes('72000') && out[1].includes('80000'));
+  });
+  // A download of the plan alone should not be six empty columns wide.
+  it('leaves the baseline columns out when there is no baseline', () => {
+    const head = laborCsv([one()], 2027).split('\n')[0];
+    ok(!head.includes('2026'), head);
+  });
+});
+
+// ── Finding one person among ninety-four ────────────────────────────────
+
+describe('narrowing the labor sheet', () => {
+  const rs = withPrior([
+    { k: 'ann', n: 'Ann Lee', t: 'Finance Manager', d: 'Finance', v: 'BRAND',
+      pay: 'salary', cls: 'gna', salary: 80000, rate: null, hours: null, tbh: false },
+    { k: 'bo', n: 'Bo Diaz', t: 'Press Operator', d: 'Production', v: 'INK',
+      pay: 'hourly', cls: '', salary: null, rate: 22, hours: 2080, tbh: false },
+    { k: 'cy', n: 'Cy Park', t: 'Sales Rep', d: 'Wholesale', v: 'MIXED',
+      pay: 'commission', cls: '', salary: null, rate: null, hours: null, tbh: true },
+  ], { ann: { pay: 'salary', salary: 76000 } });
+  const keys = (f) => rs.filter((r) => matches(r, f)).map((r) => r.k).join(',');
+
+  it('asks nothing when nothing is picked', () => {
+    eq(keys({}), 'ann,bo,cy');
+    eq(keys({ show: 'all' }), 'ann,bo,cy');
+  });
+  it('finds a person by any part of their row', () => {
+    eq(keys({ q: 'ann' }), 'ann');
+    eq(keys({ q: 'press' }), 'bo', 'the job title is not searched');
+    eq(keys({ q: 'finance' }), 'ann', 'the department is not searched');
+    eq(keys({ q: 'ink' }), 'bo', 'the division is not searched');
+    eq(keys({ q: 'ANN' }), 'ann', 'case matters, and should not');
+  });
+  it('filters by each column it offers', () => {
+    eq(keys({ division: 'INK' }), 'bo');
+    eq(keys({ dept: 'Wholesale' }), 'cy');
+    eq(keys({ pay: 'salary' }), 'ann');
+    eq(keys({ cls: 'gna' }), 'ann');
+  });
+  // Not split yet is a real answer, and not the same as asking nothing.
+  it('can ask for the ones nobody has split', () => {
+    eq(keys({ cls: '-' }), 'bo,cy');
+  });
+  // Picking Brand and then Finance means Brand Finance, not Brand or
+  // Finance. Every field narrows the last.
+  it('narrows rather than widens as more is picked', () => {
+    eq(keys({ division: 'BRAND', dept: 'Finance' }), 'ann');
+    eq(keys({ division: 'INK', dept: 'Finance' }), '');
+  });
+  it('answers the questions the figures raise', () => {
+    eq(keys({ show: 'todo' }), 'cy', 'commission has no figure, so it is undecided');
+    eq(keys({ show: 'base-todo' }), 'bo,cy', 'the baseline is only backfilled for one');
+    eq(keys({ show: 'tbh' }), 'cy');
+    eq(keys({ show: 'payroll' }), 'ann,bo');
+    eq(keys({ show: 'unsplit' }), 'bo', 'commission does not split, so it is not unsplit');
+  });
+
+  // The sheet narrows as you type, which it cannot do by asking the
+  // server -- so the rule is in both places and this is what keeps them
+  // honest. The same arrangement asks() and roll() are already under.
+  it('is the same rule on the page as in the Worker', () => {
+    const HERE2 = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(
+      path.join(HERE2, '..', 'public', 'assets', 'labor.js'), 'utf8');
+    const fn = page.slice(page.indexOf('function keep(p)'),
+                          page.indexOf('function shown()'));
+    for (const field of ['division', 'dept', 'pay', 'cls']) {
+      ok(fn.includes("f." + field), 'the page does not filter on ' + field);
+    }
+    for (const show of SHOWS.map((x) => x.key).filter((x) => x !== 'all')) {
+      ok(fn.includes("'" + show + "'"), 'the page does not know the ' + show + ' filter');
+    }
+    ok(fn.includes("f.cls === '-'"), 'not-split-yet means nothing on the page');
+  });
+  it('offers every one of them on the page', () => {
+    const HERE2 = path.dirname(fileURLToPath(import.meta.url));
+    const html = fs.readFileSync(path.join(HERE2, '..', 'public', 'labor.html'), 'utf8');
+    for (const id of ['q', 'fDiv', 'fDept', 'fPay', 'fCls', 'filter']) {
+      ok(html.includes('id="' + id + '"'), 'no control for ' + id);
+    }
+  });
+});
+
+// ── Writing to the right year ───────────────────────────────────────────
+
+describe('which year a typed figure lands on', () => {
+  const HERE2 = path.dirname(fileURLToPath(import.meta.url));
+  const idx = fs.readFileSync(path.join(HERE2, '..', 'worker', 'index.js'), 'utf8');
+  const at = idx.indexOf("what === '/person'");
+  // To the end of the labor router, not to the first early return in it.
+  const body = idx.slice(at, idx.indexOf("No such endpoint.", at));
+  const page = fs.readFileSync(
+    path.join(HERE2, '..', 'public', 'assets', 'labor.js'), 'utf8');
+
+  it('takes the year from the row that was typed in', () => {
+    ok(/const onYear = body\.year == null \? year : cleanLaborYear\(body\.year\)/.test(body),
+       'every figure lands on the plan year whatever was typed');
+    ok(/saveLaborPerson\(env\.DB, onYear, key/.test(body),
+       'the year is worked out and then not used');
+  });
+  // A year outside the two on screen is a figure nobody can see again.
+  it('refuses a year this page does not show', () => {
+    ok(/onYear !== year && onYear !== baseYear/.test(body),
+       'any year at all could be written to');
+  });
+  // The baseline is a record of what happened. The note, the split and
+  // next year's pay decision belong to the year being planned, and one
+  // edit must not quietly change two years.
+  it('sends only the figures to the baseline', () => {
+    const fn = page.slice(page.indexOf('function saveBase(p)'),
+                          page.indexOf('// ── Wiring'));
+    ok(/year: D\.baseYear/.test(fn), 'the baseline saves to the plan year');
+    ok(!/cls:/.test(fn), 'the split is written onto the baseline too');
+    ok(!/note:/.test(fn), 'the note is written onto the baseline too');
+    ok(/rate: b\.rate/.test(fn) && /hours: b\.hours/.test(fn)
+       && /salary: b\.salary/.test(fn), 'the baseline figures are not sent');
+  });
+  // Struck off is struck off. A person who came back the moment you
+  // looked at the baseline is the bug this codebase has had six times.
+  it('takes somebody off the plan rather than off one year of it', () => {
+    ok(/removeLaborPerson\(env\.DB, year, key/.test(body),
+       'a removal is scoped to whichever year was being typed in');
   });
 });
 

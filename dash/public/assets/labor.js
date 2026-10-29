@@ -16,8 +16,9 @@
   var comma = function (n) { return Math.round(Number(n) || 0).toLocaleString(); };
 
   var D = null;
-  var show = 'all';
-  var shut = {};          // departments folded away
+  // Every way the sheet is narrowed, in one place. Empty means that field
+  // asks nothing, which is why an untouched bar shows everybody.
+  var f = { q: '', division: '', dept: '', pay: '', cls: '', show: 'all' };
   var saving = 0;
   var timers = {};
 
@@ -52,52 +53,71 @@
   }
 
   // ── Which people are on screen ────────────────────────────────────────
-
+  //
+  // Mirrors matches() in worker/labor.js. The sheet has to narrow as you
+  // type, which it cannot do by asking the server -- so the rule lives in
+  // both places and the tests check the two agree, the same arrangement
+  // asks() and roll() are under.
   function keep(p) {
-    if (show === 'todo') return cost(p) == null;
-    if (show === 'tbh') return p.tbh;
-    if (show === 'payroll') return splits(p);
-    if (show === 'unsplit') return splits(p) && !p.cls;
+    var q = (f.q || '').trim().toLowerCase();
+    if (q) {
+      var hay = [p.n, p.t, p.d, p.v].map(function (x) {
+        return String(x == null ? '' : x).toLowerCase();
+      });
+      var hit = hay.some(function (x) { return x.indexOf(q) >= 0; });
+      if (!hit) return false;
+    }
+    if (f.division && String(p.v || '') !== f.division) return false;
+    if (f.dept && String(p.d || '') !== f.dept) return false;
+    if (f.pay && String(p.pay || '') !== f.pay) return false;
+    if (f.cls) {
+      var want = f.cls === '-' ? '' : f.cls;
+      if (String(p.cls || '') !== want) return false;
+    }
+    if (f.show === 'todo' && cost(p) != null) return false;
+    if (f.show === 'base-todo' && p.prior && p.prior.cost != null) return false;
+    if (f.show === 'tbh' && !p.tbh) return false;
+    if (f.show === 'payroll' && !splits(p)) return false;
+    if (f.show === 'unsplit' && !(splits(p) && !p.cls)) return false;
     return true;
   }
 
-  function depts() {
-    var out = [];
-    var at = {};
-    D.people.filter(keep).forEach(function (p) {
-      if (!(p.d in at)) { at[p.d] = out.length; out.push({ dept: p.d, people: [] }); }
-      out[at[p.d]].people.push(p);
+  function shown() {
+    return D.people.filter(keep).sort(function (a, b) {
+      // Write-ins last, then alphabetical. The sheet is one list now, so
+      // the department is a column and a filter rather than a band.
+      if (a.added !== b.added) return a.added ? 1 : -1;
+      return a.n.toLowerCase() < b.n.toLowerCase() ? -1 : 1;
     });
-    out.sort(function (a, b) {
-      var au = a.dept.toLowerCase() === 'unassigned';
-      var bu = b.dept.toLowerCase() === 'unassigned';
-      if (au !== bu) return au ? 1 : -1;
-      return a.dept.toLowerCase() < b.dept.toLowerCase() ? -1 : 1;
-    });
-    out.forEach(function (g) {
-      g.people.sort(function (a, b) {
-        if (a.added !== b.added) return a.added ? 1 : -1;
-        return a.n.toLowerCase() < b.n.toLowerCase() ? -1 : 1;
-      });
-      g.total = g.people.reduce(function (a, p) { return a + (cost(p) || 0); }, 0);
-    });
-    return out;
   }
+
+  var filtered = function () {
+    return Boolean(f.q || f.division || f.dept || f.pay || f.cls
+      || (f.show && f.show !== 'all'));
+  };
 
   // ── Drawing ───────────────────────────────────────────────────────────
 
-  var COLS = 9;
+  var COLS = 15;
 
   function head() {
-    return '<tr><th>Person</th><th>Paid</th><th>Direct or G&amp;A</th><th>Rate ($/hr)</th>'
-      + '<th>Salary <span>annual</span></th><th>Hours <span>annual, est.</span></th>'
-      + '<th>' + D.year + ' projection</th><th>Note</th><th></th></tr>';
+    return '<tr>'
+      + '<th>Person</th><th>Division</th><th>Department</th>'
+      + '<th>Paid</th><th>Direct or G&amp;A</th>'
+      + '<th class="lb-y1">' + D.baseYear + ' rate <span>$/hr</span></th>'
+      + '<th class="lb-y1">' + D.baseYear + ' hours</th>'
+      + '<th class="lb-y1">' + D.baseYear + ' salary</th>'
+      + '<th class="lb-y1 lb-tot">' + D.baseYear + ' total</th>'
+      + '<th>' + D.year + ' rate <span>$/hr</span></th>'
+      + '<th>' + D.year + ' hours</th>'
+      + '<th>' + D.year + ' salary</th>'
+      + '<th class="lb-tot">' + D.year + ' total</th>'
+      + '<th>Note</th><th></th></tr>';
   }
 
   function chips(p) {
     var out = '';
     if (p.tbh) out += '<span class="lb-chip tbh">' + (p.added ? 'NEW' : 'TBH') + '</span>';
-    if (p.v) out += '<span class="lb-chip">' + esc(p.v) + '</span>';
     if (p.ft === 'Part-time') out += '<span class="lb-chip">PT</span>';
     return out;
   }
@@ -105,19 +125,31 @@
   // A cell for a figure this way of being paid does not ask for. Drawn as a
   // dash rather than left blank, so an empty column reads as "not asked"
   // instead of "not filled in".
-  function cell(p, field, cls, ph) {
-    var a = asks(p.pay);
-    var wanted = !a ? false
-      : a === 'none' ? false
+  //
+  // `yr` says which of the two years the cell belongs to, and the baseline
+  // asks against ITS OWN pay type: somebody hourly last year and salaried
+  // this year is ordinary, and the row would otherwise ask for a salary
+  // they were never on.
+  function cell(p, field, yr, cls, ph) {
+    var base = yr === D.baseYear;
+    var pay = base ? (p.prior && p.prior.pay) || p.pay : p.pay;
+    var a = asks(pay);
+    var wanted = !a || a === 'none' ? false
       : a === 'rate' ? (field === 'rate' || field === 'hours')
       : field === 'salary';
-    if (!wanted) return '<td><span class="lb-na">—</span></td>';
-    var v = p[field];
-    return '<td><input class="bd-in lb-in ' + cls + (v != null ? ' set' : '')
-      + '" data-f="' + field + '" inputmode="numeric"'
-      + ' aria-label="' + esc(p.n) + ' ' + field + '"'
+    var td = '<td' + (base ? ' class="lb-y1"' : '') + '>';
+    if (!wanted) return td + '<span class="lb-na">\u2014</span></td>';
+    var v = base ? (p.prior ? p.prior[field] : null) : p[field];
+    return td + '<input class="bd-in lb-in ' + cls + (v != null ? ' set' : '')
+      + '" data-f="' + field + '" data-y="' + yr + '" inputmode="numeric"'
+      + ' aria-label="' + esc(p.n) + ' ' + yr + ' ' + field + '"'
       + ' value="' + (v == null ? '' : comma(v)) + '"'
       + ' placeholder="' + ph + '"></td>';
+  }
+
+  function totalCell(c, base) {
+    return '<td class="bd-n lb-tot' + (base ? ' lb-y1' : '')
+      + (c == null ? ' bd-base' : '') + '">' + (c == null ? '\u2014' : money(c)) + '</td>';
   }
 
   // Only payroll splits. A commission rep or a partner has a budget line of
@@ -125,18 +157,27 @@
   // nowhere -- the dash reads as "not asked", the same as the figures a pay
   // type does not want.
   function clsCell(p) {
-    if (!splits(p)) return '<span class="lb-na">—</span>';
+    if (!splits(p)) return '<span class="lb-na">\u2014</span>';
     return '<select class="lb-sel lb-cls' + (p.cls ? ' set' : '') + '" data-f="cls"'
       + ' aria-label="Is ' + esc(p.n) + ' direct labor or G&amp;A?">'
-      + '<option value="">—</option>'
+      + '<option value="">\u2014</option>'
       + D.classes.map(function (c) {
         return '<option value="' + c.key + '"' + (c.key === p.cls ? ' selected' : '')
           + '>' + esc(c.label) + '</option>';
       }).join('') + '</select>';
   }
 
+  // Division and department come off the roster for somebody the Staff base
+  // knows, and are typed for a write-in, which nothing else knows about.
+  function fact(p, field, value, label) {
+    if (!p.added) return '<td><span class="lb-fact">' + esc(value || '\u2014') + '</span></td>';
+    return '<td><input class="bd-note lb-fact-in" data-f="' + field + '"'
+      + ' value="' + esc(value || '') + '" aria-label="' + esc(label) + '"></td>';
+  }
+
   function row(p) {
     var c = cost(p);
+    var pc = p.prior ? p.prior.cost : null;
     var nameCell = p.added
       ? '<input class="bd-note" data-f="name" value="' + esc(p.n) + '" '
         + 'aria-label="Name of this post" placeholder="what the post is called">'
@@ -144,72 +185,125 @@
     var titleCell = p.added
       ? '<input class="bd-note" data-f="title" value="' + esc(p.t) + '" '
         + 'aria-label="Job title" placeholder="job title">'
-      : '<span class="lb-title">' + esc(p.t || '—') + '</span>';
+      : '<span class="lb-title">' + esc(p.t || '\u2014') + '</span>';
 
     return '<tr data-k="' + esc(p.k) + '"' + (p.added ? ' class="lb-new"' : '') + '>'
       + '<td><span class="lb-who"><span class="lb-name">' + chips(p) + nameCell + '</span>'
         + titleCell + '</span></td>'
+      + fact(p, 'division', p.v, 'Division for ' + p.n)
+      + fact(p, 'dept', p.d, 'Department for ' + p.n)
       + '<td><select class="lb-sel' + (p.pay ? ' set' : '') + '" data-f="pay"'
         + ' aria-label="How ' + esc(p.n) + ' is paid">'
-        + '<option value="">—</option>'
+        + '<option value="">\u2014</option>'
         + D.payTypes.map(function (t) {
           return '<option value="' + t.key + '"' + (t.key === p.pay ? ' selected' : '')
             + '>' + esc(t.label) + '</option>';
         }).join('') + '</select></td>'
       + '<td>' + clsCell(p) + '</td>'
-      + cell(p, 'rate', '', '')
-      + cell(p, 'salary', '', '')
-      + cell(p, 'hours', 'hrs', comma(D.fullTimeHours))
-      + '<td class="bd-n' + (c == null ? ' bd-base' : '') + '">'
-        + (c == null ? '—' : money(c)) + '</td>'
+      + cell(p, 'rate', D.baseYear, '', '')
+      + cell(p, 'hours', D.baseYear, 'hrs', comma(D.fullTimeHours))
+      + cell(p, 'salary', D.baseYear, '', '')
+      + totalCell(pc, true)
+      + cell(p, 'rate', D.year, '', '')
+      + cell(p, 'hours', D.year, 'hrs', comma(D.fullTimeHours))
+      + cell(p, 'salary', D.year, '', '')
+      + totalCell(c, false)
       + '<td><input class="bd-note" data-f="note" value="' + esc(p.note) + '"'
         + ' aria-label="Note about ' + esc(p.n) + '" placeholder="why / when"></td>'
       + '<td><button class="lb-x" type="button" title="Take off the plan"'
-        + ' aria-label="Take ' + esc(p.n) + ' off the plan">×</button></td>'
+        + ' aria-label="Take ' + esc(p.n) + ' off the plan">\u00d7</button></td>'
       + '</tr>';
   }
 
-  // Ninety-six dropdowns is not a decision anybody makes carefully by the
-  // fortieth one, and department is how this judgement is actually made.
-  // Shown only where there is payroll in the department to split.
-  function deptSetter(g) {
-    var mine = g.people.filter(splits);
-    if (!mine.length) return '';
+  // One list, so the totals under it are the totals of what is on screen.
+  // Filtering to a department and reading its payroll off the bottom is
+  // what the department bands used to be for.
+  function footRow(list) {
+    var base = 0;
+    var plan = 0;
+    list.forEach(function (p) {
+      base += (p.prior && p.prior.cost) || 0;
+      plan += cost(p) || 0;
+    });
+    return '<tr class="lb-foot"><td colspan="8">' + list.length
+      + (list.length === 1 ? ' person' : ' people')
+      + (filtered() ? ' shown' : '') + '</td>'
+      + '<td class="bd-n lb-tot lb-y1">' + money(base) + '</td>'
+      + '<td colspan="3"></td>'
+      + '<td class="bd-n lb-tot">' + money(plan) + '</td><td colspan="2"></td></tr>';
+  }
+
+  function render() {
+    var list = shown();
+    var body = list.length
+      ? list.map(row).join('') + footRow(list)
+      : '<tr><td colspan="' + COLS + '" class="pane-empty">Nobody matches that.</td></tr>';
+    $('#t').innerHTML = '<thead>' + head() + '</thead><tbody>' + body + '</tbody>';
+    $('#wrap').hidden = false;
+    renderBar(list);
+    chrome();
+  }
+
+  // The filter bar, drawn from what is actually on the plan rather than
+  // from a fixed list: a department nobody is in is a dead option, and a
+  // department added as a write-in would otherwise be unfilterable.
+  function fill(el, opts, value, none) {
+    if (!el) return;
+    el.innerHTML = '<option value="">' + esc(none) + '</option>'
+      + opts.map(function (o) {
+        return '<option value="' + esc(o.key) + '"'
+          + (o.key === value ? ' selected' : '') + '>' + esc(o.label) + '</option>';
+      }).join('');
+  }
+
+  function uniq(get) {
+    var seen = {};
+    D.people.forEach(function (p) {
+      var v = get(p);
+      if (v) seen[v] = true;
+    });
+    return Object.keys(seen).sort().map(function (v) { return { key: v, label: v }; });
+  }
+
+  function renderBar(list) {
+    fill($('#fDiv'), uniq(function (p) { return p.v; }), f.division, 'Any division');
+    fill($('#fDept'), uniq(function (p) { return p.d; }), f.dept, 'Any department');
+    fill($('#fPay'), D.payTypes.map(function (t) {
+      return { key: t.key, label: t.label };
+    }), f.pay, 'Any pay type');
+    fill($('#fCls'), D.classes.map(function (c) {
+      return { key: c.key, label: c.label };
+    }).concat([{ key: '-', label: 'Not split yet' }]), f.cls, 'Direct or G&A');
+    // The two year-specific ones are named here rather than in the Worker,
+    // which would have to send the same label twice with a year in it.
+    fill($('#filter'), (D.shows || []).filter(function (x) { return x.key !== 'all'; })
+      .map(function (x) {
+        return {
+          key: x.key,
+          label: x.key === 'todo' ? 'No ' + D.year + ' total'
+            : x.key === 'base-todo' ? 'No ' + D.baseYear + ' total'
+            : x.label,
+        };
+      }), f.show === 'all' ? '' : f.show, 'Everybody');
+    $('#clr').hidden = !filtered();
+    if ($('#q').value !== f.q) $('#q').value = f.q;
+
+    // Set direct-or-G&A on everybody on screen. Ninety-six dropdowns is not
+    // a decision anybody makes carefully by the fortieth one, and the
+    // filters are how the sheet is narrowed now.
+    var mine = list.filter(splits);
     var left = mine.filter(function (p) { return !p.cls; }).length;
-    return '<select class="lb-dsel" data-dept="' + esc(g.dept) + '"'
-      + ' aria-label="Set direct or G&amp;A for everybody in ' + esc(g.dept) + '">'
-      + '<option value="">' + (left ? left + ' to split…' : 'all split') + '</option>'
+    var bulk = $('#bulk');
+    bulk.hidden = !mine.length;
+    if (!mine.length) return;
+    bulk.innerHTML = '<span class="lb-bulk-n">' + mine.length + ' on payroll here'
+      + (left ? ' \u00b7 ' + left + ' not split yet' : ' \u00b7 all split') + '</span>'
+      + '<select class="lb-dsel" aria-label="Set direct or G&amp;A for everybody shown">'
+      + '<option value="">Set all shown\u2026</option>'
       + D.classes.map(function (c) {
         return '<option value="' + c.key + '">All ' + esc(c.label.toLowerCase()) + '</option>';
       }).join('')
       + '<option value="clear">Clear all</option></select>';
-  }
-
-  function render() {
-    var gs = depts();
-    var out = [];
-    gs.forEach(function (g) {
-      var folded = shut[g.dept];
-      out.push('<tr class="lb-dept" data-d="' + esc(g.dept) + '">'
-        + '<td colspan="5"><span class="lb-head">'
-        + '<button class="lb-caret" type="button" aria-expanded="' + (!folded)
-        + '" aria-label="' + (folded ? 'Show' : 'Hide') + ' ' + esc(g.dept) + '">'
-        + (folded ? '▸' : '▾') + '</button>'
-        + esc(g.dept) + '<span class="lb-n">' + g.people.length + '</span>'
-        + deptSetter(g) + '</span></td>'
-        + '<td class="lb-sum">' + (g.total ? money(g.total) : '') + '</td>'
-        + '<td></td><td></td></tr>');
-      if (!folded) g.people.forEach(function (p) { out.push(row(p)); });
-    });
-
-    if (!out.length) {
-      out.push('<tr><td colspan="' + COLS + '" class="pane-empty">'
-        + 'Nobody matches that.</td></tr>');
-    }
-
-    $('#t').innerHTML = '<thead>' + head() + '</thead><tbody>' + out.join('') + '</tbody>';
-    $('#wrap').hidden = false;
-    chrome();
   }
 
   function chrome() {
@@ -236,8 +330,12 @@
     $('#pl').hidden = false;
 
     var unsplit = D.people.filter(function (p) { return splits(p) && !p.cls; }).length;
+    var backfilled = D.people.filter(function (p) {
+      return p.prior && p.prior.cost != null;
+    }).length;
     $('#prog').innerHTML = '<b>' + D.people.length + '</b> on the plan · <b>'
-      + set + '</b> costed · <b>' + unsplit + '</b> not split · <b>'
+      + backfilled + '</b> with ' + D.baseYear + ' · <b>'
+      + set + '</b> costed for ' + D.year + ' · <b>' + unsplit + '</b> not split · <b>'
       + open + '</b> to be hired';
 
     // Against the budget. Recomputed locally from the same rollups, so it
@@ -267,7 +365,8 @@
     }
 
     $('#dl').href = '/api/labor.csv?year=' + D.year;
-    $('#sub').textContent = D.year + ' · ' + D.people.length + ' people';
+    $('#sub').textContent = D.baseYear + ' \u2192 ' + D.year + ' \u00b7 '
+      + D.people.length + ' people';
     $('#rc').textContent = 'Roster from the Staff base as of ' + D.rosterAsOf
       + ' · Active and to-be-hired · ' + D.rosterSize + ' people'
       + (D.separate ? ' · ' + D.separate + ' excluded, separate entity' : '');
@@ -323,27 +422,66 @@
     });
   }
 
+  // The plan year's own line. Everything the row knows about the person
+  // goes with it, because the row is the record.
   function save(p, redraw) {
     send('/api/labor/person', {
-      key: p.added ? p.k : p.k, added: p.added, name: p.n, title: p.t,
+      year: D.year,
+      key: p.k, added: p.added, name: p.n, title: p.t,
       dept: p.d, division: p.v, pay: p.pay, cls: p.cls,
       rate: p.rate, salary: p.salary, hours: p.hours, note: p.note,
     }, redraw ? function () { render(); } : null);
   }
 
+  // The baseline year's line: what they were actually paid. Only the three
+  // figures and the facts that identify the row -- the note, the split and
+  // the pay type belong to the year being planned, and writing them onto
+  // the baseline as well would have one edit quietly change two years.
+  //
+  // The pay type does go, because the baseline costs against its own: it
+  // starts as a copy of this year's and is the thing to change when
+  // somebody moved from hourly to salary.
+  function saveBase(p) {
+    var b = p.prior || {};
+    send('/api/labor/person', {
+      year: D.baseYear,
+      key: p.k, added: p.added, name: p.n, title: p.t,
+      dept: p.d, division: p.v, pay: b.pay || p.pay,
+      rate: b.rate, salary: b.salary, hours: b.hours,
+    });
+  }
+
   // ── Wiring ────────────────────────────────────────────────────────────
 
+  // Which of the two years an input belongs to, and the object its figure
+  // is kept on. The baseline keeps its figures under .prior, so the row
+  // holds both years at once without two lists to keep in step.
+  function holder(p, input) {
+    var base = Number(input.dataset.y) === D.baseYear;
+    if (!base) return p;
+    if (!p.prior) p.prior = { pay: p.pay, rate: null, salary: null, hours: null, cost: null };
+    return p.prior;
+  }
+
   function readNum(input, p, field) {
+    var on = holder(p, input);
     var raw = input.value.replace(/[,$\s]/g, '');
-    if (raw === '') p[field] = null;
-    else if (/^-?\d+(\.\d+)?$/.test(raw)) p[field] = Number(raw);
+    if (raw === '') on[field] = null;
+    else if (/^-?\d+(\.\d+)?$/.test(raw)) on[field] = Number(raw);
     else return false;
-    input.classList.toggle('set', p[field] != null);
-    var td = input.closest('tr').children[6];
-    var c = cost(p);
-    td.textContent = c == null ? '—' : money(c);
-    td.className = 'bd-n' + (c == null ? ' bd-base' : '');
+    input.classList.toggle('set', on[field] != null);
+    if (p.prior) p.prior.cost = cost({ pay: p.prior.pay || p.pay, rate: p.prior.rate,
+                                       salary: p.prior.salary, hours: p.prior.hours });
+    var tr = input.closest('tr');
+    paint(tr.children[8], p.prior ? p.prior.cost : null, true);
+    paint(tr.children[12], cost(p), false);
     return true;
+  }
+
+  function paint(td, c, base) {
+    if (!td) return;
+    td.textContent = c == null ? '\u2014' : money(c);
+    td.className = 'bd-n lb-tot' + (base ? ' lb-y1' : '') + (c == null ? ' bd-base' : '');
   }
 
   function bind() {
@@ -354,12 +492,17 @@
       if (!tr) return;
       var p = person(tr.dataset.k);
       if (!p) return;
-      var f = e.target.dataset.f;
-      if (f === 'rate' || f === 'salary' || f === 'hours') { readNum(e.target, p, f); chrome(); }
-      if (f === 'note' || f === 'name' || f === 'title') {
-        if (f === 'note') p.note = e.target.value;
-        if (f === 'name') p.n = e.target.value;
-        if (f === 'title') p.t = e.target.value;
+      var fld = e.target.dataset.f;
+      if (fld === 'rate' || fld === 'salary' || fld === 'hours') {
+        readNum(e.target, p, fld); chrome();
+      }
+      if (fld === 'note' || fld === 'name' || fld === 'title'
+          || fld === 'dept' || fld === 'division') {
+        if (fld === 'note') p.note = e.target.value;
+        if (fld === 'name') p.n = e.target.value;
+        if (fld === 'title') p.t = e.target.value;
+        if (fld === 'dept') p.d = e.target.value;
+        if (fld === 'division') p.v = e.target.value;
         clearTimeout(timers[p.k]);
         timers[p.k] = setTimeout(function () { save(p); }, 900);
       }
@@ -370,24 +513,25 @@
       if (!tr) return;
       var p = person(tr.dataset.k);
       if (!p) return;
-      var f = e.target.dataset.f;
-      if (f === 'cls') {
+      var fld = e.target.dataset.f;
+      if (fld === 'cls') {
         p.cls = e.target.value;
         e.target.classList.toggle('set', Boolean(p.cls));
         save(p);
         return;
       }
-      if (f === 'pay') {
+      if (fld === 'pay') {
         p.pay = e.target.value;
         // Which figures the row asks for has just changed, so the row is
         // drawn again rather than patched.
         save(p, true);
         return;
       }
-      if (f === 'rate' || f === 'salary' || f === 'hours') {
-        if (!readNum(e.target, p, f)) return;
-        e.target.value = p[f] == null ? '' : comma(p[f]);
-        save(p);
+      if (fld === 'rate' || fld === 'salary' || fld === 'hours') {
+        if (!readNum(e.target, p, fld)) return;
+        var on = holder(p, e.target);
+        e.target.value = on[fld] == null ? '' : comma(on[fld]);
+        if (Number(e.target.dataset.y) === D.baseYear) saveBase(p); else save(p);
       }
     });
 
@@ -396,13 +540,6 @@
     });
 
     t.addEventListener('click', function (e) {
-      var fold = e.target.closest('.lb-caret');
-      if (fold) {
-        var d = fold.closest('tr').dataset.d;
-        shut[d] = !shut[d];
-        render();
-        return;
-      }
       var x = e.target.closest('.lb-x');
       if (!x) return;
       var p = person(x.closest('tr').dataset.k);
@@ -416,21 +553,34 @@
            function () { render(); });
     });
 
-    // The department-wide setter lives on a heading row, which has no
-    // data-k, so it is handled on the capture pass -- before the per-person
-    // branch above can look for one.
-    t.addEventListener('change', function (e) {
+    // Everybody the filters are showing, which is what the bar says it
+    // will do. Read off the filter rather than off the table so a long
+    // list is not limited to what has been scrolled to.
+    $('#bulk').addEventListener('change', function (e) {
       if (!e.target.classList.contains('lb-dsel')) return;
       var want = e.target.value;
       if (!want) return;
-      var dept = e.target.dataset.dept;
-      var keys = D.people.filter(function (p) { return p.d === dept && splits(p); })
-        .map(function (p) { return p.k; });
+      var keys = shown().filter(splits).map(function (p) { return p.k; });
+      if (!keys.length) return;
       send('/api/labor/classify', { keys: keys, cls: want === 'clear' ? '' : want },
            function () { render(); });
-    }, true);
+    });
 
-    $('#filter').addEventListener('change', function (e) { show = e.target.value; render(); });
+    var narrow = function (field, value) { f[field] = value; render(); };
+    $('#filter').addEventListener('change', function (e) {
+      narrow('show', e.target.value || 'all');
+    });
+    $('#fDiv').addEventListener('change', function (e) { narrow('division', e.target.value); });
+    $('#fDept').addEventListener('change', function (e) { narrow('dept', e.target.value); });
+    $('#fPay').addEventListener('change', function (e) { narrow('pay', e.target.value); });
+    $('#fCls').addEventListener('change', function (e) { narrow('cls', e.target.value); });
+    $('#q').addEventListener('input', function (e) { narrow('q', e.target.value); });
+    $('#clr').addEventListener('click', function () {
+      f = { q: '', division: '', dept: '', pay: '', cls: '', show: 'all' };
+      $('#q').value = '';
+      render();
+      $('#q').focus();
+    });
 
     $('#add').addEventListener('click', function () {
       var name = window.prompt('What is the post called?\n\n'
@@ -465,8 +615,10 @@
       $('#say').innerHTML = 'Everybody on the Staff base with a status of Active or '
         + 'to-be-hired, plus anything added here. Salaried people need a salary; '
         + 'hourly people need a rate <b>and</b> hours — a rate on its own is not a cost, '
-        + 'so the projection stays blank until both are in. '
-        + 'Nobody’s pay is stored anywhere but here.';
+        + 'so the total stays blank until both are in. '
+        + D.baseYear + ' is what they were actually paid and ' + D.year
+        + ' is what you are budgeting; both are typed here and both are saved as '
+        + 'you type. Nobody’s pay is stored anywhere but here.';
       // The comparison panel is built after the data arrives so the page has
       // nothing in it to misread while it is still loading.
       var vs = document.createElement('div');
