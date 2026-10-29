@@ -24,11 +24,41 @@ export const XERO_CONNECTIONS = 'https://api.xero.com/connections';
 
 // offline_access is what makes a refresh token come back at all; without it
 // the link dies in half an hour and nobody finds out until a Monday.
+//
+// openid, profile and email are here because Xero refuses the whole sign-in
+// with invalid_scope without them -- every example in Xero's own SDK asks
+// for all three alongside the accounting scopes. Nothing here reads the
+// identity they return; they are the price of being let in.
+//
+// The read-only variants on purpose. This module reconciles what has already
+// happened; it has no business being able to write anybody's books.
 export const XERO_SCOPES = [
+  'openid',
+  'profile',
+  'email',
   'offline_access',
   'accounting.transactions.read',
   'accounting.settings.read',
 ].join(' ');
+
+/**
+ * The sign-in URL.
+ *
+ * Built by hand rather than with URLSearchParams, which encodes a space as
+ * "+". That is the HTML form convention, not the URL one, and the scope
+ * parameter is a space-separated list -- so "+" risks arriving as a literal
+ * plus in the middle of a scope name.
+ */
+export function authorizeUrl({ clientId, redirect, state }) {
+  const q = [
+    'response_type=code',
+    'client_id=' + encodeURIComponent(clientId || ''),
+    'redirect_uri=' + encodeURIComponent(redirect || ''),
+    'scope=' + encodeURIComponent(XERO_SCOPES),
+    'state=' + encodeURIComponent(state || ''),
+  ].join('&');
+  return XERO_AUTHORIZE + '?' + q;
+}
 
 // A sales invoice. ACCPAY is a bill we owe and has no business here; the
 // credit and prepayment types are not a retailer paying an invoice.

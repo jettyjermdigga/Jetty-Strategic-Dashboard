@@ -13,7 +13,7 @@ import {
 import { cleanIncoming, cleanDate } from '../worker/ingest.js';
 import {
   msDate, accountCodes, isWholesale, rowsFromInvoice, rowsFromPage,
-  pageQuery, sinceHeader, SALES, XERO_SCOPES, revenueAccounts,
+  pageQuery, sinceHeader, SALES, XERO_SCOPES, revenueAccounts, authorizeUrl,
 } from '../worker/xero.js';
 import { sqlStatements } from '../worker/sql.js';
 import { buildWhere, monthRange, cleanYear, cleanLimit, STATUS_KEYS } from '../worker/filters.js';
@@ -699,6 +699,33 @@ describe('what the pull asks Xero for', () => {
     ok(scopes.includes('accounting.transactions.read'));
     ok(!scopes.some((x) => x === 'accounting.transactions' || x === 'accounting.settings'),
        'it asks for write access to the books');
+  });
+  // Xero refuses the whole sign-in with invalid_scope without these, which
+  // is what it did. Every example in Xero's own SDK asks for all three.
+  it('asks for the identity scopes Xero insists on', () => {
+    const scopes = XERO_SCOPES.split(' ');
+    for (const s of ['openid', 'profile', 'email']) {
+      ok(scopes.includes(s), 'Xero will answer invalid_scope without ' + s);
+    }
+  });
+  it('sends people to Xero with everything the sign-in needs', () => {
+    const u = new URL(authorizeUrl({
+      clientId: 'CID', redirect: 'https://x.test/api/xero/callback', state: 'st',
+    }));
+    eq(u.origin + u.pathname, 'https://login.xero.com/identity/connect/authorize');
+    eq(u.searchParams.get('response_type'), 'code');
+    eq(u.searchParams.get('client_id'), 'CID');
+    eq(u.searchParams.get('redirect_uri'), 'https://x.test/api/xero/callback');
+    eq(u.searchParams.get('state'), 'st');
+    eq(u.searchParams.get('scope'), XERO_SCOPES);
+  });
+  // "+" is the HTML form convention, not the URL one. The scope parameter
+  // is a space-separated list, so a "+" risks arriving as a literal plus in
+  // the middle of a scope name.
+  it('separates the scopes with %20 rather than a plus', () => {
+    const raw = authorizeUrl({ clientId: 'C', redirect: 'https://x.test/cb', state: 's' });
+    ok(raw.includes('scope=openid%20profile%20email%20'), raw);
+    ok(!raw.includes('+'), 'a space was encoded as a plus');
   });
 });
 

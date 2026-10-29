@@ -15,7 +15,7 @@ import { sqlStatements } from './sql.js';
 import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
 import { buildWhere, cleanLimit, STATUSES } from './filters.js';
-import { XERO_AUTHORIZE, XERO_SCOPES, accountCodes, revenueAccounts } from './xero.js';
+import { XERO_SCOPES, accountCodes, revenueAccounts, authorizeUrl } from './xero.js';
 import {
   refreshAccess, exchangeCode, tenants, pullRows, chartOfAccounts,
 } from './xero-pull.js';
@@ -228,14 +228,11 @@ async function handleApi(request, env, url, who) {
     const state = crypto.randomUUID();
     await db.prepare('UPDATE xero SET oauth_state = ?, oauth_at = ? WHERE id = 1')
       .bind(state, new Date().toISOString()).run();
-    const q = new URLSearchParams({
-      response_type: 'code',
-      client_id: env.XERO_CLIENT_ID,
-      redirect_uri: url.origin + '/api/xero/callback',
-      scope: XERO_SCOPES,
+    return json({ go: authorizeUrl({
+      clientId: env.XERO_CLIENT_ID,
+      redirect: url.origin + '/api/xero/callback',
       state,
-    });
-    return json({ go: XERO_AUTHORIZE + '?' + q.toString() });
+    }) });
   }
 
   if (path === '/api/xero/callback' && method === 'GET') {
