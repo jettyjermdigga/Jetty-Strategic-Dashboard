@@ -15,6 +15,29 @@
   }
   var comma = function (n) { return Math.round(Number(n) || 0).toLocaleString(); };
 
+  // A figure in a box, as it should read on the way back out.
+  //
+  // A rate always carries its cents. $19.10 an hour is the rate somebody is
+  // on, and rounding it to $19 on screen is not a display choice: the next
+  // edit starts from what is shown, so the ten pence would be typed over
+  // and lost the first time anybody corrected the hours next to it.
+  //
+  // Everything else is whole unless it is not -- a salary of $54,500 should
+  // not read $54,500.00, and one of $54,500.50 should not read $54,501.
+  function fig(v, field) {
+    if (v == null || v === '') return '';
+    var n = Number(v);
+    if (!isFinite(n)) return '';
+    if (field === 'rate') {
+      return n.toLocaleString(undefined, { minimumFractionDigits: 2,
+                                           maximumFractionDigits: 2 });
+    }
+    var r = Math.round(n * 100) / 100;
+    return r % 1 === 0 ? comma(r)
+      : r.toLocaleString(undefined, { minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2 });
+  }
+
   var D = null;
   // Every way the sheet is narrowed, in one place. Empty means that field
   // asks nothing, which is why an untouched bar shows everybody.
@@ -142,9 +165,11 @@
     if (!wanted) return td + '<span class="lb-na">\u2014</span></td>';
     var v = base ? (p.prior ? p.prior[field] : null) : p[field];
     return td + '<input class="bd-in lb-in ' + cls + (v != null ? ' set' : '')
-      + '" data-f="' + field + '" data-y="' + yr + '" inputmode="numeric"'
+      + '" data-f="' + field + '" data-y="' + yr + '"'
+      // A numeric keypad with no decimal point on it is no use for a rate.
+      + ' inputmode="' + (field === 'rate' ? 'decimal' : 'numeric') + '"'
       + ' aria-label="' + esc(p.n) + ' ' + yr + ' ' + field + '"'
-      + ' value="' + (v == null ? '' : comma(v)) + '"'
+      + ' value="' + esc(fig(v, field)) + '"'
       + ' placeholder="' + ph + '"></td>';
   }
 
@@ -593,7 +618,7 @@
       if (fld === 'rate' || fld === 'salary' || fld === 'hours') {
         if (!readNum(e.target, p, fld)) return;
         var on = holder(p, e.target);
-        e.target.value = on[fld] == null ? '' : comma(on[fld]);
+        e.target.value = fig(on[fld], fld);
         if (Number(e.target.dataset.y) === D.baseYear) saveBase(p); else save(p);
       }
     });

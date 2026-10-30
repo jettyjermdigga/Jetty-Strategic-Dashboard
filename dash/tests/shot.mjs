@@ -455,9 +455,37 @@ for (const c of CASES) {
       };
     });
     const kept = after.inputs === before;
+
+    // A rate carries its cents. Rounding $19.10 to $19 on screen is not a
+    // display choice: the next edit starts from what is shown, so the ten
+    // pence is typed over and lost the first time anybody touches the row.
+    const rate = page.locator('tr[data-k] input[data-f="rate"]').first();
+    await rate.fill('19.10');
+    await rate.dispatchEvent('input');
+    await rate.dispatchEvent('change');
+    const typed = await rate.inputValue();
+    // And again after the sheet is drawn from scratch, which is the other
+    // half of it: a rate can be rounded on the way into the box as well as
+    // on the way out, and only one of those is what you see while typing.
+    await page.fill('#q', 'zzzz');
+    await page.fill('#q', '');
+    await page.waitForSelector('tr[data-k] input[data-f="rate"]');
+    const drawn = await page.locator('tr[data-k] input[data-f="rate"]').first().inputValue();
+    const shown = typed === drawn ? typed : typed + ' typed / ' + drawn + ' redrawn';
+    const hours = page.locator('tr[data-k] input[data-f="hours"]').first();
+    await hours.fill('2080');
+    await hours.dispatchEvent('change');
+    const total = await page.evaluate(() => document.querySelector(
+      'tr[data-k] [data-tot="base"]').textContent);
+
     console.log('  typing: ' + (kept ? 'inputs intact' : 'DESTROYED AN INPUT')
-      + ', totals ' + JSON.stringify(after.totals));
+      + ', rate reads ' + JSON.stringify(shown)
+      + ', total ' + JSON.stringify(total));
     if (!kept) process.exitCode = 1;
+    if (shown !== '19.10') {
+      console.log('    RATE LOST ITS CENTS: expected "19.10"');
+      process.exitCode = 1;
+    }
   }
 
   // The row is meant to be one line. Eleven chips fit only because the chip
