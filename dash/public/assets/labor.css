@@ -101,25 +101,31 @@
    here. */
 .lb-new td:first-child{box-shadow:inset 3px 0 0 var(--bd-pick)}
 
-/* Where the plan sits against what the budget says. Read only, on purpose. */
+/* Where the plan sits against what the budget says, and what it adds up
+   to. Read only, on purpose.
+
+   This used to be two: this panel, and a bar pinned to the bottom of the
+   window carrying the same six totals. The pinned one covered the last
+   row of the sheet to tell you something already on screen, so it is
+   gone and its shape -- label above, big figure below -- is what this
+   wears now. .bd-m and .bd-saved come from the budget's stylesheet; only
+   the container and the comparison line are set here. */
 .lb-vs{
-  display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start;
+  display:flex;gap:30px;flex-wrap:wrap;align-items:center;
   background:var(--card);border:1px solid var(--edge);border-radius:10px;
-  padding:13px 16px;margin:0 0 14px;
+  border-top:2px solid var(--primary);
+  padding:11px 16px;margin:0 0 14px;
 }
 .lb-vs[hidden]{display:none}
-.lb-vs-k{
-  font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
-  opacity:.8;
-}
-.lb-vs-v{font-family:var(--mono);font-size:14px;margin-top:3px}
-.lb-vs-n{font-family:var(--body);font-size:11.5px;opacity:.72;margin-top:2px}
 /* No opacity on this one. It is the only coloured figure on the page and
    dimming it put the green at 3.86:1 in light mode -- the smaller type is
    what makes it secondary, not a faded colour. */
-.lb-vs-v .gap{font-size:11.5px}
-.lb-vs-v .over{color:var(--bd-watch)}
-.lb-vs-v .under{color:var(--bd-good)}
+.lb-gap{
+  display:block;font-family:var(--mono);font-size:11px;letter-spacing:0;
+  text-transform:none;margin-top:2px;
+}
+.lb-gap.over{color:var(--bd-watch)}
+.lb-gap.under{color:var(--bd-good)}
 
 @media (max-width:760px){
   .lb-t th:first-child,.lb-t td:first-child{min-width:190px;max-width:190px}

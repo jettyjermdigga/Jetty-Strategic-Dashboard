@@ -1733,5 +1733,36 @@ describe('overriding what the roster says', () => {
   });
 });
 
+// ── One strip, not two ──────────────────────────────────────────────────
+//
+// The labor sheet carried the same six totals twice: a panel under the
+// filters comparing the plan against the budget, and a bar pinned to the
+// bottom of the window. The pinned one covered the last row of the sheet
+// to say what was already on screen.
+
+describe('what the labor totals are shown in', () => {
+  const HERE2 = path.dirname(fileURLToPath(import.meta.url));
+  const rd = (f) => fs.readFileSync(path.join(HERE2, '..', f), 'utf8');
+  const page = rd('public/assets/labor.js');
+
+  it('has no pinned bar left on the labor page', () => {
+    ok(!/id="pl"/.test(rd('public/labor.html')), 'the bar is still in the markup');
+    ok(!/\$\('#pl'\)/.test(page), 'the page still writes to it');
+  });
+  // The budget sheet is a different page with a different shape, and
+  // nobody asked for its footer to go.
+  it('leaves the budget page\'s own footer alone', () => {
+    ok(/id="pl"/.test(rd('public/budget.html')), 'the budget lost its P&L bar');
+    ok(/\$\('#pl'\)/.test(rd('public/assets/budget.js')), 'nothing fills it any more');
+  });
+  it('shows every rollup in the one strip that is left', () => {
+    const fn = page.slice(page.indexOf("var vs = $('#vs')"), page.indexOf("$('#dl').href"));
+    ok(/D\.rollups\.map/.test(fn), 'it only shows the ones with a budget line');
+    ok(/Everybody/.test(fn), 'the total of everything is gone');
+    ok(/id="saved"/.test(fn), 'the saving indicator went with the bar');
+    ok(/vs budget/.test(fn), 'the comparison went with the panel');
+  });
+});
+
 console.log('\n' + ran + ' checks, ' + (failed ? failed + ' FAILED' : 'all passed'));
 process.exit(failed ? 1 : 0);

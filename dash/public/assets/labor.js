@@ -385,48 +385,42 @@
     });
     var all = D.rollups.reduce(function (a, r) { return a + by[r.key].cost; }, 0);
 
-    $('#pl').innerHTML = D.rollups.map(function (r) {
-      return '<div class="bd-m">' + esc(r.label)
-        + '<b>' + money(by[r.key].cost) + '</b></div>';
-    }).join('')
-      + '<div class="bd-m">Everybody<b>' + money(all) + '</b></div>'
-      + '<div class="bd-saved" id="saved">'
-      + (saving ? 'Saving…' : 'Saved as you type') + '</div>';
-    $('#pl').hidden = false;
-
-    var unsplit = D.people.filter(function (p) { return splits(p) && !p.cls; }).length;
-    var backfilled = D.people.filter(function (p) {
-      return p.prior && p.prior.cost != null;
-    }).length;
-    $('#prog').innerHTML = '<b>' + D.people.length + '</b> on the plan · <b>'
-      + backfilled + '</b> with ' + D.baseYear + ' · <b>'
-      + set + '</b> costed for ' + D.year + ' · <b>' + unsplit + '</b> not split · <b>'
-      + open + '</b> to be hired';
-
-    // Against the budget. Recomputed locally from the same rollups, so it
-    // moves with the sheet rather than lagging a round trip behind.
+    // One strip, under the filters, where there used to be two: a panel
+    // of plan-against-budget here and a pinned bar of the same totals at
+    // the bottom of the window. They were the same six numbers twice, and
+    // the pinned one covered the last row of the sheet to say so.
+    //
+    // The bottom bar's shape is the one that survived -- label above, big
+    // figure below -- with the comparison it was missing folded in under
+    // each figure that has a budget line to be compared against.
     var vs = $('#vs');
     if (vs) {
-      vs.innerHTML = (D.against || []).map(function (a) {
-        var plan = by[a.key] ? by[a.key].cost : 0;
-        var gap = a.budget == null ? null : plan - a.budget;
-        return '<div><div class="lb-vs-k">' + esc(a.label) + '</div>'
-          + '<div class="lb-vs-v">' + money(plan)
-          + (a.budget == null ? ''
-            : ' <span class="gap ' + (gap > 0 ? 'over' : 'under') + '">'
-              + (gap > 0 ? '+' : '−') + money(Math.abs(gap)).replace('−', '')
-              + ' vs budget</span>')
-          + '</div>'
-          // A line with no 2026 behind it cannot also be "still the 2026
-          // baseline". Saying both at once is how a reader concludes the
-          // page is confused rather than that the line is new.
-          + '<div class="lb-vs-n">' + esc(a.lineName) + ': '
-          + (a.budget == null
-            ? 'new for ' + D.year + ', so there is no 2026 to compare'
-            : money(a.budget) + (a.decided ? '' : ' (still the 2026 baseline)'))
-          + '</div></div>';
-      }).join('');
-      vs.hidden = !(D.against || []).length;
+      var against = {};
+      (D.against || []).forEach(function (x) { against[x.key] = x; });
+      vs.innerHTML = D.rollups.map(function (r) {
+        var plan = by[r.key] ? by[r.key].cost : 0;
+        var a = against[r.key];
+        var gap = a && a.budget != null ? plan - a.budget : null;
+        // A line with no baseline behind it cannot also be "still the
+        // baseline". Saying both at once is how a reader concludes the
+        // page is confused rather than that the line is new.
+        var why = !a ? r.label + ' has no budget line of its own.'
+          : a.lineName + ': ' + (a.budget == null
+            ? 'new for ' + D.year + ', so there is no ' + D.baseYear + ' to compare'
+            : money(a.budget) + (a.decided
+              ? '' : ' (still the ' + D.baseYear + ' baseline)'));
+        return '<div class="bd-m" title="' + esc(why) + '">' + esc(r.label)
+          + '<b>' + money(plan) + '</b>'
+          + (gap == null ? ''
+            : '<span class="lb-gap ' + (gap > 0 ? 'over' : 'under') + '">'
+              + (gap > 0 ? '+' : '\u2212')
+              + money(Math.abs(gap)).replace('\u2212', '') + ' vs budget</span>')
+          + '</div>';
+      }).join('')
+        + '<div class="bd-m">Everybody<b>' + money(all) + '</b></div>'
+        + '<div class="bd-saved" id="saved">'
+        + (saving ? 'Saving\u2026' : 'Saved as you type') + '</div>';
+      vs.hidden = false;
     }
 
     $('#dl').href = '/api/labor.csv?year=' + D.year;
@@ -709,6 +703,7 @@
       var vs = document.createElement('div');
       vs.className = 'lb-vs';
       vs.id = 'vs';
+      vs.hidden = true;
       $('#bar').after(vs);
       bind();
       render();
