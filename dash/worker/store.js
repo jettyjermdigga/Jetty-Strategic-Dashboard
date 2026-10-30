@@ -17,6 +17,7 @@ import { TILES, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES, linkCats }
 import { cleanKey, cleanUrl, cleanTile, cleanPerson, cleanLink } from './clean.js';
 import { cleanLine } from './budget.js';
 import { cleanPerson as cleanLaborPerson, cleanKey as cleanLaborKey } from './labor.js';
+import { cleanLine as cleanCogsLine, lineId as cogsLineId } from './cogs.js';
 import { PEOPLE } from './people.js';
 
 // Re-exported so callers have one import for "the store", while the rules
@@ -826,4 +827,71 @@ export async function removeLaborPerson(db, year, key, added, who) {
     + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
     .bind(year, k, new Date().toISOString(), who || '').run();
   return { ok: true };
+}
+
+// ── COGS planning ───────────────────────────────────────────────────────
+
+/** Every decision made about a season, keyed by line id. */
+export async function readCogs(db) {
+  const res = await db.prepare(
+    'SELECT id, season, kind, season_label, amount, note, added, removed, '
+    + 'updated_at, updated_by FROM cogs').all();
+  const out = {};
+  for (const r of res.results || []) {
+    out[r.id] = {
+      season: r.season || '', kind: r.kind || '',
+      seasonLabel: r.season_label || '',
+      amount: r.amount, note: r.note || '',
+      added: Boolean(r.added), removed: Boolean(r.removed),
+      at: r.updated_at, by: r.updated_by,
+    };
+  }
+  return out;
+}
+
+/** Save one line. */
+export async function saveCogsLine(db, id, input, who) {
+  const existing = (await readCogs(db))[id] || null;
+  const out = cleanCogsLine(input, existing);
+  if (out.errors) return out;
+  const r = out.row;
+  // The id follows the line: repointing a seeded line at another season
+  // would otherwise leave the figure filed under the season it came from.
+  const at = r.added ? (id || cogsLineId(r.season, r.kind)) : cogsLineId(r.season, r.kind);
+
+  if (r.clear) {
+    await db.prepare('DELETE FROM cogs WHERE id = ?').bind(at).run();
+    return { ok: true, cleared: true, id: at };
+  }
+
+  await db.prepare(
+    'INSERT INTO cogs (id, season, kind, season_label, amount, note, added, removed, '
+    + 'updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?) '
+    + 'ON CONFLICT(id) DO UPDATE SET season = excluded.season, kind = excluded.kind, '
+    + 'season_label = excluded.season_label, amount = excluded.amount, '
+    + 'note = excluded.note, added = excluded.added, '
+    + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
+    .bind(at, r.season, r.kind, r.seasonLabel, r.amount, r.note, r.added ? 1 : 0,
+          new Date().toISOString(), who || '').run();
+  return { ok: true, id: at };
+}
+
+/**
+ * Take a line off the sheet.
+ *
+ * An added line is deleted outright -- it is the only record that the
+ * season was ever here. A seeded one is marked struck off instead, because
+ * the seed runs on every boot and deleting it would put it straight back.
+ */
+export async function removeCogsLine(db, id, added, who) {
+  if (added) {
+    await db.prepare('DELETE FROM cogs WHERE id = ? AND added = 1').bind(id).run();
+    return { ok: true, deleted: true };
+  }
+  await db.prepare(
+    'INSERT INTO cogs (id, removed, updated_at, updated_by) VALUES (?, 1, ?, ?) '
+    + 'ON CONFLICT(id) DO UPDATE SET removed = 1, updated_at = excluded.updated_at, '
+    + 'updated_by = excluded.updated_by')
+    .bind(id, new Date().toISOString(), who || '').run();
+  return { ok: true, removed: true };
 }

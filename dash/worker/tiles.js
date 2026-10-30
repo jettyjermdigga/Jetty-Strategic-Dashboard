@@ -158,6 +158,20 @@ export const TILES = [
   },
 
   {
+    key: 'cogs',
+    name: 'COGS Planning',
+    blurb: 'What each season costs to make \u2014 bulk and samples, season by season.',
+    url: '/cogs.html',
+    icon: 'calc',
+    category: 'finance',
+    // Same door as the budget. What a season costs to make is the other
+    // half of next year's margin, and BUDGET_USERS is the list that says
+    // who is in that conversation.
+    everyone: false,
+    status: 'live',
+  },
+
+  {
     key: 'music-monday',
     name: 'Music Monday',
     blurb: 'Every pick since February 2013 \u2014 this week up top, thirteen years below.',

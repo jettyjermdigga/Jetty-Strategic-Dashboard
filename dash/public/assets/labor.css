@@ -142,3 +142,19 @@
   border:1px solid var(--field-line);background:var(--field);color:var(--ink);
   max-width:168px;
 }
+
+/* ── COGS planning ───────────────────────────────────────────────────── */
+/* Five columns, not seventeen, so the sheet has no business being as wide
+   as the window. Capped rather than stretched: a figure three feet from
+   the season it belongs to is harder to read, not easier.
+
+   Deliberately not .lb-t -- that one sets min-width:100% so seventeen
+   columns can run off the side, which would undo the cap here. */
+.cg-wrap{max-width:880px}
+.cg-t th,.cg-t td{padding:6px 10px}
+.cg-t th:first-child,.cg-t td:first-child{text-align:left;width:150px}
+.cg-t th:nth-child(2),.cg-t td:nth-child(2){width:120px}
+.cg-t .lb-sel{width:100%;max-width:none}
+.cg-t .cg-amt{width:118px;text-align:right}
+.cg-t .bd-note{width:100%;min-width:150px}
+.cg-t .lb-foot td{background:var(--bd-row)}

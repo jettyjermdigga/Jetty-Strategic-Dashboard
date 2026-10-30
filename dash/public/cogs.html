@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>COGS Planning — The Jetty Dash</title>
+<link rel="icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/assets/fonts.css">
+<link rel="stylesheet" href="/assets/rc_system.css">
+<link rel="stylesheet" href="/assets/dash.css">
+<link rel="stylesheet" href="/assets/budget.css">
+<link rel="stylesheet" href="/assets/labor.css">
+</head>
+<body>
+
+<header class="site-top">
+  <div class="brand">
+    <img src="/assets/logo.png" alt="Jetty">
+    <div class="divider"></div>
+    <div>
+      <div class="title-main">COGS Planning</div>
+      <div class="title-sub" id="sub">Loading</div>
+    </div>
+  </div>
+  <div class="site-who"><a class="back" href="/">&larr; Back to the dash</a></div>
+</header>
+
+<main class="dash-shell bd-shell">
+  <div id="notice"></div>
+
+  <div class="bd-bar" id="bar" hidden>
+    <a class="bd-go" href="/budget.html">&larr; Budget</a>
+
+    <input id="q" class="lb-q" type="search" placeholder="Find a line&hellip;"
+           autocomplete="off" aria-label="Search by season or note">
+    <select id="fSeason" class="bd-sel" aria-label="Which season"></select>
+    <select id="fKind" class="bd-sel" aria-label="Bulk or SMS"></select>
+    <select id="filter" class="bd-sel" aria-label="Which lines to show"></select>
+    <button class="lb-clr" id="clr" type="button" hidden>Clear</button>
+
+    <button class="lb-add" id="add" type="button">+ Add a season</button>
+
+    <span class="bd-grow"></span>
+
+    <span class="bd-prog" id="prog"></span>
+    <a class="bd-dl" id="dl" href="/api/cogs.csv" download>Download CSV</a>
+  </div>
+
+  <div class="lb-vs" id="vs" hidden></div>
+
+  <div class="bd-wrap cg-wrap" id="wrap" hidden><table class="bd-t cg-t" id="t"></table></div>
+</main>
+
+<script src="/assets/cogs.js"></script>
+</body>
+</html>

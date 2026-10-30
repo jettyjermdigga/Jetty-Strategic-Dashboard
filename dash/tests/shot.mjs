@@ -14,6 +14,10 @@ import {
   GROUPS as BUDGET_GROUPS, BASES, CADENCES, BASELINE_YEAR, FIRST_YEAR,
 } from '../worker/budget.js';
 import {
+  rows as cogsRows, summary as cogsSummary, duplicates as cogsDuplicates,
+  seasonOptions as cogsSeasons, KINDS as COGS_KINDS, SHOWS as COGS_SHOWS,
+} from '../worker/cogs.js';
+import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
   withPrior as laborWithPrior, SHOWS as LABOR_SHOWS,
   PEOPLE as ROSTER, ROSTER_AS_OF, SEPARATE_DIVISIONS, PAY_TYPES, CLASSES,
@@ -173,6 +177,16 @@ const CASES = [
   { file: 'labor-dept', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'labor.html', wait: '.lb-sel',
     select: ['#fDept', 'Flagship Store'], after: '.lb-foot' },
+  { file: 'cogs-light', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'cogs.html', wait: '.lb-sel' },
+  { file: 'cogs-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    path: 'cogs.html', wait: '.lb-sel' },
+  // One season, which is the shape it gets read in: bulk against samples.
+  { file: 'cogs-season', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'cogs.html', wait: '.lb-sel',
+    select: ['#fSeason', 'sp27'], after: '.lb-foot' },
+  { file: 'cogs-shut-out', scheme: 'light', who: full('amy@jettylife.com'),
+    path: 'cogs.html', wait: '.notice', noBudget: true },
   { file: 'labor-shut-out', scheme: 'light', who: full('amy@jettylife.com'),
     path: 'labor.html', wait: '.notice', noBudget: true },
   { file: 'budget-shut-out', scheme: 'dark', who: full('amy@jettylife.com'),
@@ -279,6 +293,27 @@ const LABOR = (() => {
   };
 })();
 
+// A COGS sheet part way through: next year half costed, one prior season
+// backfilled so the trend has something to be a trend against.
+const COGS = (() => {
+  const saved = {
+    'sp27:bulk': { amount: 1240000 }, 'sp27:sms': { amount: 48500 },
+    'su27:bulk': { amount: 910000 },
+    'f27:bulk': { amount: 1380000 }, 'f27:sms': { amount: 52000 },
+    'starboard:bulk': { amount: 165000 },
+    'sp26:bulk': { added: true, season: 'sp26', kind: 'bulk',
+                   seasonLabel: 'SP26', amount: 1192000 },
+    'sp26:sms': { added: true, season: 'sp26', kind: 'sms',
+                  seasonLabel: 'SP26', amount: 44800 },
+  };
+  const rs = cogsRows(saved);
+  return {
+    you: 'jeremy@jettylife.com', kinds: COGS_KINDS, shows: COGS_SHOWS,
+    lines: rs, seasons: cogsSeasons(rs),
+    summary: cogsSummary(rs), duplicates: cogsDuplicates(rs),
+  };
+})();
+
 const browser = await chromium.launch();
 for (const c of CASES) {
   const page = await browser.newPage({
@@ -295,6 +330,11 @@ for (const c of CASES) {
       return c.noBudget
         ? route.fulfill({ status: 404, json: { error: 'No such endpoint.' } })
         : route.fulfill({ json: BUDGET });
+    }
+    if (p === '/api/cogs') {
+      return c.noBudget
+        ? route.fulfill({ status: 404, json: { error: 'No such endpoint.' } })
+        : route.fulfill({ json: COGS });
     }
     if (p === '/api/labor') {
       return c.noBudget
@@ -515,7 +555,7 @@ for (const c of CASES) {
       .map((c) => Math.round(c.getBoundingClientRect().top)));
     return { over: el.scrollWidth - el.clientWidth, rows: tops.size };
   });
-  console.log(c.file + '  ' + (await page.locator('.cb, .tl, .row, tr[data-k]').count()) + ' items'
+  console.log(c.file + '  ' + (await page.locator('.cb, .tl, .row, tr[data-k], tr[data-id]').count()) + ' items'
     + (bar ? '  row: ' + bar.rows + ' line' + (bar.rows === 1 ? '' : 's')
              + (bar.over > 0 ? ', OVERFLOWS by ' + bar.over + 'px' : ', fits') : '')
     + (outward.length ? '  NOT OPENING OUT: ' + outward.join(', ') : '')

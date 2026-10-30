@@ -26,8 +26,15 @@ import {
   ROLLUPS, FULL_TIME_HOURS, FT_TYPES, DIVISIONS,
 } from './labor.js';
 import {
+  rows as cogsRows, summary as cogsSummary, duplicates as cogsDuplicates,
+  seasonOptions as cogsSeasons, csv as cogsCsv, lineId as cogsLineId,
+  cleanSeasonKey, SEASONS as COGS_SEASONS, KINDS as COGS_KINDS,
+  SHOWS as COGS_SHOWS,
+} from './cogs.js';
+import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
   readLinks, cleanLink, saveLink, deleteLink, readMusic,
+  readCogs, saveCogsLine, removeCogsLine,
   readBudget, saveBudgetLine,
   readLabor, saveLaborPerson, removeLaborPerson, classifyPeople,
   cleanTile, cleanPerson, cleanKey, saveTile, deleteTile, savePerson, deletePerson,
@@ -112,6 +119,7 @@ export default {
       }
       if (url.pathname.startsWith('/api/budget')) return await budget(request, env, url, who);
       if (url.pathname.startsWith('/api/labor')) return await labor(request, env, url, who);
+      if (url.pathname.startsWith('/api/cogs')) return await cogs(request, env, url, who);
       if (url.pathname.startsWith('/api/admin/')) return await admin(request, env, url, who);
       return json({ error: 'No such endpoint.' }, 404);
     } catch (err) {
@@ -297,6 +305,72 @@ async function budget(request, env, url, who) {
 // Behind the same lock as the budget, and for a stronger reason: this is
 // every person's pay, by name. Nothing here is sent to a request that is
 // not on BUDGET_USERS, and no figure in it exists anywhere but D1.
+/**
+ * COGS planning.
+ *
+ * Behind the same door as the budget and the labor plan. What a season
+ * costs to make is the other half of next year's margin, and somebody who
+ * cannot see the budget has no business seeing this either.
+ */
+async function cogs(request, env, url, who) {
+  if (!canBudget(env, who)) return json({ error: 'No such endpoint.' }, 404);
+
+  const what = url.pathname.slice('/api/cogs'.length);
+
+  const sheet = async () => {
+    const rs = cogsRows(await readCogs(env.DB));
+    return {
+      lines: rs,
+      seasons: cogsSeasons(rs),
+      summary: cogsSummary(rs),
+      duplicates: cogsDuplicates(rs),
+    };
+  };
+
+  if (what === '' && request.method === 'GET') {
+    const out = await sheet();
+    return json({
+      you: who.email,
+      kinds: COGS_KINDS, shows: COGS_SHOWS,
+      planned: COGS_SEASONS.map((s) => s.key),
+      ...out,
+    });
+  }
+
+  if (what === '.csv' && request.method === 'GET') {
+    const rs = cogsRows(await readCogs(env.DB));
+    return new Response(cogsCsv(rs), {
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': 'attachment; filename="jetty-cogs.csv"',
+      },
+    });
+  }
+
+  if ((what === '/line' || what === '/line/remove') && request.method === 'POST') {
+    const body = await request.json().catch(() => null);
+    if (!body) return json({ error: 'That was not JSON.' }, 400);
+
+    if (what === '/line/remove') {
+      const id = String(body.id || '');
+      if (!id) return json({ errors: ['That is not a line.'] }, 400);
+      const out = await removeCogsLine(env.DB, id, Boolean(body.added), who.email);
+      if (out.errors) return json(out, 400);
+      return json({ ok: true, ...(await sheet()) });
+    }
+
+    // A line added by hand keeps the id it was given, so editing one does
+    // not leave a second copy behind under the old season.
+    const id = String(body.id || '')
+      || cogsLineId(cleanSeasonKey(body.season), String(body.kind || ''));
+    const out = await saveCogsLine(env.DB, id, body, who.email);
+    if (out.errors) return json(out, 400);
+    return json({ ok: true, id: out.id, ...(await sheet()) });
+  }
+
+  return json({ error: 'No such endpoint.' }, 404);
+}
+
 async function labor(request, env, url, who) {
   if (!canBudget(env, who)) return json({ error: 'No such endpoint.' }, 404);
 

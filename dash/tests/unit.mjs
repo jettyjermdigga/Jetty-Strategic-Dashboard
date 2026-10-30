@@ -24,6 +24,13 @@ import {
   withPrior, matches, SHOWS, FT_TYPES, DIVISIONS,
 } from '../worker/labor.js';
 
+import {
+  rows as cogsRows, summary as cogsSummary, duplicates as cogsDuplicates,
+  seasonOptions as cogsSeasons, matches as cogsMatches, cleanLine as cogsClean,
+  csv as cogsCsv, lineId as cogsLineId, cleanSeasonKey,
+  SEASONS as COGS_SEASONS, KINDS as COGS_KINDS, SEED as COGS_SEED,
+  SHOWS as COGS_SHOWS,
+} from '../worker/cogs.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1761,6 +1768,173 @@ describe('what the labor totals are shown in', () => {
     ok(/Everybody/.test(fn), 'the total of everything is gone');
     ok(/id="saved"/.test(fn), 'the saving indicator went with the bar');
     ok(/vs budget/.test(fn), 'the comparison went with the panel');
+  });
+});
+
+// ── COGS planning ───────────────────────────────────────────────────────
+//
+// A row is a season and a kind of buy: the bulk production run, and the
+// salesman samples that go out months ahead of it against the same season.
+// Keeping those two apart is most of why the sheet exists -- a season
+// costed as one number has the samples buried in it or missing.
+
+describe('the COGS sheet', () => {
+  const HERE2 = path.dirname(fileURLToPath(import.meta.url));
+  const rd = (f) => fs.readFileSync(path.join(HERE2, '..', f), 'utf8');
+
+  it('opens with every season bought both ways', () => {
+    eq(COGS_SEED.length, COGS_SEASONS.length * COGS_KINDS.length);
+    eq(cogsRows({}).length, COGS_SEED.length);
+    for (const want of ['sp27', 'su27', 'f27', 'h27', 'collab',
+                        'special-drops', 'starboard']) {
+      ok(COGS_SEASONS.some((s) => s.key === want), want + ' is not a season');
+    }
+    eq(COGS_KINDS.map((k) => k.key).join(','), 'bulk,sms');
+  });
+  // There is no seeded figure anywhere, which is what makes a blank a
+  // blank rather than a zero somebody might read as a decision.
+  it('opens with no money in it at all', () => {
+    for (const r of cogsRows({})) eq(r.amount, null, r.id + ' arrived costed');
+    ok(!/\b\d{4,}\b/.test(rd('worker/cogs.js').replace(/20\d\d/g, '')),
+       'there is a figure in the module');
+  });
+
+  const saved = {
+    'sp27:bulk': { amount: 1240000 },
+    'sp27:sms': { amount: 48500 },
+    'sp26:bulk': { added: true, season: 'sp26', kind: 'bulk',
+                   seasonLabel: 'SP26', amount: 1192000 },
+  };
+
+  it('keeps a struck-off line struck off', () => {
+    const rs = cogsRows({ ...saved, 'h27:sms': { removed: true } });
+    ok(!rs.some((r) => r.id === 'h27:sms'), 'the seed put it back');
+    eq(rs.length, COGS_SEED.length, 'and took something else with it');
+  });
+  it('carries a backfilled season that nothing else knows about', () => {
+    const rs = cogsRows(saved);
+    const back = rs.filter((r) => r.season === 'sp26')[0];
+    ok(back && back.added, 'the prior season is not on the sheet');
+    eq(back.seasonLabel, 'SP26', 'it has no name of its own');
+  });
+  it('offers the planned seasons first and the backfilled ones behind', () => {
+    const got = cogsSeasons(cogsRows(saved)).map((s) => s.key);
+    eq(got.slice(0, COGS_SEASONS.length), COGS_SEASONS.map((s) => s.key));
+    eq(got[got.length - 1], 'sp26');
+  });
+
+  it('totals bulk and samples apart as well as together', () => {
+    const s = cogsSummary(cogsRows(saved));
+    eq(s.byKind.bulk.cost, 1240000 + 1192000);
+    eq(s.byKind.sms.cost, 48500);
+    eq(s.total, 1240000 + 1192000 + 48500);
+  });
+  // A season nobody has costed is not a season costing nothing, and the
+  // difference is the whole of what is left to do.
+  it('counts what has been costed, not what exists', () => {
+    const s = cogsSummary(cogsRows(saved));
+    eq(s.decided, 3);
+    eq(s.lines, COGS_SEED.length + 1);
+    ok(s.lines > s.decided, 'everything reads as decided');
+    // Per kind too: "5 of 8 costed" is what the strip says, and it is the
+    // only thing on the page saying how much is left to do.
+    eq([s.byKind.bulk.decided, s.byKind.bulk.lines], [2, COGS_SEASONS.length + 1]);
+    eq([s.byKind.sms.decided, s.byKind.sms.lines], [1, COGS_SEASONS.length]);
+  });
+  // A season bought bulk twice is either two commitments or one typed in
+  // twice, and the sheet cannot tell. It can say so, which is the
+  // difference between a total somebody trusts and a silent double count.
+  it('says when a season is on the sheet twice', () => {
+    eq(cogsDuplicates(cogsRows(saved)).length, 0);
+    const twice = cogsRows({ ...saved,
+      'sp27:bulk:2': { added: true, season: 'sp27', kind: 'bulk', amount: 5 } });
+    const d = cogsDuplicates(twice);
+    eq(d.length, 1);
+    eq(d[0].count, 2);
+  });
+
+  const keys = (f) => cogsRows(saved).filter((r) => cogsMatches(r, f))
+    .map((r) => r.id).join(',');
+  it('narrows by each thing it offers', () => {
+    eq(keys({ season: 'sp26' }), 'sp26:bulk');
+    eq(keys({ kind: 'sms' }).split(',').length, COGS_SEASONS.length);
+    eq(keys({ season: 'sp27', kind: 'sms' }), 'sp27:sms');
+    eq(keys({ q: 'sp26' }), 'sp26:bulk');
+  });
+  it('answers what is left to cost', () => {
+    eq(keys({ show: 'costed' }), 'sp27:bulk,sp27:sms,sp26:bulk');
+    ok(!keys({ show: 'todo' }).includes('sp27:bulk'));
+  });
+  // The sheet narrows as you type, which it cannot do by asking the
+  // server, so the rule is in both places and this keeps them honest.
+  it('is the same rule on the page as in the Worker', () => {
+    const page = rd('public/assets/cogs.js');
+    const fn = page.slice(page.indexOf('function keep(r)'), page.indexOf('function shown()'));
+    for (const field of ['season', 'kind']) {
+      ok(fn.includes('f.' + field), 'the page does not filter on ' + field);
+    }
+    for (const show of COGS_SHOWS.map((x) => x.key).filter((x) => x !== 'all')) {
+      ok(fn.includes("'" + show + "'"), 'the page does not know the ' + show + ' filter');
+    }
+  });
+
+  it('refuses a line with nothing to file it under', () => {
+    ok(cogsClean({ kind: 'bulk' }, null).errors, 'a line with no season was taken');
+    ok(cogsClean({ season: 'sp27' }, null).errors, 'a line with no kind was taken');
+    ok(cogsClean({ season: 'sp27', kind: 'both' }, null).errors);
+  });
+  // A seeded line pointed at a season that does not exist would vanish
+  // from the sheet it came from. A backfilled one brings its own, which
+  // is the only way a prior season gets here at all.
+  it('takes a season it has never heard of only on a backfilled line', () => {
+    ok(cogsClean({ season: 'sp26', kind: 'bulk' }, null).errors);
+    ok(!cogsClean({ added: true, season: 'sp26', kind: 'bulk' }, null).errors);
+  });
+  it('refuses a cost that is not one', () => {
+    ok(cogsClean({ season: 'sp27', kind: 'bulk', amount: 'lots' }, null).errors);
+    ok(cogsClean({ season: 'sp27', kind: 'bulk', amount: '-5' }, null).errors);
+    eq(cogsClean({ season: 'sp27', kind: 'bulk', amount: '$1,240,000' }, null).row.amount,
+       1240000);
+  });
+  it('clears a seeded line that has nothing on it, and keeps a backfilled one', () => {
+    eq(cogsClean({ season: 'sp27', kind: 'bulk' }, null).row.clear, true);
+    eq(cogsClean({ season: 'sp27', kind: 'bulk', note: 'waiting on the quote' },
+                 null).row.clear, false);
+    eq(cogsClean({ added: true, season: 'sp26', kind: 'bulk' }, null).row.clear, false);
+  });
+  // The id is season:kind, so a colon in a season name would make one id
+  // mean two things.
+  it('will not let a season name break the id it is half of', () => {
+    eq(cleanSeasonKey('SP:26'), 'sp-26');
+    eq(cleanSeasonKey('  F25  '), 'f25');
+    eq(cleanSeasonKey('!!'), '');
+    eq(cogsLineId('sp27', 'bulk'), 'sp27:bulk');
+  });
+
+  it('downloads what is on the sheet', () => {
+    const out = cogsCsv(cogsRows(saved)).split('\n');
+    ok(out[0].includes('Season') && out[0].includes('Total COGS'), out[0]);
+    ok(out.some((l) => l.startsWith('SP26,Bulk,1192000')), 'the backfilled season is missing');
+  });
+
+  it('is behind the same door as the budget', () => {
+    const idx = rd('worker/index.js');
+    const fn = idx.slice(idx.indexOf('async function cogs('),
+                         idx.indexOf('async function labor('));
+    ok(/canBudget\(env, who\)/.test(fn), 'anybody signed in could read it');
+    const tile = TILES.find((t) => t.key === 'cogs');
+    ok(tile, 'there is no tile for it');
+    eq(tile.everyone, false, 'the tile is shown to everybody');
+  });
+  // The seed runs on every boot. Deleting a seeded line rather than
+  // marking it would put it straight back, which is the bug this codebase
+  // has now had six times.
+  it('strikes a seeded line off rather than deleting it', () => {
+    const store = rd('worker/store.js');
+    const fn = store.slice(store.indexOf('export async function removeCogsLine'));
+    ok(/DELETE FROM cogs WHERE id = \? AND added = 1/.test(fn),
+       'a backfilled line is not deleted outright');
+    ok(/removed = 1/.test(fn), 'a seeded line is deleted and will come back');
   });
 });
 

@@ -175,3 +175,29 @@ CREATE TABLE IF NOT EXISTS labor (
   updated_by  TEXT,
   PRIMARY KEY (year, person_key)
 );
+
+-- COGS planning: what a season's goods cost, season by season.
+--
+-- Same rule as the budget and the labor plan -- only what somebody DECIDED
+-- is stored, and there is no seeded figure anywhere. The fourteen lines
+-- the sheet opens with live in worker/cogs.js and carry no money at all;
+-- every number in this table was typed into the page.
+--
+-- The id is season:kind, so the sheet's own lines keep one id however
+-- often the Worker boots. `added` marks a line somebody keyed in -- a
+-- prior season, almost always -- which carries its own season and label
+-- because nothing else knows about it. `removed` strikes a seeded line
+-- off, and has to be stored rather than deleted: the seed runs on every
+-- boot and would otherwise put it straight back.
+CREATE TABLE IF NOT EXISTS cogs (
+  id            TEXT PRIMARY KEY,
+  season        TEXT NOT NULL DEFAULT '',
+  kind          TEXT NOT NULL DEFAULT '',
+  season_label  TEXT NOT NULL DEFAULT '',
+  amount        REAL,
+  note          TEXT NOT NULL DEFAULT '',
+  added         INTEGER NOT NULL DEFAULT 0,
+  removed       INTEGER NOT NULL DEFAULT 0,
+  updated_at    TEXT,
+  updated_by    TEXT
+);
