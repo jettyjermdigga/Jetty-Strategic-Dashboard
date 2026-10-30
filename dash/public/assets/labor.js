@@ -126,12 +126,13 @@
   function head() {
     return '<tr>'
       + '<th>Person</th><th>Division</th><th>Department</th><th>Hours</th>'
-      + '<th>Paid</th><th>Direct or G&amp;A</th>'
+      + '<th>Direct or G&amp;A</th>'
       + '<th class="lb-y1">' + D.baseYear + ' paid</th>'
       + '<th class="lb-y1">' + D.baseYear + ' rate <span>$/hr</span></th>'
       + '<th class="lb-y1">' + D.baseYear + ' hours</th>'
       + '<th class="lb-y1">' + D.baseYear + ' salary</th>'
       + '<th class="lb-y1 lb-tot">' + D.baseYear + ' total</th>'
+      + '<th>' + D.year + ' paid</th>'
       + '<th>' + D.year + ' rate <span>$/hr</span></th>'
       + '<th>' + D.year + ' hours</th>'
       + '<th>' + D.year + ' salary</th>'
@@ -224,10 +225,13 @@
     return Object.keys(seen).sort();
   }
 
-  // How somebody was paid in the baseline year, which is not always how
-  // they are paid now -- five people on this roster are hourly in the
-  // Staff base and were on a salary all year. Without this the 2026 block
-  // asks them for a rate and has nowhere to put what they actually earned.
+  // How somebody is paid, asked once per year rather than once per person.
+  //
+  // It was a column of its own, which quietly meant "this year" and left
+  // the baseline unable to disagree -- and five people on this roster are
+  // hourly in the Staff base and were on a salary all last year. Each
+  // year's block now opens with its own answer, and the figures beside it
+  // are the ones that answer asks for.
   function payCell(p, yr) {
     var base = yr === D.baseYear;
     var v = base ? (p.prior && p.prior.pay) || p.pay : p.pay;
@@ -259,13 +263,13 @@
       + pick(p, 'division', p.v, D.divisions || [], 'Division for ' + p.n, '\u2014')
       + pick(p, 'dept', p.d, deptOptions(), 'Department for ' + p.n, 'Unassigned')
       + pick(p, 'ft', p.ft, D.ftTypes || [], 'Full or part time for ' + p.n, '\u2014')
-      + payCell(p, D.year)
       + '<td>' + clsCell(p) + '</td>'
       + payCell(p, D.baseYear)
       + cell(p, 'rate', D.baseYear, '', '')
       + cell(p, 'hours', D.baseYear, 'hrs', comma(D.fullTimeHours))
       + cell(p, 'salary', D.baseYear, '', '')
       + totalCell(pc, true)
+      + payCell(p, D.year)
       + cell(p, 'rate', D.year, '', '')
       + cell(p, 'hours', D.year, 'hrs', comma(D.fullTimeHours))
       + cell(p, 'salary', D.year, '', '')
@@ -287,11 +291,11 @@
       base += (p.prior && p.prior.cost) || 0;
       plan += cost(p) || 0;
     });
-    return '<tr class="lb-foot"><td colspan="10">' + list.length
+    return '<tr class="lb-foot"><td colspan="9">' + list.length
       + (list.length === 1 ? ' person' : ' people')
       + (filtered() ? ' shown' : '') + '</td>'
       + '<td class="bd-n lb-tot lb-y1">' + money(base) + '</td>'
-      + '<td colspan="3"></td>'
+      + '<td colspan="4"></td>'
       + '<td class="bd-n lb-tot">' + money(plan) + '</td><td colspan="2"></td></tr>';
   }
 

@@ -442,6 +442,23 @@ for (const c of CASES) {
   // door, destroying the input it landed in. Screenshots did not catch it
   // because nothing typed; this does.
   if (c.types) {
+    // The header and the body have to agree on how many columns there are,
+    // and a footer that spans the wrong number puts every total under the
+    // wrong heading. Counted rather than looked at, because a row is
+    // seventeen cells wide and nobody counts that by eye twice.
+    const widths = await page.evaluate(() => {
+      const n = (tr) => [...tr.children].reduce(
+        (t, td) => t + (Number(td.getAttribute('colspan')) || 1), 0);
+      return {
+        head: n(document.querySelector('.lb-t thead tr')),
+        body: n(document.querySelector('.lb-t tbody tr[data-k]')),
+        foot: n(document.querySelector('.lb-t .lb-foot')),
+      };
+    });
+    const square = widths.head === widths.body && widths.body === widths.foot;
+    console.log('  columns: ' + JSON.stringify(widths) + (square ? ' square' : ' RAGGED'));
+    if (!square) process.exitCode = 1;
+
     const before = await page.locator('tr[data-k] input.lb-in').count();
     const box = page.locator('tr[data-k] input.lb-in').first();
     await box.fill('25');
