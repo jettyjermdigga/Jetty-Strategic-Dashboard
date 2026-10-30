@@ -21,7 +21,7 @@ import {
   against, cleanPerson as cleanLaborPerson, cleanKey as laborKey, csv as laborCsv,
   num, rollOf, PEOPLE as ROSTER, ON_STAFF, SEPARATE_DIVISIONS,
   PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS, ROSTER_AS_OF,
-  withPrior, matches, SHOWS, FT_TYPES,
+  withPrior, matches, SHOWS, FT_TYPES, DIVISIONS,
 } from '../worker/labor.js';
 
 import fs from 'node:fs';
@@ -1680,6 +1680,28 @@ describe('overriding what the roster says', () => {
     eq(row.dept, '');
     eq(row.ft, '');
   });
+  it('moves somebody between divisions as well', () => {
+    const r = laborRows({ [seeded.k]: { division: 'INK' } })
+      .filter((x) => x.k === seeded.k)[0];
+    eq(r.v, 'INK');
+  });
+  // The list comes off the roster so it cannot drift from the Staff base,
+  // and leaves out the entity this plan deliberately does not budget for.
+  it('offers the divisions this plan budgets for, and no others', () => {
+    for (const v of DIVISIONS) {
+      ok(ROSTER.some((p) => p.v === v), v + ' is on the list and on nobody');
+    }
+    for (const v of SEPARATE_DIVISIONS) ok(!DIVISIONS.includes(v), v);
+    for (const p of ROSTER) ok(!p.v || DIVISIONS.includes(p.v), p.k + ' is in ' + p.v);
+  });
+  // They would stay on the sheet and in every total while reading as
+  // though they belonged to another company's books.
+  it('will not label somebody into the entity it leaves out', () => {
+    for (const v of SEPARATE_DIVISIONS) {
+      ok(cleanLaborPerson({ division: v }, null).errors, v + ' was accepted');
+    }
+    ok(!cleanLaborPerson({ division: 'INK' }, null).errors);
+  });
   it('refuses hours that are not a kind of hours', () => {
     ok(cleanLaborPerson({ ft: 'Sometimes' }, null).errors);
     for (const v of FT_TYPES) ok(!cleanLaborPerson({ ft: v }, null).errors, v);
@@ -1698,6 +1720,7 @@ describe('overriding what the roster says', () => {
     const HERE2 = path.dirname(fileURLToPath(import.meta.url));
     const page = fs.readFileSync(
       path.join(HERE2, '..', 'public', 'assets', 'labor.js'), 'utf8');
+    ok(/pick\(p, 'division'/.test(page), 'the division is not a picker');
     ok(/pick\(p, 'dept'/.test(page), 'the department is not a picker');
     ok(/pick\(p, 'ft'/.test(page), 'the hours are not a picker');
     ok(/function deptOptions/.test(page), 'the list is not built from the plan');

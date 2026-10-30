@@ -17,7 +17,7 @@ import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
   withPrior as laborWithPrior, SHOWS as LABOR_SHOWS,
   PEOPLE as ROSTER, ROSTER_AS_OF, SEPARATE_DIVISIONS, PAY_TYPES, CLASSES,
-  ROLLUPS, FULL_TIME_HOURS, FT_TYPES,
+  ROLLUPS, FULL_TIME_HOURS, FT_TYPES, DIVISIONS,
 } from '../worker/labor.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
@@ -272,7 +272,7 @@ const LABOR = (() => {
     you: 'jeremy@jettylife.com',
     rosterAsOf: ROSTER_AS_OF, rosterSize: ROSTER.length,
     separate: SEPARATE_DIVISIONS.join(', '),
-    payTypes: PAY_TYPES, classes: CLASSES, rollups: ROLLUPS, ftTypes: FT_TYPES,
+    payTypes: PAY_TYPES, classes: CLASSES, rollups: ROLLUPS, ftTypes: FT_TYPES, divisions: DIVISIONS,
     fullTimeHours: FULL_TIME_HOURS,
     people,
     against: laborAgainst(laborSummary(people), {}, 'proj'),

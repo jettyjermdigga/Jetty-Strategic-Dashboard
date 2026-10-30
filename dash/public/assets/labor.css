@@ -80,8 +80,6 @@
 .lb-y1{background:var(--bd-row)}
 .lb-t tbody tr:hover .lb-y1{background:var(--bd-row)}
 .lb-tot{font-weight:700}
-.lb-fact{font-family:var(--body);font-size:12.5px;opacity:.85;white-space:nowrap}
-.lb-fact-in{max-width:132px}
 
 /* The filter bar. A search box and one control per column that can be
    picked from a list; the numbers are filtered by the questions they

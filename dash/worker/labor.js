@@ -93,6 +93,16 @@ export const ROLLUPS = [
   { key: 'other', label: 'Other', line: '' },
 ];
 
+// The divisions a person on this plan can belong to.
+//
+// Taken from the roster rather than written out, so it cannot drift from
+// the Staff base -- and with the separate entities left out, because
+// offering one here would let somebody be labelled as belonging to a
+// company this plan deliberately does not budget for. They would stay on
+// the sheet and in every total while reading as though they were not.
+export const DIVISIONS = [...new Set(PEOPLE.map((p) => p.v).filter(Boolean))]
+  .filter((v) => !SEPARATE_DIVISIONS.includes(v)).sort();
+
 // Full or part time. From the Staff base to begin with and editable here,
 // because the plan is next year and somebody going part-time in March is a
 // budget decision rather than a correction to the roster.
@@ -413,6 +423,12 @@ export function cleanPerson(input, existing) {
   const division = text(input && input.division, 20);
   const ft = text(input && input.ft, 20);
   if (ft && !FT_TYPES.includes(ft)) errors.push('No such kind of hours: ' + ft);
+  // A write-in brings its own division and so may be anything; a person
+  // the roster knows can only be moved between the divisions this plan
+  // budgets for.
+  if (division && !added && !DIVISIONS.includes(division)) {
+    errors.push('No such division: ' + division);
+  }
 
   if (errors.length) return { errors };
   return {

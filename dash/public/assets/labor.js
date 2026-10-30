@@ -167,14 +167,6 @@
       }).join('') + '</select>';
   }
 
-  // Division comes off the roster for somebody the Staff base knows, and
-  // is typed for a write-in, which nothing else knows about.
-  function fact(p, field, value, label) {
-    if (!p.added) return '<td><span class="lb-fact">' + esc(value || '\u2014') + '</span></td>';
-    return '<td><input class="bd-note lb-fact-in" data-f="' + field + '"'
-      + ' value="' + esc(value || '') + '" aria-label="' + esc(label) + '"></td>';
-  }
-
   // Picked from a list rather than typed, so two spellings of the same
   // department cannot end up as two departments -- which would split the
   // filter, the totals and the classifier three ways.
@@ -216,7 +208,7 @@
     return '<tr data-k="' + esc(p.k) + '"' + (p.added ? ' class="lb-new"' : '') + '>'
       + '<td><span class="lb-who"><span class="lb-name">' + chips(p) + nameCell + '</span>'
         + titleCell + '</span></td>'
-      + fact(p, 'division', p.v, 'Division for ' + p.n)
+      + pick(p, 'division', p.v, D.divisions || [], 'Division for ' + p.n, '\u2014')
       + pick(p, 'dept', p.d, deptOptions(), 'Department for ' + p.n, 'Unassigned')
       + pick(p, 'ft', p.ft, D.ftTypes || [], 'Full or part time for ' + p.n, '\u2014')
       + '<td><select class="lb-sel' + (p.pay ? ' set' : '') + '" data-f="pay"'
@@ -548,8 +540,9 @@
       var p = person(tr.dataset.k);
       if (!p) return;
       var fld = e.target.dataset.f;
-      if (fld === 'dept' || fld === 'ft') {
+      if (fld === 'dept' || fld === 'ft' || fld === 'division') {
         if (fld === 'dept') p.d = e.target.value;
+        else if (fld === 'division') p.v = e.target.value;
         else p.ft = e.target.value;
         // A department changed is a row that may have just left the filter
         // it was found under, so the sheet is drawn again rather than
