@@ -52,6 +52,9 @@ const ADDED_COLUMNS = [
   // adding the column to schema.sql alone would reach every database but
   // the one that matters.
   ['labor', 'cls TEXT NOT NULL DEFAULT \'\''],
+  // And before the department, hours and division could be set here rather
+  // than only read off the roster.
+  ['labor', 'ft TEXT NOT NULL DEFAULT \'\''],
 ];
 
 export async function ensureSchema(db) {
@@ -724,14 +727,15 @@ export async function saveBudgetLine(db, year, key, input, who) {
 /** Every decision made about a person for a year, keyed by person. */
 export async function readLabor(db, year) {
   const res = await db.prepare(
-    'SELECT person_key, name, title, dept, division, pay_type, cls, rate, salary, '
+    'SELECT person_key, name, title, dept, division, ft, pay_type, cls, rate, salary, '
     + 'hours, note, added, removed, updated_at, updated_by FROM labor WHERE year = ?')
     .bind(year).all();
   const out = {};
   for (const r of res.results || []) {
     out[r.person_key] = {
       name: r.name || '', title: r.title || '', dept: r.dept || '',
-      division: r.division || '', pay: r.pay_type || '', cls: r.cls || '',
+      division: r.division || '', ft: r.ft || '',
+      pay: r.pay_type || '', cls: r.cls || '',
       rate: r.rate, salary: r.salary, hours: r.hours,
       note: r.note || '', added: Boolean(r.added), removed: Boolean(r.removed),
       at: r.updated_at, by: r.updated_by,
@@ -756,16 +760,17 @@ export async function saveLaborPerson(db, year, key, input, who) {
   }
 
   await db.prepare(
-    'INSERT INTO labor (year, person_key, name, title, dept, division, pay_type, cls, '
+    'INSERT INTO labor (year, person_key, name, title, dept, division, ft, pay_type, cls, '
     + 'rate, salary, hours, note, added, removed, updated_at, updated_by) '
-    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) '
+    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) '
     + 'ON CONFLICT(year, person_key) DO UPDATE SET name = excluded.name, '
     + 'title = excluded.title, dept = excluded.dept, division = excluded.division, '
+    + 'ft = excluded.ft, '
     + 'pay_type = excluded.pay_type, cls = excluded.cls, rate = excluded.rate, '
     + 'salary = excluded.salary, hours = excluded.hours, note = excluded.note, '
     + 'added = excluded.added, '
     + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
-    .bind(year, k, r.name, r.title, r.dept, r.division, r.pay, r.cls,
+    .bind(year, k, r.name, r.title, r.dept, r.division, r.ft, r.pay, r.cls,
           r.rate, r.salary, r.hours, r.note, r.added ? 1 : 0,
           new Date().toISOString(), who || '').run();
   return { ok: true };

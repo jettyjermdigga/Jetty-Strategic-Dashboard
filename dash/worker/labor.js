@@ -93,6 +93,14 @@ export const ROLLUPS = [
   { key: 'other', label: 'Other', line: '' },
 ];
 
+// Full or part time. From the Staff base to begin with and editable here,
+// because the plan is next year and somebody going part-time in March is a
+// budget decision rather than a correction to the roster.
+//
+// The empty string is a real answer and stays available: an outsourced
+// supplier or a contract firm is neither.
+export const FT_TYPES = ['Full-time', 'Part-time'];
+
 // A full-time year at 40 hours. Offered as the placeholder on an hourly
 // line and never stored, so the page can suggest it without it counting as
 // a decision somebody made.
@@ -175,8 +183,15 @@ export function rows(saved) {
     const d = s[p.k];
     if (d && d.removed) continue;
     out.push({
-      k: p.k, n: p.n, t: p.t, d: p.d, v: p.v, ft: p.ft, type: p.type, tbh: p.tbh,
+      k: p.k, n: p.n, t: p.t, type: p.type, tbh: p.tbh,
       added: false,
+      // The roster is where these start, not where they are fixed. A
+      // department moved or an hours change for next year is a decision
+      // about the plan, and the plan is what this table holds -- the Staff
+      // base is still right about today either way.
+      d: (d && d.dept) || p.d,
+      v: (d && d.division) || p.v,
+      ft: d && d.ft != null && d.ft !== '' ? d.ft : p.ft,
       pay: d && d.pay ? d.pay : p.pay,
       cls: (d && d.cls) || '',
       rate: d && d.rate != null ? d.rate : null,
@@ -194,7 +209,7 @@ export function rows(saved) {
     if (!d || !d.added || d.removed) continue;
     out.push({
       k, n: d.name || 'New post', t: d.title || '', d: d.dept || 'Unassigned',
-      v: d.division || '', ft: '', type: 'w2', tbh: true, added: true,
+      v: d.division || '', ft: d.ft || '', type: 'w2', tbh: true, added: true,
       pay: d.pay || '', cls: d.cls || '', rate: d.rate == null ? null : d.rate,
       salary: d.salary == null ? null : d.salary,
       hours: d.hours == null ? null : d.hours,
@@ -391,21 +406,30 @@ export function cleanPerson(input, existing) {
   const name = text(input && input.name, 80);
   if (added && !name) errors.push('A post needs a name, even if it is just the job.');
 
+  // Empty means "as the roster has it", which is why these are not
+  // defaulted here: storing the seeded value as an override would make
+  // every row look edited and freeze it against a later roster.
+  const dept = text(input && input.dept, 60);
+  const division = text(input && input.division, 20);
+  const ft = text(input && input.ft, 20);
+  if (ft && !FT_TYPES.includes(ft)) errors.push('No such kind of hours: ' + ft);
+
   if (errors.length) return { errors };
   return {
     row: {
       added,
       name: added ? name : '',
       title: added ? text(input && input.title, 80) : '',
-      dept: added ? (text(input && input.dept, 60) || 'Unassigned') : '',
-      division: added ? text(input && input.division, 20) : '',
+      dept: added ? (dept || 'Unassigned') : dept,
+      division, ft,
       pay, cls,
       rate: figures.rate, salary: figures.salary, hours: figures.hours,
       note: text(input && input.note, 300),
       // A seeded person with nothing on their line is simply undecided, and
       // the row goes rather than sitting there as a set of nulls. A write-in
       // always keeps its row: it IS the only record that the post exists.
-      clear: !added && !pay && !cls && figures.rate == null && figures.salary == null
+      clear: !added && !pay && !cls && !dept && !division && !ft
+        && figures.rate == null && figures.salary == null
         && figures.hours == null && !text(input && input.note, 300),
     },
   };

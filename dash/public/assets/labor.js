@@ -98,11 +98,11 @@
 
   // ── Drawing ───────────────────────────────────────────────────────────
 
-  var COLS = 15;
+  var COLS = 16;
 
   function head() {
     return '<tr>'
-      + '<th>Person</th><th>Division</th><th>Department</th>'
+      + '<th>Person</th><th>Division</th><th>Department</th><th>Hours</th>'
       + '<th>Paid</th><th>Direct or G&amp;A</th>'
       + '<th class="lb-y1">' + D.baseYear + ' rate <span>$/hr</span></th>'
       + '<th class="lb-y1">' + D.baseYear + ' hours</th>'
@@ -115,11 +115,11 @@
       + '<th>Note</th><th></th></tr>';
   }
 
+  // Part-time used to be a chip beside the name. It is a column now, so
+  // saying it twice would be two places to read the same thing and one
+  // place to change it.
   function chips(p) {
-    var out = '';
-    if (p.tbh) out += '<span class="lb-chip tbh">' + (p.added ? 'NEW' : 'TBH') + '</span>';
-    if (p.ft === 'Part-time') out += '<span class="lb-chip">PT</span>';
-    return out;
+    return p.tbh ? '<span class="lb-chip tbh">' + (p.added ? 'NEW' : 'TBH') + '</span>' : '';
   }
 
   // A cell for a figure this way of being paid does not ask for. Drawn as a
@@ -167,12 +167,38 @@
       }).join('') + '</select>';
   }
 
-  // Division and department come off the roster for somebody the Staff base
-  // knows, and are typed for a write-in, which nothing else knows about.
+  // Division comes off the roster for somebody the Staff base knows, and
+  // is typed for a write-in, which nothing else knows about.
   function fact(p, field, value, label) {
     if (!p.added) return '<td><span class="lb-fact">' + esc(value || '\u2014') + '</span></td>';
     return '<td><input class="bd-note lb-fact-in" data-f="' + field + '"'
       + ' value="' + esc(value || '') + '" aria-label="' + esc(label) + '"></td>';
+  }
+
+  // Picked from a list rather than typed, so two spellings of the same
+  // department cannot end up as two departments -- which would split the
+  // filter, the totals and the classifier three ways.
+  //
+  // The roster is where these start and not where they are fixed: moving
+  // somebody for next year is a decision about the plan, and the Staff base
+  // is still right about today.
+  function pick(p, field, value, opts, label, none) {
+    return '<td><select class="lb-sel lb-pick" data-f="' + field + '"'
+      + ' aria-label="' + esc(label) + '">'
+      + '<option value="">' + esc(none) + '</option>'
+      + opts.map(function (o) {
+        return '<option value="' + esc(o) + '"'
+          + (o === value ? ' selected' : '') + '>' + esc(o) + '</option>';
+      }).join('') + '</select></td>';
+  }
+
+  // Every department on the plan, so one that only a write-in uses is
+  // still pickable, plus Unassigned for a post that has no home yet.
+  function deptOptions() {
+    var seen = {};
+    D.people.forEach(function (p) { if (p.d) seen[p.d] = true; });
+    seen.Unassigned = true;
+    return Object.keys(seen).sort();
   }
 
   function row(p) {
@@ -191,7 +217,8 @@
       + '<td><span class="lb-who"><span class="lb-name">' + chips(p) + nameCell + '</span>'
         + titleCell + '</span></td>'
       + fact(p, 'division', p.v, 'Division for ' + p.n)
-      + fact(p, 'dept', p.d, 'Department for ' + p.n)
+      + pick(p, 'dept', p.d, deptOptions(), 'Department for ' + p.n, 'Unassigned')
+      + pick(p, 'ft', p.ft, D.ftTypes || [], 'Full or part time for ' + p.n, '\u2014')
       + '<td><select class="lb-sel' + (p.pay ? ' set' : '') + '" data-f="pay"'
         + ' aria-label="How ' + esc(p.n) + ' is paid">'
         + '<option value="">\u2014</option>'
@@ -225,7 +252,7 @@
       base += (p.prior && p.prior.cost) || 0;
       plan += cost(p) || 0;
     });
-    return '<tr class="lb-foot"><td colspan="8">' + list.length
+    return '<tr class="lb-foot"><td colspan="9">' + list.length
       + (list.length === 1 ? ' person' : ' people')
       + (filtered() ? ' shown' : '') + '</td>'
       + '<td class="bd-n lb-tot lb-y1">' + money(base) + '</td>'
@@ -288,22 +315,21 @@
     $('#clr').hidden = !filtered();
     if ($('#q').value !== f.q) $('#q').value = f.q;
 
-    // Set direct-or-G&A on everybody on screen. Ninety-six dropdowns is not
-    // a decision anybody makes carefully by the fortieth one, and the
+    // Set direct-or-G&A on everybody on screen. Ninety-six dropdowns is
+    // not a decision anybody makes carefully by the fortieth one, and the
     // filters are how the sheet is narrowed now.
+    //
+    // How many are on payroll and how many are still unsplit is already in
+    // the line above, so it is not said again here.
     var mine = list.filter(splits);
-    var left = mine.filter(function (p) { return !p.cls; }).length;
-    var bulk = $('#bulk');
+    var bulk = $('#bulkSet');
     bulk.hidden = !mine.length;
     if (!mine.length) return;
-    bulk.innerHTML = '<span class="lb-bulk-n">' + mine.length + ' on payroll here'
-      + (left ? ' \u00b7 ' + left + ' not split yet' : ' \u00b7 all split') + '</span>'
-      + '<select class="lb-dsel" aria-label="Set direct or G&amp;A for everybody shown">'
-      + '<option value="">Set all shown\u2026</option>'
+    bulk.innerHTML = '<option value="">Set all shown\u2026</option>'
       + D.classes.map(function (c) {
         return '<option value="' + c.key + '">All ' + esc(c.label.toLowerCase()) + '</option>';
       }).join('')
-      + '<option value="clear">Clear all</option></select>';
+      + '<option value="clear">Clear all</option>';
   }
 
   function chrome() {
@@ -365,11 +391,19 @@
     }
 
     $('#dl').href = '/api/labor.csv?year=' + D.year;
-    $('#sub').textContent = D.baseYear + ' \u2192 ' + D.year + ' \u00b7 '
-      + D.people.length + ' people';
-    $('#rc').textContent = 'Roster from the Staff base as of ' + D.rosterAsOf
-      + ' · Active and to-be-hired · ' + D.rosterSize + ' people'
-      + (D.separate ? ' · ' + D.separate + ' excluded, separate entity' : '');
+    // Where the roster came from, on the one line that was already there.
+    // The paragraph under it said the same at length and is gone -- but a
+    // plan that is quietly two people short is one somebody reconciles
+    // against payroll and cannot make agree, so what was left out is still
+    // said, and still said on the page rather than in a tooltip.
+    var sub = $('#sub');
+    sub.textContent = D.baseYear + ' \u2192 ' + D.year + ' \u00b7 '
+      + D.people.length + ' people \u00b7 Staff base ' + D.rosterAsOf
+      + (D.separate ? ' \u00b7 ' + D.separate + ' separate' : '');
+    sub.title = 'Active and to-be-hired on the Staff base as of ' + D.rosterAsOf
+      + ' (' + D.rosterSize + ' people), plus anything added here'
+      + (D.separate ? '. ' + D.separate + ' is a separate entity with its own '
+        + 'books and is left off' : '');
   }
 
   // ── Saving ────────────────────────────────────────────────────────────
@@ -428,7 +462,7 @@
     send('/api/labor/person', {
       year: D.year,
       key: p.k, added: p.added, name: p.n, title: p.t,
-      dept: p.d, division: p.v, pay: p.pay, cls: p.cls,
+      dept: p.d, division: p.v, ft: p.ft, pay: p.pay, cls: p.cls,
       rate: p.rate, salary: p.salary, hours: p.hours, note: p.note,
     }, redraw ? function () { render(); } : null);
   }
@@ -446,7 +480,7 @@
     send('/api/labor/person', {
       year: D.baseYear,
       key: p.k, added: p.added, name: p.n, title: p.t,
-      dept: p.d, division: p.v, pay: b.pay || p.pay,
+      dept: p.d, division: p.v, ft: p.ft, pay: b.pay || p.pay,
       rate: b.rate, salary: b.salary, hours: b.hours,
     });
   }
@@ -514,6 +548,15 @@
       var p = person(tr.dataset.k);
       if (!p) return;
       var fld = e.target.dataset.f;
+      if (fld === 'dept' || fld === 'ft') {
+        if (fld === 'dept') p.d = e.target.value;
+        else p.ft = e.target.value;
+        // A department changed is a row that may have just left the filter
+        // it was found under, so the sheet is drawn again rather than
+        // patched -- and the department list itself may have grown.
+        save(p, true);
+        return;
+      }
       if (fld === 'cls') {
         p.cls = e.target.value;
         e.target.classList.toggle('set', Boolean(p.cls));
@@ -556,9 +599,9 @@
     // Everybody the filters are showing, which is what the bar says it
     // will do. Read off the filter rather than off the table so a long
     // list is not limited to what has been scrolled to.
-    $('#bulk').addEventListener('change', function (e) {
-      if (!e.target.classList.contains('lb-dsel')) return;
+    $('#bulkSet').addEventListener('change', function (e) {
       var want = e.target.value;
+      e.target.value = '';
       if (!want) return;
       var keys = shown().filter(splits).map(function (p) { return p.k; });
       if (!keys.length) return;
@@ -612,19 +655,12 @@
       if (data.error) { $('#sub').textContent = 'Unavailable'; return say(data.error); }
       D = data;
       $('#bar').hidden = false;
-      $('#say').innerHTML = 'Everybody on the Staff base with a status of Active or '
-        + 'to-be-hired, plus anything added here. Salaried people need a salary; '
-        + 'hourly people need a rate <b>and</b> hours — a rate on its own is not a cost, '
-        + 'so the total stays blank until both are in. '
-        + D.baseYear + ' is what they were actually paid and ' + D.year
-        + ' is what you are budgeting; both are typed here and both are saved as '
-        + 'you type. Nobody’s pay is stored anywhere but here.';
       // The comparison panel is built after the data arrives so the page has
       // nothing in it to misread while it is still loading.
       var vs = document.createElement('div');
       vs.className = 'lb-vs';
       vs.id = 'vs';
-      $('#say').after(vs);
+      $('#bar').after(vs);
       bind();
       render();
     })

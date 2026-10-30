@@ -21,7 +21,7 @@ import {
   against, cleanPerson as cleanLaborPerson, cleanKey as laborKey, csv as laborCsv,
   num, rollOf, PEOPLE as ROSTER, ON_STAFF, SEPARATE_DIVISIONS,
   PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS, ROSTER_AS_OF,
-  withPrior, matches, SHOWS,
+  withPrior, matches, SHOWS, FT_TYPES,
 } from '../worker/labor.js';
 
 import fs from 'node:fs';
@@ -1090,6 +1090,10 @@ describe('a separate entity is not on this plan', () => {
     const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
     ok(/separate: SEPARATE_DIVISIONS/.test(idx), 'the Worker does not send what it left out');
     ok(/D\.separate/.test(page), 'the page does not say what it left out');
+    // In the header line, which is what is left after the paragraph that
+    // used to carry it was taken off.
+    ok(/sub\.textContent[\s\S]{0,400}D\.separate/.test(page),
+       'what was left out is only in a tooltip now');
   });
 });
 
@@ -1643,6 +1647,66 @@ describe('which year a typed figure lands on', () => {
   it('takes somebody off the plan rather than off one year of it', () => {
     ok(/removeLaborPerson\(env\.DB, year, key/.test(body),
        'a removal is scoped to whichever year was being typed in');
+  });
+});
+
+// ── The roster is where a person starts, not where they are fixed ───────
+//
+// Department and hours were read off the Staff base and could not be
+// changed here. Moving somebody for next year, or putting them on four
+// days, is a decision about the plan -- and the Staff base is still right
+// about today either way.
+
+describe('overriding what the roster says', () => {
+  const seeded = ROSTER[0];
+
+  it('keeps the roster answer when nothing was decided', () => {
+    const r = laborRows({})[0];
+    eq(r.d, ROSTER[0].d);
+    eq(r.ft, ROSTER[0].ft);
+  });
+  it('takes the decision over the roster when there is one', () => {
+    const r = laborRows({ [seeded.k]: { dept: 'Wholesale', ft: 'Part-time' } })
+      .filter((x) => x.k === seeded.k)[0];
+    eq(r.d, 'Wholesale');
+    eq(r.ft, 'Part-time');
+  });
+  // Empty is "as the roster has it", which is not the same as a blank: an
+  // outsourced supplier is neither full nor part time, and writing the
+  // seeded value onto every row would freeze each one against a later
+  // roster.
+  it('does not store the roster answer as a decision', () => {
+    const row = cleanLaborPerson({ dept: '', ft: '' }, null).row;
+    eq(row.dept, '');
+    eq(row.ft, '');
+  });
+  it('refuses hours that are not a kind of hours', () => {
+    ok(cleanLaborPerson({ ft: 'Sometimes' }, null).errors);
+    for (const v of FT_TYPES) ok(!cleanLaborPerson({ ft: v }, null).errors, v);
+  });
+  // A row whose only content is an override is still a decision. Clearing
+  // it would put the person back where the roster had them the moment the
+  // page reloaded.
+  it('keeps a row that carries nothing but an override', () => {
+    eq(cleanLaborPerson({ dept: 'Wholesale' }, null).row.clear, false);
+    eq(cleanLaborPerson({ ft: 'Part-time' }, null).row.clear, false);
+    eq(cleanLaborPerson({}, null).row.clear, true, 'an empty line should go');
+  });
+  // Two spellings of one department would split the filter, the totals and
+  // the classifier three ways.
+  it('is picked from a list on the page rather than typed', () => {
+    const HERE2 = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(
+      path.join(HERE2, '..', 'public', 'assets', 'labor.js'), 'utf8');
+    ok(/pick\(p, 'dept'/.test(page), 'the department is not a picker');
+    ok(/pick\(p, 'ft'/.test(page), 'the hours are not a picker');
+    ok(/function deptOptions/.test(page), 'the list is not built from the plan');
+  });
+  it('reaches a database that already exists', () => {
+    const HERE2 = path.dirname(fileURLToPath(import.meta.url));
+    const store = fs.readFileSync(path.join(HERE2, '..', 'worker', 'store.js'), 'utf8');
+    ok(/\['labor', 'ft TEXT/.test(store), 'the column never reaches the live database');
+    ok(/ft = excluded\.ft/.test(store), 'a second save would not change it');
   });
 });
 

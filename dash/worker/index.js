@@ -23,7 +23,7 @@ import {
   csv as laborCsv, cleanKey as laborKey,
   withPrior as laborWithPrior, SHOWS as LABOR_SHOWS,
   PEOPLE as ROSTER, ROSTER_AS_OF, SEPARATE_DIVISIONS, PAY_TYPES, CLASSES,
-  ROLLUPS, FULL_TIME_HOURS,
+  ROLLUPS, FULL_TIME_HOURS, FT_TYPES,
 } from './labor.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
@@ -319,6 +319,7 @@ async function labor(request, env, url, who) {
       // people are missing from it on purpose.
       separate: SEPARATE_DIVISIONS.join(', '),
       payTypes: PAY_TYPES, classes: CLASSES, rollups: ROLLUPS,
+      ftTypes: FT_TYPES,
       fullTimeHours: FULL_TIME_HOURS,
       people: rs,
       // What the budget tab currently says for the lines this rolls into.

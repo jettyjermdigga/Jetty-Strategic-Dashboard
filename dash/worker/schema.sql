@@ -157,6 +157,10 @@ CREATE TABLE IF NOT EXISTS labor (
   title       TEXT NOT NULL DEFAULT '',
   dept        TEXT NOT NULL DEFAULT '',
   division    TEXT NOT NULL DEFAULT '',
+  -- Full or part time. Empty means "as the roster has it", which is not the
+  -- same as a blank: an outsourced supplier is neither, and storing the
+  -- seeded value on every row would freeze each one against a later roster.
+  ft          TEXT NOT NULL DEFAULT '',
   pay_type    TEXT NOT NULL DEFAULT '',
   -- Direct labor or G&A. An accounting judgement rather than a fact about
   -- the roster, so it starts empty for everybody and is never guessed.

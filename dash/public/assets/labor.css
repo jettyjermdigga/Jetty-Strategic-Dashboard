@@ -97,13 +97,6 @@
   border:1px solid var(--field-line);background:var(--field);color:var(--ink);
 }
 .lb-clr:hover{border-color:var(--bd-pick)}
-.lb-bulk{
-  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
-  background:var(--card);border:1px solid var(--edge);border-radius:10px;
-  padding:9px 14px;margin:0 0 12px;
-}
-.lb-bulk[hidden]{display:none}
-.lb-bulk-n{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;opacity:.8}
 
 /* A write-in. Marked down the left edge, because the one thing that must
    never be ambiguous on this sheet is which of these people already work
@@ -138,6 +131,7 @@
    which is how the judgement is actually made: all of INK production is
    direct, all of Finance is G&A. */
 .lb-cls{max-width:128px}
+.lb-dsel[hidden]{display:none}
 .lb-dsel{
   font-family:var(--mono);font-size:10px;letter-spacing:.04em;
   text-transform:none;font-weight:400;padding:3px 6px;border-radius:5px;

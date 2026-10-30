@@ -39,6 +39,10 @@
     <select id="fCls" class="bd-sel" aria-label="Direct labor or G&amp;A"></select>
     <select id="filter" class="bd-sel" aria-label="Which people to show"></select>
     <button class="lb-clr" id="clr" type="button" hidden>Clear</button>
+    <!-- Set direct-or-G&A on everybody the filters are showing. In the bar
+         with the filters because that is what it follows. -->
+    <select id="bulkSet" class="bd-sel lb-dsel" hidden
+            aria-label="Set direct or G&amp;A for everybody shown"></select>
 
     <button class="lb-add" id="add" type="button">+ Add a post</button>
 
@@ -47,14 +51,6 @@
     <span class="bd-prog" id="prog"></span>
     <a class="bd-dl" id="dl" download>Download CSV</a>
   </div>
-
-  <!-- Set direct-or-G&A on everybody the filters are showing. The bar is
-       how the sheet is narrowed now, so the bulk setter follows it rather
-       than keeping a department list of its own. -->
-  <div class="lb-bulk" id="bulk" hidden></div>
-
-  <p class="bd-rc" id="rc"></p>
-  <p class="bd-say" id="say"></p>
 
   <div class="bd-wrap" id="wrap" hidden><table class="bd-t lb-t" id="t"></table></div>
 </main>
