@@ -98,12 +98,13 @@
 
   // ── Drawing ───────────────────────────────────────────────────────────
 
-  var COLS = 16;
+  var COLS = 17;
 
   function head() {
     return '<tr>'
       + '<th>Person</th><th>Division</th><th>Department</th><th>Hours</th>'
       + '<th>Paid</th><th>Direct or G&amp;A</th>'
+      + '<th class="lb-y1">' + D.baseYear + ' paid</th>'
       + '<th class="lb-y1">' + D.baseYear + ' rate <span>$/hr</span></th>'
       + '<th class="lb-y1">' + D.baseYear + ' hours</th>'
       + '<th class="lb-y1">' + D.baseYear + ' salary</th>'
@@ -147,9 +148,14 @@
       + ' placeholder="' + ph + '"></td>';
   }
 
+  // Marked rather than counted. These used to be found by position, and
+  // the day a column was inserted to their left the running total started
+  // being written over the salary box next door -- destroying the input it
+  // landed in. A cell that says what it is cannot be miscounted.
   function totalCell(c, base) {
     return '<td class="bd-n lb-tot' + (base ? ' lb-y1' : '')
-      + (c == null ? ' bd-base' : '') + '">' + (c == null ? '\u2014' : money(c)) + '</td>';
+      + (c == null ? ' bd-base' : '') + '" data-tot="' + (base ? 'base' : 'plan') + '">'
+      + (c == null ? '\u2014' : money(c)) + '</td>';
   }
 
   // Only payroll splits. A commission rep or a partner has a budget line of
@@ -193,6 +199,23 @@
     return Object.keys(seen).sort();
   }
 
+  // How somebody was paid in the baseline year, which is not always how
+  // they are paid now -- five people on this roster are hourly in the
+  // Staff base and were on a salary all year. Without this the 2026 block
+  // asks them for a rate and has nowhere to put what they actually earned.
+  function payCell(p, yr) {
+    var base = yr === D.baseYear;
+    var v = base ? (p.prior && p.prior.pay) || p.pay : p.pay;
+    return '<td' + (base ? ' class="lb-y1"' : '') + '>'
+      + '<select class="lb-sel' + (v ? ' set' : '') + '" data-f="pay" data-y="' + yr + '"'
+      + ' aria-label="How ' + esc(p.n) + ' was paid in ' + yr + '">'
+      + '<option value="">\u2014</option>'
+      + D.payTypes.map(function (t) {
+        return '<option value="' + t.key + '"' + (t.key === v ? ' selected' : '')
+          + '>' + esc(t.label) + '</option>';
+      }).join('') + '</select></td>';
+  }
+
   function row(p) {
     var c = cost(p);
     var pc = p.prior ? p.prior.cost : null;
@@ -211,14 +234,9 @@
       + pick(p, 'division', p.v, D.divisions || [], 'Division for ' + p.n, '\u2014')
       + pick(p, 'dept', p.d, deptOptions(), 'Department for ' + p.n, 'Unassigned')
       + pick(p, 'ft', p.ft, D.ftTypes || [], 'Full or part time for ' + p.n, '\u2014')
-      + '<td><select class="lb-sel' + (p.pay ? ' set' : '') + '" data-f="pay"'
-        + ' aria-label="How ' + esc(p.n) + ' is paid">'
-        + '<option value="">\u2014</option>'
-        + D.payTypes.map(function (t) {
-          return '<option value="' + t.key + '"' + (t.key === p.pay ? ' selected' : '')
-            + '>' + esc(t.label) + '</option>';
-        }).join('') + '</select></td>'
+      + payCell(p, D.year)
       + '<td>' + clsCell(p) + '</td>'
+      + payCell(p, D.baseYear)
       + cell(p, 'rate', D.baseYear, '', '')
       + cell(p, 'hours', D.baseYear, 'hrs', comma(D.fullTimeHours))
       + cell(p, 'salary', D.baseYear, '', '')
@@ -244,7 +262,7 @@
       base += (p.prior && p.prior.cost) || 0;
       plan += cost(p) || 0;
     });
-    return '<tr class="lb-foot"><td colspan="9">' + list.length
+    return '<tr class="lb-foot"><td colspan="10">' + list.length
       + (list.length === 1 ? ' person' : ' people')
       + (filtered() ? ' shown' : '') + '</td>'
       + '<td class="bd-n lb-tot lb-y1">' + money(base) + '</td>'
@@ -499,8 +517,8 @@
     if (p.prior) p.prior.cost = cost({ pay: p.prior.pay || p.pay, rate: p.prior.rate,
                                        salary: p.prior.salary, hours: p.prior.hours });
     var tr = input.closest('tr');
-    paint(tr.children[8], p.prior ? p.prior.cost : null, true);
-    paint(tr.children[12], cost(p), false);
+    paint(tr.querySelector('[data-tot="base"]'), p.prior ? p.prior.cost : null, true);
+    paint(tr.querySelector('[data-tot="plan"]'), cost(p), false);
     return true;
   }
 
@@ -557,10 +575,19 @@
         return;
       }
       if (fld === 'pay') {
-        p.pay = e.target.value;
-        // Which figures the row asks for has just changed, so the row is
-        // drawn again rather than patched.
-        save(p, true);
+        if (Number(e.target.dataset.y) === D.baseYear) {
+          if (!p.prior) p.prior = { rate: null, salary: null, hours: null, cost: null };
+          p.prior.pay = e.target.value;
+          p.prior.cost = cost({ pay: p.prior.pay, rate: p.prior.rate,
+                                salary: p.prior.salary, hours: p.prior.hours });
+          saveBase(p);
+        } else {
+          p.pay = e.target.value;
+          save(p);
+        }
+        // Which figures that half of the row asks for has just changed, so
+        // it is drawn again rather than patched.
+        render();
         return;
       }
       if (fld === 'rate' || fld === 'salary' || fld === 'hours') {

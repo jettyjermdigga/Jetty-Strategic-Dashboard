@@ -161,7 +161,7 @@ const CASES = [
     path: 'budget.html', wait: '.bd-in', click: '#seg button[data-v="week"]',
     after: '.bd-t.ro' },
   { file: 'labor-light', scheme: 'light', who: full('jeremy@jettylife.com'),
-    path: 'labor.html', wait: '.lb-sel' },
+    path: 'labor.html', wait: '.lb-sel', types: true },
   { file: 'labor-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
     path: 'labor.html', wait: '.lb-sel' },
   { file: 'labor-tbh', scheme: 'dark', who: full('jeremy@jettylife.com'),
@@ -435,6 +435,30 @@ for (const c of CASES) {
     });
     return bad;
   });
+
+  // Typing a figure repaints the running totals. Those cells used to be
+  // found by counting along the row, and the day a column was inserted to
+  // their left the total started being written over the salary box next
+  // door, destroying the input it landed in. Screenshots did not catch it
+  // because nothing typed; this does.
+  if (c.types) {
+    const before = await page.locator('tr[data-k] input.lb-in').count();
+    const box = page.locator('tr[data-k] input.lb-in').first();
+    await box.fill('25');
+    await box.dispatchEvent('input');
+    const after = await page.evaluate(() => {
+      const tr = document.querySelector('tr[data-k]');
+      return {
+        inputs: document.querySelectorAll('tr[data-k] input.lb-in').length,
+        totals: [...tr.querySelectorAll('[data-tot]')].map((td) => td.textContent),
+        counted: [...tr.children].findIndex((td) => td.dataset.tot === 'base'),
+      };
+    });
+    const kept = after.inputs === before;
+    console.log('  typing: ' + (kept ? 'inputs intact' : 'DESTROYED AN INPUT')
+      + ', totals ' + JSON.stringify(after.totals));
+    if (!kept) process.exitCode = 1;
+  }
 
   // The row is meant to be one line. Eleven chips fit only because the chip
   // is tight, so a twelfth category -- or a long name -- silently turns it
