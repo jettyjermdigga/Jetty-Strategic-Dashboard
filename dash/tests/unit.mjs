@@ -1418,7 +1418,24 @@ describe('the page and the Worker agree on what each row asks for', () => {
   });
   it('reads the classes off what the Worker sent, not its own list', () => {
     ok(/D\.classes/.test(page), 'the page does not use the classes the Worker sent');
-    ok(!/'direct'|'gna'/.test(page), 'the page hardcodes a class, which will drift');
+    // The dropdown is built from what the Worker sent; nothing names a
+    // class where a list would do.
+    const fn = page.slice(page.indexOf('function clsCell(p)'),
+                          page.indexOf('function pick(p,'));
+    ok(fn.length > 100, 'the cell this is about has moved or gone');
+    ok(!/'direct'|'gna'/.test(fn), 'the row hardcodes a class, which will drift');
+  });
+  // The totals strip is the one place that does name them, because it was
+  // asked for in those terms: direct labor and G&A, specifically. Naming
+  // them is fine; naming one that does not exist is not, and would show
+  // $0 for ever without saying why.
+  it('names only rollups that exist, where it names them at all', () => {
+    const fn = page.slice(page.indexOf("var vs = $('#vs')"), page.indexOf("$('#dl').href"));
+    const named = [...fn.matchAll(/by\.([a-z]+)/g)].map((m) => m[1]);
+    ok(named.length, 'the strip names no rollup at all, so this proves nothing');
+    for (const k of new Set(named)) {
+      ok(ROLLUPS.some((r) => r.key === k), 'the strip reads by.' + k + ', which is not a rollup');
+    }
   });
 });
 
@@ -1780,12 +1797,26 @@ describe('what the labor totals are shown in', () => {
     ok(/id="pl"/.test(rd('public/budget.html')), 'the budget lost its P&L bar');
     ok(/\$\('#pl'\)/.test(rd('public/assets/budget.js')), 'nothing fills it any more');
   });
-  it('shows every rollup in the one strip that is left', () => {
+  // Six figures, chosen rather than enumerated: the rollups are how a
+  // cost is filed, this is how the plan is read. Not yet split and
+  // Commissions were taken off deliberately.
+  it('shows the six figures the strip was asked for', () => {
     const fn = page.slice(page.indexOf("var vs = $('#vs')"), page.indexOf("$('#dl').href"));
-    ok(/D\.rollups\.map/.test(fn), 'it only shows the ones with a budget line');
-    ok(/Everybody/.test(fn), 'the total of everything is gone');
-    ok(/id="saved"/.test(fn), 'the saving indicator went with the bar');
+    for (const label of ['Direct labor', 'Salaries', 'Hourly total',
+                         'Salaried total', 'incl. partners']) {
+      ok(fn.includes(label), label + ' is not on the strip');
+    }
+    ok(!/Not yet split|Commissions/.test(fn), 'something taken off is back');
+    ok(/id="saved"/.test(fn), 'the saving indicator went with the pinned bar');
     ok(/vs budget/.test(fn), 'the comparison went with the panel');
+  });
+  // Hourly plus Salaried is Total exactly; Direct plus G&A is Total less
+  // whatever is unsplit. That second gap has no tile any more, so it has
+  // to be said somewhere or the strip simply does not add up.
+  it('explains the one gap it is allowed to have', () => {
+    const fn = page.slice(page.indexOf("var vs = $('#vs')"), page.indexOf("$('#dl').href"));
+    ok(/unsplitCost/.test(fn), 'nothing measures what is left unsplit');
+    ok(/not split into direct/.test(fn), 'the gap under Total is never explained');
   });
 });
 
