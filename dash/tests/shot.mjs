@@ -482,6 +482,48 @@ for (const c of CASES) {
   // door, destroying the input it landed in. Screenshots did not catch it
   // because nothing typed; this does.
   if (c.types) {
+    // Six figures that have to agree with each other. Hourly plus
+    // Salaried is Total exactly; Direct plus G&A is Total minus whatever
+    // has not been split, which is the one gap on the strip that is
+    // allowed and the one its tooltip has to explain.
+    const strip = await page.evaluate(() => {
+      const n = (s2) => Number(String(s2).replace(/[^0-9.-]/g, '')) || 0;
+      const out = {};
+      document.querySelectorAll('#vs .bd-m').forEach((el) => {
+        const b = el.querySelector('b');
+        out[el.childNodes[0].textContent.trim()] = { v: n(b.textContent),
+                                                     why: el.title || '' };
+      });
+      return out;
+    });
+    const g = (k) => (strip[k] ? strip[k].v : null);
+    const adds = g('Hourly total') + g('Salaried total') === g('Total');
+
+    // That they sum to Total says nothing about which is which -- moving
+    // every hourly cost into Salaried still sums. So each is checked
+    // against the sheet itself, filtered to that way of being paid.
+    const footFor = async (pay) => {
+      await page.selectOption('#fPay', pay);
+      await page.waitForSelector('.lb-foot');
+      const v = await page.evaluate(() => {
+        const td = document.querySelector('.lb-foot .lb-tot:not(.lb-y1)');
+        return Number(String(td.textContent).replace(/[^0-9.-]/g, '')) || 0;
+      });
+      await page.selectOption('#fPay', '');
+      return v;
+    };
+    const byPay = { hourly: await footFor('hourly'), salary: await footFor('salary') };
+    const right = byPay.hourly === g('Hourly total')
+      && byPay.salary === g('Salaried total')
+      && byPay.hourly > 0 && byPay.salary > 0;
+    const gap = g('Total') - g('Direct labor') - g('Salaries — G&A');
+    const explained = gap === 0 || /not split/.test(strip.Total.why);
+    console.log('  strip: ' + Object.keys(strip).join(' / ')
+      + (adds ? '  adds up' : '  DOES NOT ADD UP')
+      + (right ? '' : '  WRONG SPLIT: sheet says ' + JSON.stringify(byPay))
+      + (explained ? '' : '  UNEXPLAINED GAP of ' + gap));
+    if (!adds || !explained || !right) process.exitCode = 1;
+
     // The header and the body have to agree on how many columns there are,
     // and a footer that spans the wrong number puts every total under the
     // wrong heading. Counted rather than looked at, because a row is

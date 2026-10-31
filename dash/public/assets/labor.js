@@ -393,31 +393,64 @@
     // The bottom bar's shape is the one that survived -- label above, big
     // figure below -- with the comparison it was missing folded in under
     // each figure that has a budget line to be compared against.
+    // Six figures, chosen rather than enumerated. The rollups are how the
+    // cost is filed; this is how the plan is read.
+    //
+    // Total is all payroll, so Hourly plus Salaried comes to it exactly.
+    // Direct plus G&A does NOT, and the difference is whatever has not
+    // been split yet -- which used to have a tile of its own and now says
+    // so in Total's tooltip instead, because a number that quietly fails
+    // to add up is worse than one that explains itself.
     var vs = $('#vs');
     if (vs) {
       var against = {};
       (D.against || []).forEach(function (x) { against[x.key] = x; });
-      vs.innerHTML = D.rollups.map(function (r) {
-        var plan = by[r.key] ? by[r.key].cost : 0;
-        var a = against[r.key];
-        var gap = a && a.budget != null ? plan - a.budget : null;
-        // A line with no baseline behind it cannot also be "still the
-        // baseline". Saying both at once is how a reader concludes the
-        // page is confused rather than that the line is new.
-        var why = !a ? r.label + ' has no budget line of its own.'
-          : a.lineName + ': ' + (a.budget == null
+
+      var hourly = 0;
+      var salaried = 0;
+      D.people.forEach(function (p) {
+        if (!splits(p)) return;
+        var c = cost(p) || 0;
+        if (p.pay === 'hourly') hourly += c; else salaried += c;
+      });
+      var unsplitCost = by.unclassified ? by.unclassified.cost : 0;
+      var payroll = (by.direct ? by.direct.cost : 0)
+        + (by.gna ? by.gna.cost : 0) + unsplitCost;
+
+      // A figure with a budget line behind it says how it compares; one
+      // without says nothing rather than pretending to.
+      var tile = function (label, value, key, why) {
+        var a = key ? against[key] : null;
+        var gap = a && a.budget != null ? value - a.budget : null;
+        var note = a
+          ? a.lineName + ': ' + (a.budget == null
             ? 'new for ' + D.year + ', so there is no ' + D.baseYear + ' to compare'
             : money(a.budget) + (a.decided
-              ? '' : ' (still the ' + D.baseYear + ' baseline)'));
-        return '<div class="bd-m" title="' + esc(why) + '">' + esc(r.label)
-          + '<b>' + money(plan) + '</b>'
+              ? '' : ' (still the ' + D.baseYear + ' baseline)'))
+          : (why || '');
+        return '<div class="bd-m"' + (note ? ' title="' + esc(note) + '"' : '') + '>'
+          + esc(label) + '<b>' + money(value) + '</b>'
           + (gap == null ? ''
             : '<span class="lb-gap ' + (gap > 0 ? 'over' : 'under') + '">'
               + (gap > 0 ? '+' : '\u2212')
               + money(Math.abs(gap)).replace('\u2212', '') + ' vs budget</span>')
           + '</div>';
-      }).join('')
-        + '<div class="bd-m">Everybody<b>' + money(all) + '</b></div>'
+      };
+
+      vs.innerHTML =
+        tile('Direct labor', by.direct ? by.direct.cost : 0, 'direct')
+        + tile('Salaries \u2014 G&A', by.gna ? by.gna.cost : 0, 'gna')
+        + tile('Total', payroll, '',
+               'Everybody on payroll: hourly and salaried, split or not.'
+               + (unsplitCost
+                 ? ' ' + money(unsplitCost) + ' of it is not split into direct '
+                   + 'or G&A yet, which is why those two do not add up to this.'
+                 : ' All of it is split into direct or G&A.'))
+        + tile('Hourly total', hourly, '', 'The payroll paid by the hour.')
+        + tile('Salaried total', salaried, '', 'The payroll on a salary.')
+        + tile('Total (incl. partners)', all, '',
+               'Payroll, plus the partner draws, commissions and anything '
+               + 'else on the sheet.')
         + '<div class="bd-saved" id="saved">'
         + (saving ? 'Saving\u2026' : 'Saved as you type') + '</div>';
       vs.hidden = false;
