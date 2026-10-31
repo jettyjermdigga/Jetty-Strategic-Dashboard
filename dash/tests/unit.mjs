@@ -1815,8 +1815,11 @@ describe('what the labor totals are shown in', () => {
   // the other half, read as work outstanding.
   it('does not measure direct labor against the whole of labour', () => {
     const fn = page.slice(page.indexOf("var vs = $('#vs')"), page.indexOf("$('#dl').href"));
-    const call = fn.slice(fn.indexOf("tile('Direct labor'"));
-    ok(!/'direct'\)/.test(call.slice(0, call.indexOf('\n'))),
+    // The third argument to tile() is the budget line it compares
+    // against, and an empty one is what says "do not". Matched on that
+    // argument rather than on the word, because 'direct' appears either
+    // way -- by.direct is the figure itself.
+    ok(/tile\('Direct labor',[^,]+,\s*''/.test(fn),
        'direct labor is compared against a budget line again');
   });
   // Hourly plus Salaried is Total exactly; Direct plus G&A is Total less
