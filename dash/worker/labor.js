@@ -89,7 +89,15 @@ export const ROLLUPS = [
   // putting it in either half would be a guess with somebody's wages in it.
   { key: 'unclassified', label: 'Not yet split', line: '' },
   { key: 'commission', label: 'Commissions', line: 'sales-commissions-brand' },
-  { key: 'guaranteed', label: 'Guaranteed payments', line: 'guaranteed-payments-partners' },
+  // Partner draws are decided in the budget and not here, so this plan has
+  // no business being compared against that line. It was, and what the
+  // comparison said was that the plan is $300,000 short of a line nobody
+  // was ever going to fill in from this page -- a gap that reads as work
+  // outstanding and is nothing of the kind.
+  //
+  // The partners stay on the sheet and their total still shows. It is only
+  // the budget comparison that goes.
+  { key: 'guaranteed', label: 'Guaranteed payments', line: '' },
   { key: 'other', label: 'Other', line: '' },
 ];
 

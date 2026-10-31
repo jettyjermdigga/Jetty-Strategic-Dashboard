@@ -1279,6 +1279,24 @@ describe('the plan against the budget', () => {
          r.key + ' rolls into "' + r.line + '", which is not a budget line');
     }
   });
+  // Partner draws are decided in the budget, not on this sheet. Comparing
+  // them said the plan was $300,000 short of a line nobody fills in from
+  // here -- a gap that reads as outstanding work and is nothing of the
+  // kind.
+  it('does not compare the partner draws against the budget', () => {
+    const out = against(laborSummary(laborRows({})), {}, 'proj');
+    ok(!out.some((a) => a.key === 'guaranteed'),
+       'guaranteed payments are still being measured against a budget line');
+    ok(ROLLUPS.some((r) => r.key === 'guaranteed'),
+       'the partners fell off the sheet altogether');
+  });
+  // Everything else still is, or the comparison would quietly be empty.
+  it('still compares the two halves of payroll', () => {
+    const out = against(laborSummary(laborRows({})), {}, 'proj');
+    for (const k of ['direct', 'gna', 'commission']) {
+      ok(out.some((a) => a.key === k), k + ' lost its budget line');
+    }
+  });
   it('falls back to the 2026 baseline when the line is undecided', () => {
     const out = against(laborSummary(laborRows({})), {}, 'proj');
     const direct = out.find((a) => a.key === 'direct');
