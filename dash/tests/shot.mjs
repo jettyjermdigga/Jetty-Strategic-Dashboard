@@ -21,7 +21,7 @@ import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
   withPrior as laborWithPrior, SHOWS as LABOR_SHOWS,
   PEOPLE as ROSTER, ROSTER_AS_OF, SEPARATE_DIVISIONS, PAY_TYPES, CLASSES,
-  ROLLUPS, FULL_TIME_HOURS, FT_TYPES, DIVISIONS,
+  ROLLUPS, FULL_TIME_HOURS, FT_TYPES, DIVISIONS, PAYROLL_TAX_RATE,
 } from '../worker/labor.js';
 
 // Same resolution shim the calendar suite uses: playwright is installed
@@ -283,6 +283,8 @@ const LABOR = (() => {
   const people = laborWithPrior(laborRows(PLANNED), BASELINE);
   return {
     year: FIRST_YEAR, baseYear: FIRST_YEAR - 1, shows: LABOR_SHOWS,
+    years: [FIRST_YEAR, FIRST_YEAR + 1, FIRST_YEAR + 2],
+    taxRate: PAYROLL_TAX_RATE, revenue: 14500000,
     you: 'jeremy@jettylife.com',
     rosterAsOf: ROSTER_AS_OF, rosterSize: ROSTER.length,
     separate: SEPARATE_DIVISIONS.join(', '),
@@ -517,12 +519,41 @@ for (const c of CASES) {
       && byPay.salary === g('Salaried total')
       && byPay.hourly > 0 && byPay.salary > 0;
     const gap = g('Total') - g('Direct labor') - g('Salaries — G&A');
+
+    // The tax tile is a stated percentage of a figure on the same strip,
+    // so it can be checked against it rather than taken on trust. Nobody
+    // reproduces a number like this by hand, which is exactly why it is
+    // the kind that goes wrong unnoticed.
+    const tax = g('Est. payroll taxes');
+    const taxRight = Math.abs(tax - g('Total') * 0.11) <= 1;
+    // And the share is of payroll PLUS that tax, against the revenue the
+    // Worker sent -- not of payroll alone, which would read lower than
+    // employing anybody actually costs.
+    const share = Number(String((await page.evaluate(() => {
+      const el = [...document.querySelectorAll('#vs .bd-m')]
+        .find((x) => x.childNodes[0].textContent.includes('% of revenue'));
+      return el ? el.querySelector('b').textContent : '';
+    }))).replace(/[^0-9.]/g, ''));
+    const want = ((g('Total') + tax) / 14500000) * 100;
+    const shareRight = Math.abs(share - want) <= 0.1;
     const explained = gap === 0 || /not split/.test(strip.Total.why);
     console.log('  strip: ' + Object.keys(strip).join(' / ')
       + (adds ? '  adds up' : '  DOES NOT ADD UP')
       + (right ? '' : '  WRONG SPLIT: sheet says ' + JSON.stringify(byPay))
+      + (taxRight ? '' : '  TAX IS NOT 11% OF TOTAL: ' + tax)
+      + (shareRight ? '' : '  SHARE IS NOT LOADED PAYROLL: ' + share + ' vs ' + want)
       + (explained ? '' : '  UNEXPLAINED GAP of ' + gap));
-    if (!adds || !explained || !right) process.exitCode = 1;
+    if (!adds || !explained || !right || !taxRight || !shareRight) process.exitCode = 1;
+
+    // A different year is a different plan, a different baseline and a
+    // different budget to read it against -- so the picker has to offer
+    // the budget's own years and not a list that drifts from them.
+    const years = await page.evaluate(() => [...document.querySelectorAll('#fYear option')]
+      .map((o) => o.value));
+    const yearOk = years.length > 1 && years.every((y) => /^\d{4}$/.test(y))
+      && years[0] === String(new Date().getFullYear() + 1);
+    console.log('  years: ' + years.join(',') + (yearOk ? '' : '  WRONG YEARS'));
+    if (!yearOk) process.exitCode = 1;
 
     // The header and the body have to agree on how many columns there are,
     // and a footer that spans the wrong number puts every total under the

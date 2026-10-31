@@ -313,9 +313,12 @@
   // The filter bar, drawn from what is actually on the plan rather than
   // from a fixed list: a department nobody is in is a dead option, and a
   // department added as a write-in would otherwise be unfilterable.
+  // `none` is the option that asks nothing -- "Any division", and so on.
+  // A year has no such answer, so passing none as null leaves it off and
+  // the list is just the years.
   function fill(el, opts, value, none) {
     if (!el) return;
-    el.innerHTML = '<option value="">' + esc(none) + '</option>'
+    el.innerHTML = (none == null ? '' : '<option value="">' + esc(none) + '</option>')
       + opts.map(function (o) {
         return '<option value="' + esc(o.key) + '"'
           + (o.key === value ? ' selected' : '') + '>' + esc(o.label) + '</option>';
@@ -332,6 +335,9 @@
   }
 
   function renderBar(list) {
+    fill($('#fYear'), (D.years || [D.year]).map(function (y) {
+      return { key: String(y), label: String(y) };
+    }), String(D.year), null);
     fill($('#fDiv'), uniq(function (p) { return p.v; }), f.division, 'Any division');
     fill($('#fDept'), uniq(function (p) { return p.d; }), f.dept, 'Any department');
     fill($('#fPay'), D.payTypes.map(function (t) {
@@ -416,6 +422,12 @@
       var unsplitCost = by.unclassified ? by.unclassified.cost : 0;
       var payroll = (by.direct ? by.direct.cost : 0)
         + (by.gna ? by.gna.cost : 0) + unsplitCost;
+      var rate = D.taxRate || 0;
+      var pct = Math.round(rate * 1000) / 10 + '%';
+      // Fully loaded: payroll and the tax on it. Payroll as a share of
+      // revenue with the employer's own contribution left out is the
+      // smaller half of what it costs to employ anybody.
+      var loaded = payroll + payroll * rate;
 
       // A figure with a budget line behind it says how it compares; one
       // without says nothing rather than pretending to.
@@ -437,6 +449,23 @@
           + '</div>';
       };
 
+      // A percentage rather than money, so it gets its own shape. Nothing
+      // is drawn at all when there is no revenue to be a share of: 0% and
+      // "no budget yet" are different answers and only one of them is
+      // true.
+      var pctTile = function (part, revenue) {
+        if (!revenue) {
+          return '<div class="bd-m" title="The ' + D.year + ' budget has no revenue '
+            + 'in it yet, so there is nothing to be a share of.">% of revenue'
+            + '<b>\u2014</b></div>';
+        }
+        var share = (part / revenue) * 100;
+        return '<div class="bd-m" title="' + esc(money(part) + ' of ' + money(revenue)
+          + ' planned revenue. Payroll and the estimated tax on it, against what '
+          + 'the ' + D.year + ' budget says revenue will be.') + '">% of revenue'
+          + '<b>' + (Math.round(share * 10) / 10) + '%</b></div>';
+      };
+
       vs.innerHTML =
         tile('Direct labor', by.direct ? by.direct.cost : 0, '',
              'The payroll split to direct labor. Not compared against the '
@@ -452,9 +481,14 @@
                  : ' All of it is split into direct or G&A.'))
         + tile('Hourly total', hourly, '', 'The payroll paid by the hour.')
         + tile('Salaried total', salaried, '', 'The payroll on a salary.')
-        + tile('Total (incl. partners)', all, '',
-               'Payroll, plus the partner draws, commissions and anything '
-               + 'else on the sheet.')
+        // Employer FICA plus the unemployment insurances, as one planning
+        // rate. The rate is named on the tile because a figure nobody can
+        // reproduce is a figure nobody argues with.
+        + tile('Est. payroll taxes', payroll * rate, '',
+               'Estimated at ' + pct + ' of Total. Employer FICA is 7.65% and '
+               + 'the unemployment insurances are the rest; the real figure '
+               + 'moves with the wage bases and the state rate.')
+        + pctTile(loaded, D.revenue)
         + '<div class="bd-saved" id="saved">'
         + (saving ? 'Saving\u2026' : 'Saved as you type') + '</div>';
       vs.hidden = false;
@@ -687,6 +721,24 @@
       if (!keys.length) return;
       send('/api/labor/classify', { keys: keys, cls: want === 'clear' ? '' : want },
            function () { render(); });
+    });
+
+    // Changing the year is not a filter: it is a different plan, a
+    // different baseline and a different budget to read it against, so
+    // the whole sheet is fetched again rather than redrawn.
+    $('#fYear').addEventListener('change', function (e) {
+      var want = Number(e.target.value);
+      if (!want || want === D.year) return;
+      $('#notice').innerHTML = '';
+      api('/api/labor?year=' + want)
+        .then(function (data) {
+          D = data;
+          render();
+        })
+        .catch(function (err) {
+          say(err.message || 'That year did not load.');
+          e.target.value = D.year;
+        });
     });
 
     var narrow = function (field, value) { f[field] = value; render(); };

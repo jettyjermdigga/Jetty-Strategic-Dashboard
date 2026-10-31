@@ -119,6 +119,20 @@ export const DIVISIONS = [...new Set(PEOPLE.map((p) => p.v).filter(Boolean))]
 // supplier or a contract firm is neither.
 export const FT_TYPES = ['Full-time', 'Part-time'];
 
+/**
+ * What payroll costs on top of what it pays.
+ *
+ * Employer FICA is 7.65% and the unemployment insurances add the rest.
+ * Eleven per cent is a planning number, not a calculation: the real
+ * figure moves with the wage bases, with how many people cross them, and
+ * with the state rate that arrives in a letter each year.
+ *
+ * Here rather than typed into the page so there is one of it, and named
+ * so the page can say what it used rather than showing a figure nobody
+ * can reproduce.
+ */
+export const PAYROLL_TAX_RATE = 0.11;
+
 // A full-time year at 40 hours. Offered as the placeholder on an hourly
 // line and never stored, so the page can suggest it without it counting as
 // a decision somebody made.

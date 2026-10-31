@@ -13,17 +13,24 @@ import { identify } from './access.js';
 import { canonicalTarget } from './canon.js';
 import { visibleTiles, dashCategories, linkCats, greeting } from './tiles.js';
 import {
-  rows as budgetRows, calendar as budgetCalendar,
+  rows as budgetRows, summary as budgetSummary, calendar as budgetCalendar,
   csv as budgetCsv, cleanYear, cleanLaborYear, cleanCadence, cleanBase,
   GROUPS as BUDGET_GROUPS, BASES, CADENCES, LINES as BUDGET_LINES,
-  BASELINE_YEAR, WEEK_CURVE, CURVE_IS_PLACEHOLDER, FIRST_YEAR,
+  BASELINE_YEAR, WEEK_CURVE, CURVE_IS_PLACEHOLDER, FIRST_YEAR, LAST_YEAR,
 } from './budget.js';
+
+/** Every year the budget will answer for. */
+const yearRange = () => {
+  const out = [];
+  for (let y = FIRST_YEAR; y <= LAST_YEAR; y++) out.push(y);
+  return out;
+};
 import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
   csv as laborCsv, cleanKey as laborKey,
   withPrior as laborWithPrior, SHOWS as LABOR_SHOWS,
   PEOPLE as ROSTER, ROSTER_AS_OF, SEPARATE_DIVISIONS, PAY_TYPES, CLASSES,
-  ROLLUPS, FULL_TIME_HOURS, FT_TYPES, DIVISIONS,
+  ROLLUPS, FULL_TIME_HOURS, FT_TYPES, DIVISIONS, PAYROLL_TAX_RATE,
 } from './labor.js';
 import {
   rows as cogsRows, summary as cogsSummary, duplicates as cogsDuplicates,
@@ -394,6 +401,14 @@ async function labor(request, env, url, who) {
       separate: SEPARATE_DIVISIONS.join(', '),
       payTypes: PAY_TYPES, classes: CLASSES, rollups: ROLLUPS,
       ftTypes: FT_TYPES, divisions: DIVISIONS,
+      taxRate: PAYROLL_TAX_RATE,
+      // Which years can be budgeted, so the picker is the budget's own
+      // range rather than a list that drifts from it.
+      years: yearRange(),
+      // What the budget says revenue will be for this year, so payroll
+      // can be read as a share of it. The budget's own figure, decided or
+      // still the baseline, and never written back from here.
+      revenue: budgetSummary(budgetRows(await readBudget(env.DB, year)), 'proj').rev,
       fullTimeHours: FULL_TIME_HOURS,
       people: rs,
       // What the budget tab currently says for the lines this rolls into.

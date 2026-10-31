@@ -21,7 +21,7 @@ import {
   against, cleanPerson as cleanLaborPerson, cleanKey as laborKey, csv as laborCsv,
   num, rollOf, PEOPLE as ROSTER, ON_STAFF, SEPARATE_DIVISIONS,
   PAY_TYPES, CLASSES, ROLLUPS, FULL_TIME_HOURS, ROSTER_AS_OF,
-  withPrior, matches, SHOWS, FT_TYPES, DIVISIONS,
+  withPrior, matches, SHOWS, FT_TYPES, DIVISIONS, PAYROLL_TAX_RATE,
 } from '../worker/labor.js';
 
 import {
@@ -1797,16 +1797,20 @@ describe('what the labor totals are shown in', () => {
     ok(/id="pl"/.test(rd('public/budget.html')), 'the budget lost its P&L bar');
     ok(/\$\('#pl'\)/.test(rd('public/assets/budget.js')), 'nothing fills it any more');
   });
-  // Six figures, chosen rather than enumerated: the rollups are how a
-  // cost is filed, this is how the plan is read. Not yet split and
-  // Commissions were taken off deliberately.
-  it('shows the six figures the strip was asked for', () => {
+  // Chosen rather than enumerated: the rollups are how a cost is filed,
+  // this is how the plan is read. Not yet split, Commissions and the
+  // total including partners were all taken off deliberately.
+  it('shows the figures the strip was asked for, and only those', () => {
     const fn = page.slice(page.indexOf("var vs = $('#vs')"), page.indexOf("$('#dl').href"));
     for (const label of ['Direct labor', 'Salaries', 'Hourly total',
-                         'Salaried total', 'incl. partners']) {
+                         'Salaried total']) {
       ok(fn.includes(label), label + ' is not on the strip');
     }
-    ok(!/Not yet split|Commissions/.test(fn), 'something taken off is back');
+    ok(!/Not yet split|Commissions|incl\. partners/.test(fn),
+       'something taken off is back');
+    for (const label of ['Est. payroll taxes', '% of revenue']) {
+      ok(fn.includes(label), label + ' is not on the strip');
+    }
     ok(/id="saved"/.test(fn), 'the saving indicator went with the pinned bar');
     ok(/vs budget/.test(fn), 'the comparison went with the panel');
   });
@@ -1825,6 +1829,42 @@ describe('what the labor totals are shown in', () => {
   // Hourly plus Salaried is Total exactly; Direct plus G&A is Total less
   // whatever is unsplit. That second gap has no tile any more, so it has
   // to be said somewhere or the strip simply does not add up.
+  // Eleven per cent is a planning number, not a calculation -- employer
+  // FICA is 7.65% and the unemployment insurances are the rest. It lives
+  // in the Worker so there is one of it, and the page names it so the
+  // figure can be reproduced by whoever is arguing with it.
+  it('keeps the tax rate in one place and says what it is', () => {
+    eq(PAYROLL_TAX_RATE, 0.11);
+    const idx = fs.readFileSync(path.join(HERE2, '..', 'worker', 'index.js'), 'utf8');
+    ok(/taxRate: PAYROLL_TAX_RATE/.test(idx), 'the page is never told the rate');
+    const fn = page.slice(page.indexOf("var vs = $('#vs')"), page.indexOf("$('#dl').href"));
+    ok(/D\.taxRate/.test(fn), 'the page has a rate of its own, which will drift');
+    ok(!/0\.11|11%/.test(fn), 'the rate is written into the page as well');
+    ok(/of Total/.test(fn), 'the tile never says what it is a percentage of');
+  });
+  // Payroll as a share of revenue with the employer's own contribution
+  // left out is the smaller half of what employing anybody costs.
+  it('measures payroll against revenue with the tax on it', () => {
+    const fn = page.slice(page.indexOf("var vs = $('#vs')"), page.indexOf("$('#dl').href"));
+    ok(/var loaded = payroll \+ payroll \* rate/.test(fn),
+       'the share leaves the payroll tax out');
+    ok(/pctTile\(loaded, D\.revenue\)/.test(fn), 'the share is of something else');
+  });
+  // 0% and "no budget yet" are different answers, and only one of them
+  // is true when the year has no revenue in it.
+  it('draws no share at all when there is no revenue to share', () => {
+    const fn = page.slice(page.indexOf('var pctTile'), page.indexOf('vs.innerHTML'));
+    ok(/if \(!revenue\)/.test(fn), 'a year with no budget reads as 0%');
+  });
+  // A year is a different plan, a different baseline and a different
+  // budget to read it against.
+  it('offers the budget\'s own years and fetches the one picked', () => {
+    const idx = fs.readFileSync(path.join(HERE2, '..', 'worker', 'index.js'), 'utf8');
+    ok(/years: yearRange\(\)/.test(idx), 'the page is never told which years exist');
+    ok(/revenue: budgetSummary/.test(idx), 'revenue is not read off the budget');
+    ok(/#fYear/.test(page) && /api\('\/api\/labor\?year=' \+ want\)/.test(page),
+       'picking a year does not go and get it');
+  });
   it('explains the one gap it is allowed to have', () => {
     const fn = page.slice(page.indexOf("var vs = $('#vs')"), page.indexOf("$('#dl').href"));
     ok(/unsplitCost/.test(fn), 'nothing measures what is left unsplit');
