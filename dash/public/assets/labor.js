@@ -438,7 +438,11 @@
       };
 
       vs.innerHTML =
-        tile('Direct labor', by.direct ? by.direct.cost : 0, 'direct')
+        tile('Direct labor', by.direct ? by.direct.cost : 0, '',
+             'The payroll split to direct labor. Not compared against the '
+             + 'budget: the Labor line there is the whole of labour, this is '
+             + 'one half of it, and the difference between them was being '
+             + 'read as a shortfall.')
         + tile('Salaries \u2014 G&A', by.gna ? by.gna.cost : 0, 'gna')
         + tile('Total', payroll, '',
                'Everybody on payroll: hourly and salaried, split or not.'

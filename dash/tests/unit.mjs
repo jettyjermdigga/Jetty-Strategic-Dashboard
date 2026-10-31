@@ -1810,6 +1810,15 @@ describe('what the labor totals are shown in', () => {
     ok(/id="saved"/.test(fn), 'the saving indicator went with the pinned bar');
     ok(/vs budget/.test(fn), 'the comparison went with the panel');
   });
+  // The budget's Labor line is the whole of labour. Direct labor is one
+  // half of it, so the gap between them was never a shortfall -- it was
+  // the other half, read as work outstanding.
+  it('does not measure direct labor against the whole of labour', () => {
+    const fn = page.slice(page.indexOf("var vs = $('#vs')"), page.indexOf("$('#dl').href"));
+    const call = fn.slice(fn.indexOf("tile('Direct labor'"));
+    ok(!/'direct'\)/.test(call.slice(0, call.indexOf('\n'))),
+       'direct labor is compared against a budget line again');
+  });
   // Hourly plus Salaried is Total exactly; Direct plus G&A is Total less
   // whatever is unsplit. That second gap has no tile any more, so it has
   // to be said somewhere or the strip simply does not add up.
