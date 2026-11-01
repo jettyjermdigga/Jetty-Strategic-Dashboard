@@ -46,6 +46,33 @@ const pad2 = (n) => String(n).padStart(2, '0');
 const dayThis = (d) => NOW.getFullYear() + '-' + pad2(NOW.getMonth() + 1) + '-' + pad2(d);
 const nextMonth = new Date(NOW.getFullYear(), NOW.getMonth() + 1, 1);
 const NEXT_MONTH_LABEL = MONTH_NAMES[nextMonth.getMonth()] + ' ' + nextMonth.getFullYear();
+// A day in a month either side of the one the calendar opens on, for the
+// campaign that runs straight through it.
+const dayAround = (months, d) => {
+  const x = new Date(NOW.getFullYear(), NOW.getMonth() + months, d);
+  return x.getFullYear() + '-' + pad2(x.getMonth() + 1) + '-' + pad2(x.getDate());
+};
+const ymdOf = (x) => x.getFullYear() + '-' + pad2(x.getMonth() + 1) + '-' + pad2(x.getDate());
+
+// The nearest month ahead whose 1st is not a Sunday, so its grid really does
+// start in the month before. Found rather than written down: whether this
+// month has a leading overrun depends on what today is, and a test that
+// only works in some months is a test that is not running.
+const LEADING = (() => {
+  for (let k = 1; k <= 7; k += 1) {
+    const first = new Date(NOW.getFullYear(), NOW.getMonth() + k, 1);
+    if (first.getDay() !== 0) {
+      return {
+        clicks: k,
+        first: ymdOf(first),
+        gridFrom: ymdOf(new Date(first.getFullYear(), first.getMonth(), 1 - first.getDay())),
+      };
+    }
+  }
+  throw new Error('seven months in a row starting on a Sunday is not a calendar');
+})();
+// Swapped in by the campaign block at the end, which needs a month of its own.
+let ITEMS_OVERRIDE = null;
 
 // One per day: a month cell shows three chips and then "+N more".
 const ITEMS = [
@@ -385,7 +412,9 @@ await page.route('**/*', async (route) => {
     seen.posted = JSON.parse(req.postData());
     return route.fulfill({ status: 201, json: { item: ev({ id: '66666666-6666-4666-8666-666666666666' }) } });
   }
-  if (p.startsWith('/api/items')) return route.fulfill({ json: { items: ITEMS } });
+  if (p.startsWith('/api/items')) {
+    return route.fulfill({ json: { items: ITEMS_OVERRIDE || ITEMS } });
+  }
 
   const file = path.join(ROOT, p === '/' ? '/index.html' : p);
   if (!fs.existsSync(file)) return route.fulfill({ status: 404, body: '' });
@@ -1916,6 +1945,141 @@ await t('cancels without recording anything', async () => {
   await page.waitForFunction(() => !document.querySelector('.bx-f'));
   return seen.spent.length === before;
 });
+await page.goto('http://local.test/');
+await page.waitForSelector('.mo-grid');
+
+// ── campaigns, pinned ──────────────────────────────────────────────────
+//
+// A campaign runs for weeks and a cell draws three chips before it gives up
+// and counts the rest, so a couple of long campaigns can push a day's actual
+// events out of the grid entirely. Pinned to their two ends instead.
+
+ITEMS_OVERRIDE = [
+  ev({ id: 'c1111111-1111-4111-8111-111111111111', title: 'Spring Campaign',
+       event_type: 'marketing', department: 'marketing', sub_types: 'campaign-promotion',
+       start_date: dayThis(3), end_date: dayThis(22) }),
+  // Neither end anywhere on the six weeks the grid draws, so it is pinned to
+  // nothing -- and without a rule for that it would vanish from the month
+  // altogether.
+  ev({ id: 'c2222222-2222-4222-8222-222222222222', title: 'Always On',
+       event_type: 'marketing', department: 'marketing', sub_types: 'campaign-promotion',
+       start_date: dayAround(-3, 20), end_date: dayAround(3, 10) }),
+  // Ends just past this month, which the grid's overrun usually puts on
+  // screen anyway. It should be drawn there and NOT get a second chip.
+  ev({ id: 'c5555555-5555-4555-8555-555555555555', title: 'Rolls Over',
+       event_type: 'marketing', department: 'marketing', sub_types: 'campaign-promotion',
+       start_date: dayAround(-2, 4), end_date: dayAround(1, 3) }),
+  ev({ id: 'c3333333-3333-4333-8333-333333333333', title: 'One Day Promo',
+       event_type: 'marketing', department: 'marketing', sub_types: 'campaign-promotion',
+       start_date: dayThis(15), end_date: dayThis(15) }),
+  // Not a campaign. A three-day event still wants all three days: the
+  // problem being solved is length, but the rule is scoped to campaigns.
+  ev({ id: 'c4444444-4444-4444-8444-444444444444', title: 'Surf Expo Run',
+       start_date: dayThis(5), end_date: dayThis(7) }),
+];
+await page.goto('http://local.test/');
+await page.waitForSelector('.mo-grid');
+
+console.log('campaigns, pinned');
+
+const chipsOn = (d) => page.locator('.mo-cell[data-day="' + d + '"] .chip');
+
+await t('draws a long campaign twice, at its two ends', async () => {
+  const all = await page.locator('.chip:has-text("Spring Campaign")').count();
+  return all === 2
+    && (await chipsOn(dayThis(3)).filter({ hasText: 'Spring Campaign' }).count()) === 1
+    && (await chipsOn(dayThis(22)).filter({ hasText: 'Spring Campaign' }).count()) === 1;
+});
+
+await t('leaves the days in between alone', async () => {
+  for (const d of [8, 10, 14, 19]) {
+    if (await chipsOn(dayThis(d)).filter({ hasText: 'Spring Campaign' }).count()) return false;
+  }
+  return true;
+});
+
+// Two chips of the same campaign a fortnight apart have to say which is
+// which. A symbol that only means something once you have worked it out
+// means nothing on a glance.
+await t('says in words which end each chip is', async () => {
+  const a = await chipsOn(dayThis(3)).filter({ hasText: 'Spring Campaign' })
+    .locator('.se').textContent();
+  const b = await chipsOn(dayThis(22)).filter({ hasText: 'Spring Campaign' })
+    .locator('.se').textContent();
+  return a === 'starts' && b === 'ends';
+});
+
+await t('keeps the span in the tooltip, which is where it went', async () => {
+  const tip = await chipsOn(dayThis(3)).filter({ hasText: 'Spring Campaign' })
+    .getAttribute('title');
+  return /\d+ days\)/.test(tip);
+});
+
+await t('still shows a campaign with neither end on screen', async () => {
+  const all = await page.locator('.chip:has-text("Always On")').count();
+  const first = await chipsOn(dayThis(1)).filter({ hasText: 'Always On' })
+    .locator('.se').textContent();
+  return all === 1 && first === 'running';
+});
+
+// The grid draws six weeks and usually overruns the month at both ends, so
+// a campaign ending early next month is already on screen down there. A
+// "running" chip as well would be the same campaign twice, which is the
+// thing this whole change is fixing.
+await t('does not add a second chip for one the grid already shows', async () => {
+  const all = await page.locator('.chip:has-text("Rolls Over")').count();
+  const onFirst = await chipsOn(dayThis(1)).filter({ hasText: 'Rolls Over' }).count();
+  const word = await page.locator('.chip:has-text("Rolls Over") .se').textContent();
+  return all === 1 && onFirst === 0 && word === 'ends';
+});
+
+await t('does not label a campaign that lasts one day', async () => {
+  const chip = chipsOn(dayThis(15)).filter({ hasText: 'One Day Promo' });
+  return (await chip.count()) === 1 && (await chip.locator('.se').count()) === 0;
+});
+
+// The rule is scoped to campaigns, so everything else still runs the whole
+// way across the grid.
+await t('leaves a multi-day event running on every day it covers', async () => {
+  const days = await Promise.all([5, 6, 7].map((d) =>
+    chipsOn(dayThis(d)).filter({ hasText: 'Surf Expo Run' }).count()));
+  return days.join(',') === '1,1,1';
+});
+
+// "What is live on the 14th" is a real question, and this is where it is
+// asked. The grid is the only place a campaign is pinned.
+await t('shows the whole run again when a middle day is opened', async () => {
+  await page.locator('.mo-cell[data-day="' + dayThis(14) + '"]').click();
+  await page.waitForSelector('#listPanel:not([hidden]) .day-item');
+  const txt = await page.locator('#listPanel').textContent();
+  return txt.includes('Spring Campaign') && txt.includes('Always On');
+});
+
+// The grid's left edge is its first CELL, which is usually in the month
+// before -- and a campaign starting there is already drawn, so it must not
+// also be called "running" on the 1st. Measuring that edge from the 1st
+// instead is a one-word slip that shows up only in a month whose grid has a
+// leading overrun, which is why the month is hunted for rather than assumed.
+ITEMS_OVERRIDE = [
+  ev({ id: 'c6666666-6666-4666-8666-666666666666', title: 'Early Bird',
+       event_type: 'marketing', department: 'marketing', sub_types: 'campaign-promotion',
+       start_date: LEADING.gridFrom, end_date: dayAround(4, 10) }),
+];
+await page.goto('http://local.test/');
+await page.waitForSelector('.mo-grid');
+for (let i = 0; i < LEADING.clicks; i += 1) await page.locator('#next').click();
+await page.waitForFunction((d) => document.querySelector('.mo-cell[data-day="' + d + '"]'),
+                          LEADING.gridFrom);
+
+await t('counts the grid from its first cell, not from the 1st', async () => {
+  const all = await page.locator('.chip:has-text("Early Bird")').count();
+  const word = await page.locator('.chip:has-text("Early Bird") .se').textContent();
+  const onFirst = await page.locator('.mo-cell[data-day="' + LEADING.first + '"] .chip')
+    .filter({ hasText: 'Early Bird' }).count();
+  return all === 1 && word === 'starts' && onFirst === 0;
+});
+
+ITEMS_OVERRIDE = null;
 await page.goto('http://local.test/');
 await page.waitForSelector('.mo-grid');
 

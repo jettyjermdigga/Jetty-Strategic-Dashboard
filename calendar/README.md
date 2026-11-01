@@ -151,6 +151,24 @@ actually wanted. Clear the filters and the list closes again.
 At phone width there is no grid at all, only the list. A month grid is
 unreadable there, and that was what the agenda view used to be for.
 
+**Campaigns are pinned to their two ends.** A cell draws three chips and then
+counts the rest as *+N more*, so a three-week campaign used to cost a slot in
+twenty-one cells and push the week's actual events out of sight. In the grid a
+Campaign/Promo now shows once where it starts and once where it ends, each chip
+carrying the word *starts* or *ends* — a word rather than an arrow, because two
+chips a fortnight apart have to say which is which. The full span moves to the
+tooltip.
+
+A campaign with neither end on the six weeks the grid draws would be pinned to
+nothing and vanish, so it gets one chip on the first of the month reading
+*running*. Measured against the drawn grid rather than the month: the grid
+overruns at both ends, and a campaign ending on the 3rd of next month is
+already on screen down there.
+
+Only the grid. The day panel, the list, the print sheet's own rows and the ICS
+feed all still run a campaign across every day it covers — *what is live on the
+14th* is a real question, and clicking the 14th is where it gets asked.
+
 ## Filtering
 
 Three rows of chips above the calendar.

@@ -304,9 +304,48 @@
 
   function visible() { return state.items.filter(passes); }
 
-  function itemsOn(dateStr, pool) {
+  // ── campaigns, pinned ──────────────────────────────────────────────────
+  //
+  // A campaign runs for weeks. A chip in every cell it touches is three
+  // weeks of the month grid spent on one row of the filter bar -- and a cell
+  // shows three chips before it gives up and says "+4 more", so a couple of
+  // long campaigns can push a day's actual events out of sight entirely.
+  //
+  // So in the month grid a campaign is pinned: one chip where it starts, one
+  // where it ends, nothing in between. Everywhere else it still runs the
+  // whole way. "What is live on the 14th" is a real question, and the day
+  // panel, the week, the agenda and the feed are where it gets asked.
+  var CAMPAIGN = 'campaign-promotion';
+
+  function isCampaign(it) { return subsOf(it).indexOf(CAMPAIGN) >= 0; }
+
+  /**
+   * Which of its days a campaign is drawn on, in a grid covering `bounds`.
+   *
+   * Returns '' for a day it is not drawn on, and otherwise the word the chip
+   * carries. A campaign with neither end anywhere in the drawn grid would be
+   * pinned to nothing and vanish altogether, so it gets one chip on the
+   * first of the month saying it is already running.
+   *
+   * Measured against the drawn grid, not the month. A grid is six weeks and
+   * usually overruns the month at both ends, so a campaign ending on the 10th
+   * of next month is already on screen in a trailing cell -- and a "running"
+   * chip as well would be the same campaign twice, which is the thing being
+   * fixed.
+   */
+  function pinWord(it, ds, bounds) {
+    if (!isCampaign(it) || it.start_date === it.end_date) return 'all';
+    if (it.start_date === ds) return 'starts';
+    if (it.end_date === ds) return 'ends';
+    if (!bounds || ds !== bounds.from) return '';
+    return (it.start_date < bounds.gridFrom && it.end_date > bounds.gridTo)
+      ? 'running' : '';
+  }
+
+  function itemsOn(dateStr, pool, bounds) {
     return (pool || visible())
       .filter(function (it) { return it.start_date <= dateStr && it.end_date >= dateStr; })
+      .filter(function (it) { return !bounds || pinWord(it, dateStr, bounds); })
       .sort(function (a, b) {
         if (a.all_day !== b.all_day) return b.all_day - a.all_day;
         if (a.all_day) return a.title.localeCompare(b.title);
@@ -683,16 +722,25 @@
   // sign that an event also involves another department. The event's own
   // calendar department is left off -- on a box truck calendar every event is
   // Box Truck, and a dot on all 112 says nothing.
-  function chipHtml(it, dateStr) {
+  function chipHtml(it, dateStr, bounds) {
     var cls = 'chip' + (it.status === 'Booked' ? '' : ' ' + it.status.toLowerCase());
-    var cont = it.start_date < dateStr ? '→ ' : '';
+    // A word, not an arrow. Two chips of the same campaign a fortnight apart
+    // have to say which end each one is, and a symbol that only means
+    // something once you have worked it out means nothing on a glance.
+    var pin = bounds ? pinWord(it, dateStr, bounds) : 'all';
+    var edge = (pin && pin !== 'all')
+      ? '<span class="se">' + pin + '</span>' : '';
+    var cont = (!edge && it.start_date < dateStr) ? '→ ' : '';
     var time = (!it.all_day && it.start_time && it.start_date === dateStr)
       ? '<span class="t">' + esc(hhmm(it.start_time)) + '</span>' : '';
     var tip = it.title + ' \u2014 ' + (deptSummary(it) || 'no department')
       + ' · ' + it.status + (it.venue ? ' · ' + it.venue : '');
+    // The span is the thing a pinned chip no longer shows on the grid, so it
+    // is the thing the tooltip has to carry.
+    if (it.start_date !== it.end_date) tip += ' · ' + spanLabel(it);
     return '<div class="' + cls + '" style="--chip:' + colorFor(it) + '" data-id="' + esc(it.id) + '" '
       + 'title="' + esc(tip) + '">'
-      + bandHtml(it) + time + '<span class="n">' + esc(cont + it.title) + '</span>'
+      + bandHtml(it) + edge + time + '<span class="n">' + esc(cont + it.title) + '</span>'
       + extraDotsHtml(it) + '</div>';
   }
 
@@ -779,18 +827,26 @@
     var pool = visible();
     var today = todayYmd();
 
+    // `from` is the first of the month, which is where a campaign with no
+    // end on screen gets its one chip -- the 1st, not the grid's first cell,
+    // which is usually in the month before. `gridFrom`/`gridTo` are what
+    // "on screen" means: all 42 cells, overrun included.
+    var bounds = { from: ymd(first), gridFrom: ymd(start), gridTo: ymd(addDays(start, 41)) };
+
     var head = '<div class="mo-head">' + DOW.map(function (d) { return '<div>' + d + '</div>'; }).join('') + '</div>';
     var cells = '';
     for (var i = 0; i < 42; i++) {
       var day = addDays(start, i);
       var ds = ymd(day);
-      var on = itemsOn(ds, pool);
+      var on = itemsOn(ds, pool, bounds);
       var out = day.getMonth() !== c.getMonth() ? ' out' : '';
       var isToday = ds === today ? ' today' : '';
       // On screen a cell shows three and offers the rest on a click. On paper
       // there is nothing to click, so everything is drawn and the cell grows.
       var cap = state.printing ? on.length : 3;
-      var shown = on.slice(0, cap).map(function (it) { return chipHtml(it, ds); }).join('');
+      var shown = on.slice(0, cap).map(function (it) {
+        return chipHtml(it, ds, bounds);
+      }).join('');
       var more = on.length > cap
         ? '<div class="mo-more" data-day="' + ds + '">+' + (on.length - cap) + ' more</div>' : '';
       cells += '<div class="mo-cell' + out + isToday + '" data-day="' + ds + '">'

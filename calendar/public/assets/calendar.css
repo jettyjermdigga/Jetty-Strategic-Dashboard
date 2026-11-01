@@ -395,6 +395,15 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
 }
 .chip:hover{background:color-mix(in srgb,var(--chip,#43575E) 24%,transparent)}
 .chip .t{font-family:var(--mono);font-size:10px;opacity:.7;flex-shrink:0}
+/* Which end of a campaign this chip is. It carries the word rather than an
+   arrow: two chips of the same campaign a fortnight apart have to say which
+   is which, and this one stays visible on a phone where the time badge does
+   not -- without it they read as two separate things. */
+.chip .se{
+  font-family:var(--mono);font-size:8.5px;letter-spacing:.07em;text-transform:uppercase;
+  flex-shrink:0;padding:1px 4px;border-radius:3px;
+  background:color-mix(in srgb,var(--chip,#43575E) 30%,transparent);
+}
 .chip .n{overflow:hidden;text-overflow:ellipsis}
 .chip .n{overflow:hidden;text-overflow:ellipsis}
 .chip.pending .bar{opacity:.5}
