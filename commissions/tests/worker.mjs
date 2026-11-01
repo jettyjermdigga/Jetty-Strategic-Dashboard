@@ -333,6 +333,35 @@ await t('shows the organisation call verbatim in the probe', async () => {
   return r.body.organisation.status === 400
     && /why it refused/.test(r.body.organisation.body);
 });
+// A 403 with an empty body is the least informative refusal Xero has, so
+// the probe asks the same question every plausible way at once rather
+// than one way per deploy.
+await t('tries the call more than one way', async () => {
+  const r = await xcall('GET', '/api/xero/probe');
+  const names = r.body.tries.map((x) => x.name);
+  return names.length >= 6
+    && names.some((n) => /token only/.test(n))
+    && names.some((n) => /empty tenant/.test(n))
+    && names.some((n) => /accept/.test(n))
+    && names.some((n) => /connections/.test(n));
+});
+// Including the one that answers nothing: an empty body reported as
+// empty is the finding, and reported as blank it looks like a bug here.
+await t('reports an empty refusal as an empty refusal', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (u, o) => (String(u).includes('/api.xro/')
+    ? reply(403, '') : real(u, o));
+  const r = await xcall('GET', '/api/xero/probe');
+  globalThis.fetch = real;
+  const one = r.body.tries.find((x) => /^Organisation/.test(x.name));
+  return one.status === 403 && one.body === '(empty)';
+});
+// When one of them does work, the probe has to say which -- that is the
+// whole answer, and it is one word.
+await t('names the way that worked, when one does', async () => {
+  const r = await xcall('GET', '/api/xero/probe');
+  return r.body.organisation.status === 200 && /Organisation/.test(r.body.organisation.which);
+});
 // Claim values are not printed unless they could name the organisation.
 await t('shows the token claims without printing their values', async () => {
   const r = await xcall('GET', '/api/xero/probe');

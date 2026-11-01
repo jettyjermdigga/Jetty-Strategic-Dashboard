@@ -19,6 +19,10 @@
 
 export const XERO_API = 'https://api.xero.com/api.xro/2.0';
 export const XERO_TOKEN = 'https://identity.xero.com/connect/token';
+// Only the probe uses this. A Custom Connection cannot list its own
+// connections -- see organisation() in xero-pull.js -- but asking and
+// reporting what comes back is half of what the probe is for.
+export const XERO_CONNECTIONS = 'https://api.xero.com/connections';
 
 /**
  * The scopes this module needs -- which is not the same as the scopes it

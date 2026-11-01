@@ -16,8 +16,8 @@ import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
 import { buildWhere, cleanLimit, STATUSES } from './filters.js';
 import {
-  XERO_SCOPES, XERO_API, missingScopes, tokenClaims, accountCodes,
-  revenueAccounts,
+  XERO_SCOPES, XERO_API, XERO_CONNECTIONS, missingScopes, tokenClaims,
+  accountCodes, revenueAccounts,
 } from './xero.js';
 import {
   accessToken, probeScopes, organisation, xeroHeaders, pullRows, chartOfAccounts,
@@ -306,17 +306,61 @@ async function handleApi(request, env, url, who) {
     const holds = bare ? bare.scopes : null;
     // The call that stands between a working token and the first pull.
     // Verbatim, because its status alone says nothing.
+    // Eight ways of asking the same question.
+    //
+    // A 403 with an empty body is the least informative refusal Xero has,
+    // and guessing at it has cost two rounds already. So every plausible
+    // difference is tried at once -- the header present and absent, the
+    // accept header on and off, two endpoints and the connections call --
+    // and each answer is reported with whatever body came back. One look
+    // settles which of them Xero is actually objecting to.
+    const bearer = bare ? 'Bearer ' + bare.access : '';
+    const TRIES = [
+      ['Organisation, token only',
+       XERO_API + '/Organisation', { authorization: bearer }],
+      ['Organisation, empty tenant header',
+       XERO_API + '/Organisation', { authorization: bearer, 'xero-tenant-id': '' }],
+      ['Organisation, accept json',
+       XERO_API + '/Organisation', { authorization: bearer, accept: 'application/json' }],
+      ['Organisation, empty tenant + accept',
+       XERO_API + '/Organisation',
+       { authorization: bearer, 'xero-tenant-id': '', accept: 'application/json' }],
+      ['Accounts, empty tenant + accept',
+       XERO_API + '/Accounts',
+       { authorization: bearer, 'xero-tenant-id': '', accept: 'application/json' }],
+      ['connections, token only',
+       XERO_CONNECTIONS, { authorization: bearer }],
+      ['connections, accept json',
+       XERO_CONNECTIONS, { authorization: bearer, accept: 'application/json' }],
+      ['connections, empty user header',
+       XERO_CONNECTIONS,
+       { authorization: bearer, 'xero-user-id': '', accept: 'application/json' }],
+    ];
+
+    const tries = [];
     let org = null;
     if (bare) {
-      try {
-        const res = await fetch(XERO_API + '/Organisation', {
-          headers: xeroHeaders(bare.access, ''),
-        });
-        org = { status: res.status, body: (await res.text()).slice(0, 600) };
-      } catch (err) {
-        org = { status: 0, body: String((err && err.message) || err) };
+      for (const [name, url2, headers] of TRIES) {
+        try {
+          const res = await fetch(url2, { headers });
+          const body = (await res.text()).slice(0, 300);
+          tries.push({ name, status: res.status, body: body || '(empty)' });
+          // Only an Organisation call answers "which organisation is
+          // this". Accounts coming back fine would be a fine thing to
+          // learn and is not that answer.
+          if (!org && res.ok && String(name).startsWith('Organisation')) {
+            org = { status: res.status, body, which: name };
+          }
+        } catch (err) {
+          tries.push({ name, status: 0, body: String((err && err.message) || err) });
+        }
+      }
+      if (!org) {
+        const first = tries.find((t) => String(t.name).startsWith('Organisation'));
+        org = { status: first.status, body: first.body };
       }
     }
+
     // Claim names only, and the ones that carry no secret. Enough to see
     // whether the organisation is named in the token itself.
     let claims = null;
@@ -339,6 +383,7 @@ async function handleApi(request, env, url, who) {
       namedScopesAccepted: results.filter((r) => r.ok && r.scope !== '(no scope named)')
         .map((r) => r.scope),
       organisation: org,
+      tries,
       claims,
       results,
       reading: reading(bare, bareWhy, holds, short),
