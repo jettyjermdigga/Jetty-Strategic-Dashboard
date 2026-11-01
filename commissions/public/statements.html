@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monthly Statements — Retail Sales Commissions</title>
+<link rel="icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/assets/fonts.css">
+<link rel="stylesheet" href="/assets/rc_system.css">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/commissions.css">
+<meta name="robots" content="noindex,nofollow">
+</head>
+<body>
+
+<header class="site-top">
+  <div class="brand">
+    <img src="/assets/logo.png" alt="Jetty">
+    <div class="divider"></div>
+    <div>
+      <div class="title-main">Monthly Statements</div>
+      <div class="title-sub" id="sub">Loading</div>
+    </div>
+  </div>
+  <div class="site-who"><a class="cm-nav" href="/">Payments</a>
+    <span id="who"></span></div>
+</header>
+
+<main class="cm-shell">
+  <div id="notice"></div>
+
+  <div class="cm-bar" id="bar" hidden>
+    <label class="cm-f-l">Month
+      <input class="cm-f-i" id="fMonth" type="month" aria-label="Which month"></label>
+    <button class="cm-f-save" type="button" id="buildAll">Build every statement</button>
+    <span class="cm-grow"></span>
+    <span class="cm-hint" id="count"></span>
+  </div>
+
+  <div class="cm-strip" id="strip" hidden></div>
+
+  <div class="cm-wrap" id="wrap" hidden>
+    <table class="cm-t cm-st" id="t"></table>
+  </div>
+</main>
+
+<script src="/assets/statements.js"></script>
+</body>
+</html>

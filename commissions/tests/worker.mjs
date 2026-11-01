@@ -54,8 +54,24 @@ function d1(db) {
 }
 
 const sqlite = new DatabaseSync(':memory:');
+// An R2 bucket, in a Map. put/get is all the Worker asks of it, and the
+// metadata is kept so a test can check the browser is told it is a
+// spreadsheet rather than left to guess from the bytes.
+const bucket = new Map();
+const r2 = {
+  async put(key, body, opts) {
+    bucket.set(key, { body, opts: opts || {} });
+    return { key };
+  },
+  async get(key) {
+    const o = bucket.get(key);
+    return o ? { body: o.body, httpMetadata: (o.opts || {}).httpMetadata } : null;
+  },
+};
+
 const ENV = {
   DB: d1(sqlite),
+  FILES: r2,
   COMMISSION_USERS: 'amy@jettylife.com',
   INGEST_KEY: 'a-long-shared-secret',
   // No team domain and no AUD: the local-dev path through access.js, where
@@ -532,6 +548,189 @@ await t('offers the form what has actually been used', async () => {
   const r = await call('GET', '/api/choices');
   return r.body.territories.includes('MI') && r.body.reps.length === 1
     && r.body.retailers.includes('East of Maui');
+});
+
+// ── The monthly run ────────────────────────────────────────────────────
+//
+// Built, sent, paid: three days and three columns. The thing worth proving
+// is the fourth state nobody names -- built, then the figures moved.
+
+console.log('');
+console.log('the monthly statements');
+
+const SEP = { year: 2026, month: 9 };
+const stmt = () => rows("SELECT * FROM statements WHERE rep_key = 'nathan-zelena' "
+  + 'AND year = 2026 AND month = 9')[0];
+
+// A clean month of its own, so the Xero rows above cannot drift into it.
+const seedPayment = (ref, over) => {
+  const o = Object.assign({ paid_on: '2026-09-14', gross: 1000, credits: 0, freight: 0,
+    commission_pct: 10, rep_key: 'nathan-zelena', ink: 0, invoice_no: ref,
+    retailer: 'Powder House', cad: 0, usd_net: null }, over || {});
+  sqlite.prepare(
+    'INSERT INTO payments (id, source, source_ref, paid_on, invoice_no, retailer, '
+    + 'rep_key, commission_pct, gross, credits, freight, cad, usd_net, ink) '
+    + "VALUES (lower(hex(randomblob(4))) || '-0000-4000-8000-' || lower(hex(randomblob(6))), "
+    + "'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(ref, o.paid_on, o.invoice_no, o.retailer, o.rep_key, o.commission_pct,
+         o.gross, o.credits, o.freight, o.cad, o.usd_net, o.ink);
+};
+
+await t('counts a month off the payments, before anything is built', async () => {
+  seedPayment('sep-1');
+  seedPayment('sep-2', { gross: 500 });
+  seedPayment('sep-ink', { gross: 2000, commission_pct: 2, ink: 1 });
+  // A different month, which must not land in September's total.
+  seedPayment('oct-1', { paid_on: '2026-10-02', gross: 9999 });
+  const r = await call('GET', '/api/statements?year=2026&month=9');
+  const mine = r.body.rows.filter((x) => x.rep_key === 'nathan-zelena')[0];
+  return r.status === 200 && mine.lines === 3 && mine.due === 190
+    && mine.ink_due === 40 && mine.built_at === null;
+});
+
+await t('wants to know which month before it will say anything', async () => {
+  const a = await call('GET', '/api/statements');
+  const b = await call('GET', '/api/statements?year=2026&month=13');
+  return a.status === 400 && b.status === 400;
+});
+
+await t('builds a file, keeps it, and writes the index', async () => {
+  const r = await call('POST', '/api/statements/build', SEP);
+  const made = (r.body.built || []).filter((x) => x.rep_key === 'nathan-zelena')[0];
+  const st = stmt();
+  return r.status === 200 && made && made.amount === 190
+    && st.report_name === 'Total_Commissions-Nathan_Zelena_LLC-2026-SEP.xlsx'
+    && st.report_key === 'statements/2026/09/nathan-zelena.xlsx'
+    && st.lines === 3 && Boolean(st.built_at) && bucket.has(st.report_key);
+});
+
+await t('puts an openable workbook in the bucket, not a JSON blob', async () => {
+  const st = stmt();
+  const bytes = bucket.get(st.report_key).body;
+  // "PK\x03\x04", the local file header every ZIP starts with.
+  const head = Array.from(bytes.subarray(0, 4));
+  const meta = bucket.get(st.report_key).opts.httpMetadata || {};
+  return head.join(',') === '80,75,3,4'
+    && /spreadsheetml\.sheet$/.test(meta.contentType || '')
+    && /filename="Total_Commissions/.test(meta.contentDisposition || '');
+});
+
+await t('serves the file through the Worker, behind Access', async () => {
+  const st = stmt();
+  const res = await worker.fetch(new Request('https://cm.test/api/statements/' + st.id + '/file', {
+    headers: { 'Cf-Access-Authenticated-User-Email': 'amy@jettylife.com' },
+  }), ENV, { waitUntil() {} });
+  const type = res.headers.get('content-type') || '';
+  const disp = res.headers.get('content-disposition') || '';
+  return res.status === 200 && /spreadsheetml\.sheet/.test(type)
+    && disp.indexOf('Total_Commissions-Nathan_Zelena_LLC-2026-SEP.xlsx') > 0;
+});
+
+await t('refuses the file to somebody not on the list', async () => {
+  const st = stmt();
+  const res = await worker.fetch(new Request('https://cm.test/api/statements/' + st.id + '/file', {
+    headers: { 'Cf-Access-Authenticated-User-Email': 'arlynn@jettylife.com' },
+  }), ENV, { waitUntil() {} });
+  return res.status === 403;
+});
+
+await t('will not mark a statement sent before it has been built', async () => {
+  sqlite.prepare("INSERT INTO reps (key, name, email) VALUES ('new-rep','New Rep','r@x.com')").run();
+  sqlite.prepare("INSERT INTO statements (id, rep_key, year, month) "
+    + "VALUES ('00000000-0000-4000-8000-000000000001','new-rep',2026,9)").run();
+  const r = await call('POST', '/api/statements/00000000-0000-4000-8000-000000000001/sent',
+                       { sent: true });
+  return r.status === 400 && /Build the statement/.test(r.body.errors.join(' '));
+});
+
+await t('records who sent it and when, and lets that be taken back', async () => {
+  const id = stmt().id;
+  const on = await call('POST', '/api/statements/' + id + '/sent', { sent: true });
+  const sent = Boolean(on.body.statement.sent_at)
+    && on.body.statement.sent_by === 'amy@jettylife.com';
+  const off = await call('POST', '/api/statements/' + id + '/sent', { sent: false });
+  return sent && off.body.statement.sent_at === null && off.body.statement.sent_by === null;
+});
+
+await t('says nothing is stale while the figures have not moved', async () => {
+  const r = await call('GET', '/api/statements?year=2026&month=9');
+  const mine = r.body.rows.filter((x) => x.rep_key === 'nathan-zelena')[0];
+  return mine.stale === false && mine.due === 190 && mine.amount === 190;
+});
+
+await t('notices when a correction lands after the file was built', async () => {
+  // The whole reason this screen exists: a rep is holding a file that the
+  // books no longer support, and nothing else would say so.
+  sqlite.prepare("UPDATE payments SET gross = 2000 WHERE source_ref = 'sep-1'").run();
+  const r = await call('GET', '/api/statements?year=2026&month=9');
+  const mine = r.body.rows.filter((x) => x.rep_key === 'nathan-zelena')[0];
+  return mine.stale === true && mine.due === 290 && mine.amount === 190;
+});
+
+await t('clears the warning by rebuilding over the same file', async () => {
+  const before = stmt().report_key;
+  await call('POST', '/api/statements/build', Object.assign({ reps: ['nathan-zelena'] }, SEP));
+  const r = await call('GET', '/api/statements?year=2026&month=9');
+  const mine = r.body.rows.filter((x) => x.rep_key === 'nathan-zelena')[0];
+  // One rep-month, one file. A corrected month that left the old file
+  // beside the new one would be a month with two right answers.
+  return mine.stale === false && mine.amount === 290 && stmt().report_key === before;
+});
+
+await t('says when a statement was rebuilt after it had already gone out', async () => {
+  const id = stmt().id;
+  await call('POST', '/api/statements/' + id + '/sent', { sent: true });
+  sqlite.prepare("UPDATE statements SET sent_at = '2020-01-01T00:00:00.000Z' WHERE id = ?")
+    .run(id);
+  const r = await call('GET', '/api/statements?year=2026&month=9');
+  const mine = r.body.rows.filter((x) => x.rep_key === 'nathan-zelena')[0];
+  return mine.resent === true;
+});
+
+await t('does not build an empty statement for a rep with no month', async () => {
+  const r = await call('POST', '/api/statements/build',
+                       { year: 2026, month: 7, reps: ['nathan-zelena'] });
+  return r.body.built.length === 0 && /Nothing in that month/.test(r.body.skipped[0].why);
+});
+
+await t('keeps a statement on screen after its payments have moved away', async () => {
+  // The rep's September rows are pushed into August; the file that was sent
+  // for September still has to account for itself.
+  sqlite.prepare("UPDATE payments SET paid_on = '2026-08-14' WHERE source_ref LIKE 'sep-%'").run();
+  const r = await call('GET', '/api/statements?year=2026&month=9');
+  const mine = r.body.rows.filter((x) => x.rep_key === 'nathan-zelena')[0];
+  const back = mine && mine.lines === 0 && mine.due === 0 && mine.stale === true;
+  sqlite.prepare("UPDATE payments SET paid_on = '2026-09-14' WHERE source_ref LIKE 'sep-%'").run();
+  return back;
+});
+
+await t('marks a rep paid, and will not pay a row with no rep', async () => {
+  const mine = rows("SELECT id FROM payments WHERE source_ref = 'sep-1'")[0].id;
+  const orphan = rows('SELECT id FROM payments WHERE rep_key IS NULL LIMIT 1')[0].id;
+  const r = await call('POST', '/api/payments/paid', { ids: [mine, orphan], paid: true });
+  const after = rows('SELECT id, paid, paid_by FROM payments WHERE id IN (?, ?)', mine, orphan);
+  const got = Object.fromEntries(after.map((x) => [x.id, x]));
+  return r.status === 200 && got[mine].paid === 1
+    && got[mine].paid_by === 'amy@jettylife.com' && got[orphan].paid === 0;
+});
+
+await t('refuses a paid run with nothing in it', async () => {
+  const r = await call('POST', '/api/payments/paid', { ids: [], paid: true });
+  return r.status === 400;
+});
+
+await t('shows on the month how much of it has reached the rep', async () => {
+  const r = await call('GET', '/api/statements?year=2026&month=9');
+  const mine = r.body.rows.filter((x) => x.rep_key === 'nathan-zelena')[0];
+  return mine.paid_lines === 1 && mine.lines === 3;
+});
+
+await t('keeps a note against the month, the way the Ledger did', async () => {
+  const id = stmt().id;
+  const r = await call('POST', '/api/statements/' + id + '/note',
+                       { notes: 'Ink commission included.' });
+  return r.body.statement.notes === 'Ink commission included.'
+    && stmt().notes === 'Ink commission included.';
 });
 
 console.log('');

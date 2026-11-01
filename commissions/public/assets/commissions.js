@@ -136,7 +136,7 @@
       + money('freight', 'Freight')
       + (tick('cad') ? money('usd_net', 'USD net') : '')
       + '<span class="cm-f-ticks">' + box('cad', 'CAD') + box('cc_fee', '3% card')
-      + box('partial', 'Part pmt') + '</span>'
+      + box('partial', 'Part pmt') + box('ink', 'Jetty Ink') + '</span>'
       + '<span class="cm-f-go">'
       + '<button class="cm-f-save" type="submit">Allocate</button>'
       + '<button class="cm-f-x" type="button" data-cancel="1">Cancel</button></span>'

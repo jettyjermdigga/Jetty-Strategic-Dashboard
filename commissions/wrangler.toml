@@ -66,19 +66,22 @@ ACCESS_DOMAINS = "jettylife.com"
 ACCESS_TEAM_DOMAIN = "wild-pine-bbc7.cloudflareaccess.com"
 ACCESS_AUD = "8f073f894aae873a6934f611d6917d9d633a4706472c06b484f05107f0721718"
 
-# The Xero Custom Connection this reads through. The id is not a secret; the
-# secret is, and it is set in Cloudflare rather than here --- a deploy
-# overwrites every var in this file and leaves secrets alone.
+# The Xero app this reads through. The id is not a secret; the secret is,
+# and it is set in Cloudflare rather than here --- a deploy overwrites every
+# var in this file and leaves secrets alone.
 #
-# A Custom Connection is machine-to-machine: one organisation, no user
-# sign-in, no consent screen and no refresh token. The id and secret ARE the
-# credential, so these two are the whole of it.
+# It is a WEB APP, not a Custom Connection, and the difference is not
+# cosmetic. A Web app signs a person in once and hands back a refresh token,
+# which is stored in the xero table and rotated on every use. A Custom
+# Connection would be machine-to-machine with no sign-in --- and a Web app
+# will happily issue one of those tokens too, carrying the full scope list
+# and reaching no books at all, which is what a day was spent on.
 #
-# Its scopes are set on the app in Xero when the connection is made and
-# cannot be widened afterwards. It needs accounting.invoices.read,
-# accounting.payments.read and accounting.settings.read -- a Custom
-# Connection's own vocabulary, which is finer than the umbrella scopes in
-# Xero's OpenAPI spec. See XERO_SCOPES in worker/xero.js.
+# The scopes are the ones this app is PERMITTED to request, a list on its own
+# Configuration page: accounting.invoices.read, accounting.payments.read,
+# accounting.settings.read, plus offline_access. That list is the granular
+# vocabulary and is not the OpenAPI spec's --- there is no
+# accounting.transactions on it. See XERO_SCOPES in worker/xero.js.
 XERO_CLIENT_ID = "CF90B6EE8120441B9F1AAF9ECDA97F85"
 
 # The Xero account codes that mean wholesale revenue. An invoice counts when
@@ -98,6 +101,11 @@ XERO_CLIENT_ID = "CF90B6EE8120441B9F1AAF9ECDA97F85"
 # has a 271 line on it anyway, so adding it would only pull in
 # invoices that are shipping and nothing else.
 #
-# Not 292 (Screen Printing Revenue) either. That is INK, it is what
-# the weekly INK journal credits, and the reps do not earn on it.
+# Not 292 (Screen Printing Revenue) --- for now, and this is an open
+# question rather than a settled one. 292 is INK and it is what the
+# weekly INK journal credits. The reasoning here was that the reps do
+# not earn on it; the statement Amy sent for 2026-SEP has a Jetty Ink
+# section at 2% on it, so for at least some reps they do. Until that
+# is settled with her the Ink section of every statement stays empty.
+# See "Jetty Ink, and a figure that is not arriving" in README.md.
 XERO_ACCOUNTS = "271"

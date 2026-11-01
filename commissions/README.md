@@ -66,24 +66,92 @@ fails if they ever disagree.
   stays put so nothing is skipped.
 * **Connecting Xero**, from the line above the queue: a sign-in, once.
   What the last run did is shown there too, including why it failed.
+* **The monthly statements screen**, at `/statements.html`. A rep per row for
+  a chosen month, the `.xlsx` built and kept, and whether it has gone out.
+  Its own section below.
+
+## The monthly statement
+
+The piece Amy does, and the reason the Reps tab in the Ledger existed. It is
+built now: `/statements.html`.
+
+A row per rep per month -- the Ledger's nine columns, with the two it could
+not hold added:
+
+| | |
+|---|---|
+| **Amount** | worked out from the payments *every time the screen loads*, not read off the stored statement |
+| **Report** | the `.xlsx`, kept in R2 and served through the Worker so the download is behind Access |
+| **State** | not built / built, not sent / sent on a date / **figures changed** / **rebuilt since sending** |
+
+Those last two are the point. The Airtable tab could say a statement went
+out; it could not say that the books had moved underneath it afterwards. A
+correction made to a payment after the file was built shows the live figure
+with *was $3,558.32* beneath it and the row turns red, and a statement
+rebuilt after it was sent says so -- because the rep is holding the older
+file and somebody has to know.
+
+**Reissuing** is a rebuild. One rep-month, one file, overwritten: a corrected
+month that left the old file beside the new one is a month with two right
+answers.
+
+**Sending is not automated.** Nothing here has an email provider bound, and
+the module does not pretend to: *Mark sent* records who and when, the same
+act the Ledger's *Date Sent* column recorded. Download the file and send it
+however it goes out today.
+
+**Paid is a third thing**, separate from built and sent, and now wired:
+`POST /api/payments/paid` marks the rep paid on a set of rows, and the
+monthly screen shows how much of a month has reached them. A row with no rep
+cannot be marked paid -- there is nobody to have paid it.
+
+### The file
+
+A recreation of what reps already receive: fourteen columns in her order,
+brand lines first, `Jetty Ink` underneath with its own subtotal, and the
+month's total adding the two subtotals rather than the lines a second time.
+Filenames and the sheet name are hers too
+(`Total_Commissions-Nathan_Zelena-2026-SEP.xlsx`), so a rep's folder sorts
+the new ones in beside the old.
+
+`worker/xlsx.js` writes it. An .xlsx is a ZIP of XML parts and a Worker has
+no ZIP library and no way to install one, so it is both -- the parts Excel
+insists on, and a stored-entry ZIP to hold them. Entries are stored rather
+than deflated: a ZIP entry wants a raw deflate stream with the sizes known
+before the header is written, and a monthly statement is forty rows.
+
+Two things in there are worth not breaking, and both have tests that fail if
+they are. Excel counts days from **1899-12-30** -- one earlier than it looks,
+because 1900 is wrongly a leap year in its calendar -- and a sheet name over
+31 characters or carrying any of `\ / ? * [ ] :` makes the whole file refuse
+to open, which is a strange way for a rep with a long name to find out.
+
+### Jetty Ink, and a figure that is not arriving
+
+Screen printing is a flag on the payment (`ink`), ticked on the allocation
+form. It is its own section at its own rate -- 10% on the brand, 2% on Ink --
+and keeping the two apart is most of why the sheet has two subtotals.
+
+**But the Xero pull cannot see Ink.** `XERO_ACCOUNTS` is `271` (Wholesale
+Revenue) and deliberately excludes `292` (Screen Printing Revenue), on the
+reasoning that the reps do not earn on Ink. The statement Amy sent for
+September 2026 says otherwise: Nathan Zelena has two Ink lines at 2% on it,
+and the Ledger carries *"Ink Commission included"* against his row and
+Sandbox Metro's.
+
+So either `292` belongs in `XERO_ACCOUNTS` and those lines should be pulling
+in, or Ink commission is worked out somewhere else and allocated by hand.
+**Until that is settled the Ink section will stay empty for every rep**, and
+a statement that is short is worse than one that is missing. Worth ten
+minutes with Amy.
 
 ## What is not built yet
 
-* Marking a month's commission paid (`cleanPaid` exists and is tested; nothing
-  calls it).
-
-* **The monthly statement.** The piece Amy actually does, and the reason the
-  Reps tab in the Ledger still exists: one `.xlsx` per rep per month, kept,
-  and sent to that rep when the payment goes out. `statements` is the index
-  and the import has already filled it with the history; the R2 bucket is
-  bound and empty.
-
-  Four things it has to do, in her words: build a file per rep for a given
-  month, store it, send it, and record that it went. Worth settling with her
-  before building: what belongs on the sheet beyond the lines and the total,
-  whether a statement can be re-sent or re-issued after a correction, and
-  whether "paid" and "sent" are one act or two -- they are not the same
-  question and this module currently answers neither.
+* **Sending the statement.** See above: no email provider is bound and
+  nothing here sends mail. Adding one is a small job -- the file, the rep's
+  address and the period are all already to hand -- but who the mail comes
+  *from* decides where a rep's reply lands, so it is a question for Amy
+  rather than a default to pick.
 
 * Moving the historic report files out of Airtable. Their attachment URLs
   expire, so copying them into R2 is its own job; the import keeps the

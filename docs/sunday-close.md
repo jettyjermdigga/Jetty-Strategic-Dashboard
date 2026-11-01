@@ -24,7 +24,7 @@ nothing to press. See `docs/dashboard-auto-rebuild.md`.
 
 ---
 
-## 1. Post the prior week's INK revenue to Xero — **BLOCKED**
+## 1. Post the prior week's INK revenue to Xero — **BLOCKED**, by one scope
 
 **What happens now.** An Airtable automation emails the booked INK revenue
 for the week that just closed, every Sunday at about 02:30. Log into Xero,
@@ -54,15 +54,26 @@ notification of a record, not the record itself. So the whole step is:
 read the closed week's booked revenue from Airtable, post one journal to
 Xero, on a Sunday cron.
 
-**What is blocking it.** The Xero Custom Connection answers 403 with an
-empty body on every accounting call, with or without an empty
-`xero-tenant-id` header. The token is good and its scopes are confirmed;
-see `commissions/README.md` and `/api/xero/probe`. Until that is resolved
-nothing can be posted to Xero by machine.
+**What is blocking it.** One scope, and a consent screen.
 
-Worth knowing for when it is: the connection's grant already includes
-`accounting.manualjournals` — write, not just read — so no new Xero app is
-needed for this.
+The earlier blocker — 403 with an empty body on every accounting call — is
+gone, and it was never about scopes. The app was a Web app with no
+organisation authorised against it, and a `client_credentials` token on one
+of those carries the full granted scope list while reaching no books at all.
+It is connected to Jetty Life, LLC now and reads invoices, payments and the
+chart of accounts.
+
+What it holds is read-only: `accounting.invoices.read`,
+`accounting.payments.read`, `accounting.settings.read`. Posting a journal
+needs `accounting.manualjournals`, which the app **is permitted to request**
+— it is on its Configuration page — and which was deliberately left out of
+the consent, on the grounds that a module that can only read cannot write
+anything wrong.
+
+So unblocking this is one line in `XERO_SCOPES` and pressing Connect Xero
+again to re-consent. Worth doing deliberately rather than in passing: it is
+the moment this stops being a module that reads the books and becomes one
+that writes them.
 
 **Residual judgement:** none. The figure is given, the accounts never
 change, and the dates follow the calendar.

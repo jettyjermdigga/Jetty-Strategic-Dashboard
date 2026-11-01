@@ -116,6 +116,10 @@ export function cleanAllocation(input, reps) {
     cc_fee: i.cc_fee ? 1 : 0,
     cad: i.cad ? 1 : 0,
     partial: i.partial ? 1 : 0,
+    // Screen printing. Its own section on the statement at its own rate,
+    // so it is a fact about the payment rather than a rate somebody
+    // remembers to type differently.
+    ink: i.ink ? 1 : 0,
   };
 
   // A Canadian row priced off a blank USD figure pays zero, which looks like

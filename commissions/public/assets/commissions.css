@@ -123,7 +123,8 @@
 
 @media (max-width:900px){
   .cm-shell{padding-left:14px;padding-right:14px}
-  .cm-t th:nth-child(n+4):nth-child(-n+6),.cm-t td:nth-child(n+4):nth-child(-n+6){display:none}
+  .cm-t:not(.cm-st) th:nth-child(n+4):nth-child(-n+6),
+  .cm-t:not(.cm-st) td:nth-child(n+4):nth-child(-n+6){display:none}
 }
 
 /* ── Where the money comes from ──────────────────────────────────────────
@@ -154,3 +155,73 @@
 .cm-bar .cm-f-i{min-width:130px}
 .cm-bar .cm-f-x{align-self:flex-end;margin-bottom:1px}
 .cm-sum{font-family:var(--mono);font-size:10.5px;opacity:.85}
+
+/* ── The monthly statements screen ───────────────────────────────────────
+   The Ledger's Reps tab, which was nine columns and three of them doing the
+   work. The colours here say one thing only: whether the file a rep is
+   holding still matches the books. */
+/* The header bar is dark in both themes -- white title, white divider --
+   so this is white in both too. var(--ink) here is dark on dark the moment
+   the page is in light mode, which is exactly what the contrast sweep
+   caught. */
+.cm-nav{
+  font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  padding:6px 11px;border-radius:7px;text-decoration:none;
+  border:1px solid rgba(255,255,255,.45);color:#fff;margin-right:10px;
+}
+.cm-nav:hover{background:rgba(255,255,255,.12);border-color:#fff}
+.cm-nav:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+
+.cm-st{table-layout:auto;width:100%}
+.cm-st td{vertical-align:middle}
+.cm-st td:first-child{width:22%}
+.cm-email{font-family:var(--mono);font-size:11px;opacity:.78;word-break:break-all}
+.cm-file{
+  font-family:var(--mono);font-size:11px;color:var(--ink);
+  text-decoration:underline;text-underline-offset:2px;
+}
+.cm-file:hover{opacity:.78}
+.cm-file:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:3px}
+
+/* What the file said, when the books have since said something else. Beside
+   the live figure, never instead of it: the question is always by how much. */
+.cm-was{
+  font-family:var(--mono);font-size:10px;font-weight:400;opacity:.75;
+  display:block;margin-top:1px;
+}
+.cm-ink{opacity:.8}
+.cm-paid,.cm-part{
+  font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+  display:block;margin-top:2px;opacity:.82;
+}
+.cm-acts{white-space:nowrap}
+.cm-acts .cm-f-x{margin-right:5px}
+.cm-note{
+  font-family:var(--body);font-size:12.5px;padding:4px 7px;border-radius:6px;min-width:120px;
+  border:1px solid var(--surface-alt);background:var(--cm-cell);color:var(--ink);
+  width:100%;box-sizing:border-box;
+}
+.cm-note:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.cm-note[disabled]{opacity:.5}
+
+/* Four states, and only one of them is a warning. Each carries its word as
+   well as its colour -- a statement nobody can tell apart from a sent one on
+   a monochrome screen is a statement that goes out twice. */
+.cm-flag.is-none{opacity:.72}
+.cm-flag.is-built{background:rgba(67,87,94,.14)}
+.cm-flag.is-sent{background:rgba(42,112,78,.17);color:#1C6042}
+.cm-flag.is-stale{background:rgba(163,63,40,.16);color:#8E3522}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .cm-flag.is-sent{background:rgba(120,210,165,.17);color:#8FE0BA}
+  :root:not([data-theme="light"]) .cm-flag.is-stale{background:rgba(242,176,160,.17);color:#F2B0A0}
+}
+:root[data-theme="dark"] .cm-flag.is-sent{background:rgba(120,210,165,.17);color:#8FE0BA}
+:root[data-theme="dark"] .cm-flag.is-stale{background:rgba(242,176,160,.17);color:#F2B0A0}
+:root[data-theme="light"] .cm-flag.is-sent{background:rgba(42,112,78,.17);color:#1C6042}
+:root[data-theme="light"] .cm-flag.is-stale{background:rgba(163,63,40,.16);color:#8E3522}
+
+@media (max-width:900px){
+  .cm-st th:nth-child(2),.cm-st td:nth-child(2),
+  .cm-st th:nth-child(5),.cm-st td:nth-child(5),
+  .cm-st th:nth-child(9),.cm-st td:nth-child(9){display:none}
+}

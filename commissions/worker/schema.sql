@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS payments (
 
   cc_fee        INTEGER NOT NULL DEFAULT 0,   -- the retailer paid the 3% card fee
   partial       INTEGER NOT NULL DEFAULT 0,   -- part payment of a larger invoice
+
+  -- Screen printing rather than wholesale. Its own section on the statement
+  -- and its own rate -- the reps earn 10% on the brand and 2% on Ink -- so
+  -- it is a flag on the payment rather than something inferred from a rate
+  -- or spelled into jetty_line.
+  ink           INTEGER NOT NULL DEFAULT 0,
   paid          INTEGER NOT NULL DEFAULT 0,   -- the REP has been paid, not the retailer
   paid_at       TEXT,
   paid_by       TEXT,
@@ -99,6 +105,11 @@ CREATE TABLE IF NOT EXISTS statements (
   amount      REAL,
   report_key  TEXT,                   -- R2 object key
   report_name TEXT,
+  lines       INTEGER,                -- how many payments are on it
+  -- When the file was last built. On its own it says nothing; next to
+  -- sent_at it says whether the rep is holding the statement the books
+  -- currently support, which is the question a correction raises.
+  built_at    TEXT,
   sent_at     TEXT,
   sent_by     TEXT,
   notes       TEXT,
@@ -110,15 +121,14 @@ CREATE INDEX IF NOT EXISTS idx_stmt_period ON statements(year, month);
 
 -- The Xero connection. One row, because there is one Xero organisation.
 --
--- There is no credential in here. This is a Custom Connection, which is
--- machine-to-machine: the app id and secret ARE the credential, a token is
--- asked for when one is needed and lasts about half an hour, and there is
--- no refresh token to store or rotate.
+-- The refresh token lives here, and it is the credential: this is a Web
+-- app, so somebody signed in once and Xero handed back a token that is
+-- traded for a half-hour access token whenever one is needed.
 --
--- refresh_token and the oauth_ columns are left over from the user sign-in
--- flow this replaced. Nothing reads or writes them; they stay because
--- dropping a column in SQLite is a table rebuild and an unused column is
--- cheaper than that.
+-- Xero ROTATES the refresh token on every refresh. The one just used is
+-- dead and the new one comes back in the same response, so it is written
+-- back before anything else happens -- a failed write-back makes the
+-- connection work exactly once and then fail, which has happened here.
 CREATE TABLE IF NOT EXISTS xero (
   id            INTEGER PRIMARY KEY CHECK (id = 1),
   tenant_id     TEXT,

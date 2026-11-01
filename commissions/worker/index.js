@@ -12,7 +12,7 @@
 
 import { identify } from './access.js';
 import { sqlStatements } from './sql.js';
-import { cleanAllocation, totals } from './commission.js';
+import { cleanAllocation, cleanPaid, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
 import { buildWhere, cleanLimit, STATUSES } from './filters.js';
 import {
@@ -23,6 +23,11 @@ import {
   refreshAccess, exchangeCode, tenants, xeroHeaders,
   pullRows, chartOfAccounts,
 } from './xero-pull.js';
+import {
+  build as buildStatement, fileName, objectKey, periodRange, periodLabel,
+  monthOk, yearOk,
+} from './statement.js';
+import { workbook } from './xlsx.js';
 import SCHEMA from './schema.sql';
 
 const json = (body, status) => new Response(JSON.stringify(body), {
@@ -38,7 +43,7 @@ let schemaReady = false;
 const ALLOC_COLS = [
   'rep_key', 'commission_pct', 'retailer', 'customer', 'territory', 'jetty_line',
   'payment_method', 'invoice_no', 'credit_memo', 'notes',
-  'credits', 'freight', 'usd_net', 'cc_fee', 'cad', 'partial',
+  'credits', 'freight', 'usd_net', 'cc_fee', 'cad', 'partial', 'ink',
 ];
 
 /**
@@ -56,6 +61,15 @@ const ALLOC_COLS = [
  */
 const ADDED_COLUMNS = [
   ['xero', 'refreshed_at TEXT'],
+  // Screen printing, which the reps earn 2% on and which is its own
+  // section on the statement. A separate flag rather than a jetty_line
+  // somebody has to spell the same way twice.
+  ['payments', 'ink INTEGER NOT NULL DEFAULT 0'],
+  // When the file was last built, which is only interesting next to
+  // sent_at: built after sent means the rep is holding a statement that no
+  // longer matches the books.
+  ['statements', 'built_at TEXT'],
+  ['statements', 'lines INTEGER'],
 ];
 
 async function ensureSchema(db) {
@@ -231,8 +245,47 @@ async function runPull(env, db, who, { full } = {}) {
 
 const QUEUE_FIELDS = 'id, source, paid_on, invoice_no, retailer, customer, territory, '
   + 'jetty_line, payment_method, rep_key, commission_pct, gross, credits, freight, '
-  + 'cad, usd_net, cc_fee, partial, paid, paid_at, credit_memo, notes, '
+  + 'cad, usd_net, cc_fee, partial, ink, paid, paid_at, credit_memo, notes, '
   + 'net_invoice, amount_due, updated_by, updated_at';
+
+const XLSX_TYPE =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/**
+ * One line of the monthly screen.
+ *
+ * `due` is worked out from the payments now; `amount` is what the file said
+ * when it was built. They are both here on purpose -- when they disagree the
+ * rep is holding a statement the books no longer support, and that is the
+ * one thing this screen exists to catch.
+ */
+function statementRow(live, stored, name, email) {
+  const due = Math.round(Number(live.due || 0) * 100) / 100;
+  const amount = stored && stored.amount != null
+    ? Math.round(Number(stored.amount) * 100) / 100 : null;
+  return {
+    id: (stored && stored.id) || null,
+    rep_key: live.rep_key,
+    name: name[live.rep_key] || live.rep_key,
+    email: email[live.rep_key] || null,
+    lines: Number(live.lines || 0),
+    paid_lines: Number(live.paid_lines || 0),
+    ink_due: Math.round(Number(live.ink_due || 0) * 100) / 100,
+    due,
+    amount,
+    report_name: (stored && stored.report_name) || null,
+    built_at: (stored && stored.built_at) || null,
+    sent_at: (stored && stored.sent_at) || null,
+    sent_by: (stored && stored.sent_by) || null,
+    notes: (stored && stored.notes) || null,
+    // Built, then changed. Not an error -- it is how a correction looks --
+    // but it is the difference between a statement and a stale one.
+    stale: Boolean(stored && stored.built_at && amount != null && amount !== due),
+    // Sent, then rebuilt. The rep has the older file.
+    resent: Boolean(stored && stored.sent_at && stored.built_at
+      && stored.built_at > stored.sent_at),
+  };
+}
 
 async function handleApi(request, env, url, who) {
   const db = env.DB;
@@ -505,6 +558,220 @@ async function handleApi(request, env, url, who) {
     const body = await request.json().catch(() => ({}));
     const result = await runPull(env, db, who, { full: Boolean(body && body.full) });
     return json(result);
+  }
+
+  // ── The monthly run ───────────────────────────────────────────────────
+  //
+  // One statement per rep per month: the figures, a file, and the two dates
+  // that say where it got to. Deliberately not one "status": built, sent and
+  // paid happen on different days and in that order, and a single column
+  // would make going back to any of them look like going backwards.
+
+  // What a month looks like. Worked out from the payments every time rather
+  // than read off the stored statement, so a correction made after a file
+  // was built shows up here as a difference instead of hiding inside it.
+  if (path === '/api/statements' && method === 'GET') {
+    const year = Number(url.searchParams.get('year'));
+    const month = Number(url.searchParams.get('month'));
+    if (!yearOk(year) || !monthOk(month)) {
+      return json({ error: 'Which month? Give a year and a month.' }, 400);
+    }
+    const { from, to } = periodRange(year, month);
+
+    // Every allocated payment in the month, by rep.
+    const rows = ((await db.prepare(
+      'SELECT rep_key, COUNT(*) AS lines, SUM(amount_due) AS due, '
+      + 'SUM(CASE WHEN paid = 1 THEN 1 ELSE 0 END) AS paid_lines, '
+      + 'SUM(CASE WHEN ink = 1 THEN amount_due ELSE 0 END) AS ink_due '
+      + 'FROM payments WHERE rep_key IS NOT NULL AND paid_on >= ? AND paid_on <= ? '
+      + 'GROUP BY rep_key').bind(from, to).all()).results) || [];
+
+    const stored = ((await db.prepare(
+      'SELECT * FROM statements WHERE year = ? AND month = ?')
+      .bind(year, month).all()).results) || [];
+    const byRep = {};
+    for (const st of stored) byRep[st.rep_key] = st;
+
+    const reps = await repList();
+    const name = {};
+    const email = {};
+    for (const r of reps) { name[r.key] = r.name; email[r.key] = r.email; }
+
+    const out = [];
+    const seen = new Set();
+    for (const r of rows) {
+      seen.add(r.rep_key);
+      out.push(statementRow(r, byRep[r.rep_key], name, email));
+    }
+    // A statement built for a rep whose payments have since moved out of
+    // the month still has to appear, or a file somebody sent would vanish
+    // off the screen that is supposed to account for it.
+    for (const st of stored) {
+      if (seen.has(st.rep_key)) continue;
+      out.push(statementRow({ rep_key: st.rep_key, lines: 0, due: 0, paid_lines: 0, ink_due: 0 },
+                            st, name, email));
+    }
+    out.sort((a, b) => String(a.name || a.rep_key).localeCompare(String(b.name || b.rep_key)));
+
+    const total = out.reduce((n, r) => Math.round((n + r.due) * 100) / 100, 0);
+    return json({
+      year, month, period: periodLabel(year, month),
+      rows: out, total, you: who.email,
+      // Whether a built file can actually be kept. Said once here rather
+      // than discovered one failed build at a time.
+      storage: Boolean(env.FILES),
+    });
+  }
+
+  // Build, or rebuild. Overwrites the file in place: a rep-month has one
+  // statement, and a corrected month that left the old file lying beside
+  // the new one would be a month with two right answers.
+  if (path === '/api/statements/build' && method === 'POST') {
+    if (!env.FILES) {
+      return json({ error: 'The statements bucket is not bound to this Worker yet.' }, 503);
+    }
+    const body = await request.json().catch(() => ({}));
+    const year = Number(body && body.year);
+    const month = Number(body && body.month);
+    if (!yearOk(year) || !monthOk(month)) {
+      return json({ error: 'Which month? Give a year and a month.' }, 400);
+    }
+    const wanted = Array.isArray(body && body.reps)
+      ? body.reps.filter((x) => typeof x === 'string' && x).slice(0, 200)
+      : null;
+
+    const { from, to } = periodRange(year, month);
+    const reps = await repList();
+    const byKey = {};
+    for (const r of reps) byKey[r.key] = r;
+
+    const keys = wanted || (((await db.prepare(
+      'SELECT DISTINCT rep_key FROM payments WHERE rep_key IS NOT NULL '
+      + 'AND paid_on >= ? AND paid_on <= ?').bind(from, to).all()).results) || [])
+      .map((r) => r.rep_key);
+
+    const built = [];
+    const skipped = [];
+    const now = new Date().toISOString();
+
+    for (const key of keys) {
+      const rep = byKey[key];
+      if (!rep) { skipped.push({ rep_key: key, why: 'Not a rep on the list.' }); continue; }
+
+      const lines = ((await db.prepare(
+        'SELECT ' + QUEUE_FIELDS + ' FROM payments WHERE rep_key = ? '
+        + 'AND paid_on >= ? AND paid_on <= ? ORDER BY paid_on, invoice_no')
+        .bind(key, from, to).all()).results) || [];
+      // An empty statement is not a statement. Building one would put a
+      // file in a rep's inbox saying they earned nothing this month, which
+      // is a different message to not writing.
+      if (!lines.length) { skipped.push({ rep_key: key, why: 'Nothing in that month.' }); continue; }
+
+      const sheet = buildStatement({ rep, year, month, rows: lines });
+      const bytes = workbook(sheet);
+      const key2 = objectKey(key, year, month);
+      const file = fileName(rep.name, year, month);
+      await env.FILES.put(key2, bytes, {
+        httpMetadata: {
+          contentType: XLSX_TYPE,
+          contentDisposition: 'attachment; filename="' + file + '"',
+        },
+      });
+
+      await db.prepare(
+        'INSERT INTO statements (id, rep_key, year, month, amount, report_key, report_name, '
+        + 'lines, built_at, created_at, updated_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+        + 'ON CONFLICT(rep_key, year, month) DO UPDATE SET '
+        + 'amount = excluded.amount, report_key = excluded.report_key, '
+        + 'report_name = excluded.report_name, lines = excluded.lines, '
+        + 'built_at = excluded.built_at, updated_at = excluded.updated_at')
+        .bind(crypto.randomUUID(), key, year, month, sheet.total, key2, file,
+              sheet.lines, now, now, now).run();
+
+      built.push({ rep_key: key, name: rep.name, amount: sheet.total,
+                   lines: sheet.lines, report_name: file, bytes: bytes.length });
+    }
+
+    return json({ year, month, period: periodLabel(year, month), built, skipped });
+  }
+
+  // The file itself. Served by the Worker rather than from a bucket URL,
+  // which is the whole reason it is worth keeping in R2 at all: the
+  // download is behind Access like everything else here.
+  const file = path.match(/^\/api\/statements\/([0-9a-f-]{36})\/file$/);
+  if (file && method === 'GET') {
+    if (!env.FILES) return json({ error: 'The statements bucket is not bound.' }, 503);
+    const st = await db.prepare('SELECT * FROM statements WHERE id = ?').bind(file[1]).first();
+    if (!st) return json({ error: 'No such statement.' }, 404);
+    if (!st.report_key) return json({ error: 'That statement has not been built yet.' }, 404);
+    const obj = await env.FILES.get(st.report_key);
+    if (!obj) {
+      return json({ error: 'The file is missing from storage. Build it again.' }, 404);
+    }
+    return new Response(obj.body, {
+      headers: {
+        'content-type': XLSX_TYPE,
+        'content-disposition': 'attachment; filename="'
+          + String(st.report_name || 'statement.xlsx').replace(/["\\]/g, '') + '"',
+        'cache-control': 'no-store',
+      },
+    });
+  }
+
+  // Sent, or not sent after all. Recorded rather than inferred: the module
+  // does not send the mail, so the only thing that knows a statement went
+  // out is the person who sent it.
+  const sent = path.match(/^\/api\/statements\/([0-9a-f-]{36})\/sent$/);
+  if (sent && method === 'POST') {
+    const st = await db.prepare('SELECT * FROM statements WHERE id = ?').bind(sent[1]).first();
+    if (!st) return json({ error: 'No such statement.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    const on = Boolean(body && body.sent);
+    if (on && !st.report_key) {
+      return json({ errors: ['Build the statement before marking it sent.'] }, 400);
+    }
+    const now = new Date().toISOString();
+    await db.prepare(
+      'UPDATE statements SET sent_at = ?, sent_by = ?, updated_at = ? WHERE id = ?')
+      .bind(on ? now : null, on ? who.email : null, now, st.id).run();
+    const after = await db.prepare('SELECT * FROM statements WHERE id = ?').bind(st.id).first();
+    return json({ statement: after });
+  }
+
+  // A note against a statement -- the Ledger's Notes column, which is where
+  // "Ink commission included" and "re-sent 14th, first one bounced" live.
+  const note = path.match(/^\/api\/statements\/([0-9a-f-]{36})\/note$/);
+  if (note && method === 'POST') {
+    const st = await db.prepare('SELECT * FROM statements WHERE id = ?').bind(note[1]).first();
+    if (!st) return json({ error: 'No such statement.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    const text = String((body && body.notes) || '').trim().slice(0, 500);
+    await db.prepare('UPDATE statements SET notes = ?, updated_at = ? WHERE id = ?')
+      .bind(text || null, new Date().toISOString(), st.id).run();
+    const after = await db.prepare('SELECT * FROM statements WHERE id = ?').bind(st.id).first();
+    return json({ statement: after });
+  }
+
+  // Marking a month's commission paid to the rep. The last of the three
+  // days, and the one that was never built -- cleanPaid has been sitting
+  // here tested and uncalled since the module shipped.
+  if (path === '/api/payments/paid' && method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const { row, errors } = cleanPaid(body);
+    if (errors) return json({ errors }, 400);
+    const now = new Date().toISOString();
+    // One statement at a time, so the id list is bounded by the month and
+    // the query cannot grow past what D1 will bind.
+    const marks = row.ids.map(() => '?').join(',');
+    await db.prepare(
+      'UPDATE payments SET paid = ?, paid_at = ?, paid_by = ?, updated_at = ? '
+      + 'WHERE id IN (' + marks + ')'
+      // A row with no rep cannot be paid: there is nobody to have paid it.
+      + ' AND rep_key IS NOT NULL')
+      .bind(row.paid, row.paid ? now : null, row.paid ? who.email : null, now, ...row.ids)
+      .run();
+    return json({ paid: row.paid, count: row.ids.length });
   }
 
   // Payments, filtered. The default is the queue -- the screen is opened to

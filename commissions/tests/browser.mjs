@@ -62,7 +62,29 @@ let ROWS = [
     rep_key: 'nathan-zelena-llc', commission_pct: 10, gross: 2000, credits: null,
     freight: null, cad: 0, usd_net: null, cc_fee: 0, partial: 0, paid: 1 },
 ];
-const seen = { patched: [], pulls: 0, asked: [] };
+const seen = { patched: [], pulls: 0, asked: [], sent: [], notes: [] };
+
+// The monthly screen: one rep built and sent, one built and since corrected,
+// one with nothing built at all.
+let STMTS = [
+  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', rep_key: 'nathan-zelena-llc',
+    name: 'Nathan Zelena LLC', email: 'n@x.com', lines: 3, paid_lines: 3,
+    ink_due: 40, due: 190, amount: 190,
+    report_name: 'Total_Commissions-Nathan_Zelena_LLC-2026-SEP.xlsx',
+    built_at: '2026-10-02T09:00:00.000Z', sent_at: '2026-10-02T17:00:00.000Z',
+    sent_by: 'amy@jettylife.com', notes: 'Ink commission included.',
+    stale: false, resent: false },
+  { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', rep_key: 'agenc-ani-caron',
+    name: 'AgenC (Ani Caron)', email: 'a@x.com', lines: 2, paid_lines: 0,
+    ink_due: 0, due: 226.16, amount: 190,
+    report_name: 'Total_Commissions-AgenC_Ani_Caron-2026-SEP.xlsx',
+    built_at: '2026-10-02T09:00:00.000Z', sent_at: null, sent_by: null,
+    notes: null, stale: true, resent: false },
+  { id: null, rep_key: 'new-rep', name: 'Brand New Rep', email: 'b@x.com',
+    lines: 1, paid_lines: 0, ink_due: 0, due: 0, amount: null,
+    report_name: null, built_at: null, sent_at: null, sent_by: null,
+    notes: null, stale: false, resent: false },
+];
 let XERO = {
   connected: true, configured: true, tenant: 'Jetty Brand',
   accounts: ['200'], lastRunAt: '2026-10-28T07:17:00.000Z',
@@ -116,6 +138,34 @@ await page.route('**/*', async (route) => {
       waiting: ROWS.filter((r) => !r.rep_key).length,
       totals: { gross: 8479.55, due: 647.96, unpaid: 61 }, you: 'amy@jettylife.com',
     } });
+  }
+  if (p === '/api/statements' && req.method() === 'GET') {
+    return route.fulfill({ json: {
+      year: 2026, month: 9, period: '2026-SEP', you: 'amy@jettylife.com',
+      storage: true, total: 416.16,
+      rows: STMTS.slice().sort((a, b) => a.name.localeCompare(b.name)),
+    } });
+  }
+  if (p === '/api/statements/build') {
+    const want = (req.postDataJSON() || {}).reps;
+    STMTS = STMTS.map((r) => ((!want || want.includes(r.rep_key)) && r.lines
+      ? { ...r, id: r.id || 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          amount: r.due, built_at: '2026-10-02T09:00:00.000Z', stale: false,
+          report_name: 'Total_Commissions-' + r.name.replace(/ /g, '_') + '-2026-SEP.xlsx' }
+      : r));
+    return route.fulfill({ json: { period: '2026-SEP',
+      built: STMTS.filter((r) => r.built_at), skipped: [] } });
+  }
+  if (/^\/api\/statements\/[^/]+\/sent$/.test(p)) {
+    const on = (req.postDataJSON() || {}).sent;
+    seen.sent.push(on);
+    STMTS = STMTS.map((r) => (r.id === p.split('/')[3]
+      ? { ...r, sent_at: on ? '2026-10-03T09:00:00.000Z' : null } : r));
+    return route.fulfill({ json: { statement: {} } });
+  }
+  if (/^\/api\/statements\/[^/]+\/note$/.test(p)) {
+    seen.notes.push((req.postDataJSON() || {}).notes);
+    return route.fulfill({ json: { statement: {} } });
   }
   if (/^\/api\/payments\//.test(p) && req.method() === 'PATCH') {
     const body = req.postDataJSON();
@@ -417,6 +467,104 @@ const contrastSweep = async () => await page.evaluate(() => {
     }
   });
   return [...new Set(bad)];
+});
+
+// ── The monthly statements screen ──────────────────────────────────────
+
+await page.goto('http://local.test/statements.html');
+await page.waitForSelector('.cm-st tbody tr');
+
+console.log('');
+console.log('the monthly statements');
+
+await t('shows a rep per row with what the month came to', async () => {
+  const names = await page.locator('.cm-who').allTextContents();
+  const due = await page.locator('.cm-due').allTextContents();
+  return names.length === 3 && names[0] === 'AgenC (Ani Caron)'
+    && names[2] === 'Nathan Zelena LLC'
+    && due.some((x) => x.indexOf('$190.00') === 0);
+});
+
+await t('says plainly where each statement has got to', async () => {
+  const flags = await page.locator('.cm-flag').allTextContents();
+  return flags.includes('Sent 2026-10-02') && flags.includes('Figures changed')
+    && flags.includes('Not built');
+});
+
+// The colour is not the message. A warning nobody can tell from a normal
+// row on a monochrome screen is a statement that goes out twice.
+await t('does not rely on colour alone to say a statement is stale', async () => {
+  const stale = page.locator('.cm-flag.is-stale').first();
+  const text = (await stale.textContent()).trim();
+  return text.length > 3 && /changed|rebuilt/i.test(text);
+});
+
+await t('shows what the sent file said next to what the books say now', async () => {
+  const row = page.locator('tbody tr').filter({ hasText: 'AgenC' });
+  const cell = await row.locator('.cm-due').textContent();
+  return cell.indexOf('$226.16') === 0 && /was \$190\.00/.test(cell);
+});
+
+await t('offers the file only where there is one', async () => {
+  const links = await page.locator('.cm-file').evaluateAll((els) => els.map((e) => ({
+    href: e.getAttribute('href'), title: e.getAttribute('title'), text: e.textContent,
+  })));
+  // The filename is the download's, not the screen's -- it was eating half
+  // the table. It stays reachable as the link's title.
+  return links.length === 2
+    && links.every((l) => /^\/api\/statements\/[^/]+\/file$/.test(l.href)
+      && /^Total_Commissions-.*\.xlsx$/.test(l.title) && l.text === 'Download');
+});
+
+await t('builds the one rep that has nothing yet', async () => {
+  const row = page.locator('tbody tr').filter({ hasText: 'Brand New Rep' });
+  await row.locator('button[data-build]').click();
+  await page.waitForFunction(() =>
+    document.querySelectorAll('.cm-file').length === 3);
+  return true;
+});
+
+await t('marks a statement sent, and lets that be taken back', async () => {
+  const row = page.locator('tbody tr').filter({ hasText: 'Brand New Rep' });
+  await row.locator('button[data-sent]').click();
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('tr')].some((tr) =>
+      tr.textContent.indexOf('Brand New Rep') >= 0 && /Sent 20/.test(tr.textContent)));
+  await row.locator('button[data-sent]').click();
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('tr')].some((tr) =>
+      tr.textContent.indexOf('Brand New Rep') >= 0 && /Built, not sent/.test(tr.textContent)));
+  return seen.sent.join(',') === 'true,false';
+});
+
+await t('saves a note when the box is left, not on every keystroke', async () => {
+  const box = page.locator('.cm-note').first();
+  await box.fill('Re-sent on the 14th');
+  const during = seen.notes.length;
+  await box.blur();
+  await page.waitForFunction(() => true);
+  await page.waitForTimeout(120);
+  return during === 0 && seen.notes[seen.notes.length - 1] === 'Re-sent on the 14th';
+});
+
+await t('counts the month in the strip above it', async () => {
+  const strip = await page.locator('#strip').textContent();
+  return /Reps\s*3/.test(strip) && /Commission\s*\$416\.16/.test(strip)
+    && /Sent/.test(strip);
+});
+
+await t('opens on the month that has finished, not the one still running', async () => {
+  const v = await page.inputValue('#fMonth');
+  const now = new Date();
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const want = d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+  // localStorage may carry a month over from an earlier check in this run.
+  return /^\d{4}-\d{2}$/.test(v) && (v === want || v === '2026-09');
+});
+
+await t('gets back to the payments queue', async () => {
+  const href = await page.locator('.cm-nav').first().getAttribute('href');
+  return href === '/';
 });
 
 console.log('');

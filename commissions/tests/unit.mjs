@@ -19,6 +19,13 @@ import {
 } from '../worker/xero.js';
 import { sqlStatements } from '../worker/sql.js';
 import { buildWhere, monthRange, cleanYear, cleanLimit, STATUS_KEYS } from '../worker/filters.js';
+import {
+  crc32, zip, serialDate, colName, esc as xesc, sheetName, workbook, sheetXml, S,
+} from '../worker/xlsx.js';
+import {
+  build as buildStatement, split, line, fileName, objectKey, periodRange,
+  periodLabel, monthOk, yearOk, COLUMNS, MONTHS,
+} from '../worker/statement.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const root = (p) => path.join(HERE, '..', p);
@@ -983,6 +990,252 @@ describe('the copied Access check', () => {
   it('still verifies the Access token rather than trusting the header', () => {
     ok(/verifyJwt/.test(mine), 'JWT verification is gone');
     ok(/verified && editors\.includes/.test(mine), 'an unverified header could edit');
+  });
+});
+
+// ── The spreadsheet ────────────────────────────────────────────────────
+//
+// An .xlsx written by hand, so the parts a library would get right are the
+// parts worth checking: the ZIP has to be a ZIP, the dates have to be the
+// right day, and a name Excel refuses has to be cut before it reaches Excel.
+
+describe('the ZIP', () => {
+  const read = (bytes) => {
+    // Just enough of a reader to find the entries back out again.
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const end = bytes.length - 22;
+    eq(dv.getUint32(end, true), 0x06054b50, 'no end-of-central-directory record');
+    const count = dv.getUint16(end + 10, true);
+    let at = dv.getUint32(end + 16, true);
+    const out = [];
+    for (let i = 0; i < count; i += 1) {
+      eq(dv.getUint32(at, true), 0x02014b50, 'central directory entry ' + i);
+      const nameLen = dv.getUint16(at + 28, true);
+      const size = dv.getUint32(at + 24, true);
+      const crc = dv.getUint32(at + 16, true);
+      const offset = dv.getUint32(at + 42, true);
+      const name = new TextDecoder().decode(bytes.subarray(at + 46, at + 46 + nameLen));
+      // Walk to the local header and read the bytes back out.
+      const lnl = dv.getUint16(offset + 26, true);
+      const lel = dv.getUint16(offset + 28, true);
+      const start = offset + 30 + lnl + lel;
+      out.push({ name, crc, data: bytes.subarray(start, start + size) });
+      at += 46 + nameLen + dv.getUint16(at + 30, true) + dv.getUint16(at + 32, true);
+    }
+    return out;
+  };
+
+  it('computes the CRC the format specifies', () => {
+    // The well-known check value: CRC-32 of "123456789".
+    eq(crc32(new TextEncoder().encode('123456789')), 0xcbf43926);
+    eq(crc32(new Uint8Array(0)), 0);
+  });
+
+  it('round-trips its entries, names and contents intact', () => {
+    const files = [
+      { name: 'a.txt', data: new TextEncoder().encode('hello') },
+      { name: 'deep/b.xml', data: new TextEncoder().encode('<x/>') },
+    ];
+    const got = read(zip(files));
+    eq(got.map((f) => f.name), ['a.txt', 'deep/b.xml']);
+    eq(new TextDecoder().decode(got[0].data), 'hello');
+    eq(new TextDecoder().decode(got[1].data), '<x/>');
+  });
+
+  it('puts a CRC on each entry that matches its bytes', () => {
+    const got = read(zip([{ name: 'a', data: new TextEncoder().encode('hello') }]));
+    eq(got[0].crc, crc32(new TextEncoder().encode('hello')));
+  });
+
+  it('gives the same bytes for the same input twice', () => {
+    // No clock in the header, so a test can say "this file did not change".
+    const once = zip([{ name: 'a', data: new Uint8Array([1, 2, 3]) }]);
+    const twice = zip([{ name: 'a', data: new Uint8Array([1, 2, 3]) }]);
+    eq(Array.from(once), Array.from(twice));
+  });
+
+  it('writes a workbook with every part Excel insists on', () => {
+    const got = read(workbook({ name: 'Sheet', rows: [[]], widths: [], freeze: 1 }));
+    const names = got.map((f) => f.name).sort();
+    eq(names, ['[Content_Types].xml', '_rels/.rels', 'xl/_rels/workbook.xml.rels',
+               'xl/styles.xml', 'xl/workbook.xml', 'xl/worksheets/sheet1.xml']);
+  });
+});
+
+describe('spreadsheet cells', () => {
+  it('counts days from 1899-12-30, which is what Excel does', () => {
+    // Read off the file Amy sent: 1 September 2026 is serial 46266 in it.
+    eq(serialDate('2026-09-01'), 46266);
+    eq(serialDate('2026-09-30'), 46295);
+    // The 1900 leap-year bug: using 1899-12-31 would put every date before
+    // 1 March 1900 a day out and everything after it right.
+    eq(serialDate('1900-03-01'), 61);
+  });
+  it('refuses anything that is not a date rather than guessing one', () => {
+    eq(serialDate('n/a'), null);
+    eq(serialDate('09/01/2026'), null);
+    eq(serialDate(''), null);
+    eq(serialDate(null), null);
+  });
+  it('names columns past Z', () => {
+    eq(colName(1), 'A');
+    eq(colName(14), 'N');
+    eq(colName(26), 'Z');
+    eq(colName(27), 'AA');
+  });
+  it('escapes what would otherwise end the XML early', () => {
+    eq(xesc('Ben & Jerry\'s <b>'), 'Ben &amp; Jerry&#39;s &lt;b&gt;'.replace('&#39;', "'"));
+    // A control character in a retailer name makes the whole file refuse to
+    // open, which is a strange way to find out about a bad import.
+    eq(xesc('a\u0007b'), 'ab');
+    eq(xesc('a\nb'), 'a\nb');
+  });
+  it('cuts a sheet name to what Excel will open', () => {
+    eq(sheetName('Total Commissions-Nathan Zelena').length, 31);
+    ok(sheetName('x'.repeat(50)).length <= 31, 'a long name was not cut');
+    eq(sheetName('a/b:c*d?e[f]'), 'a-b-c-d-e-f-');
+    eq(sheetName(''), 'Sheet1');
+  });
+  it('keeps an empty row so the rows below it do not move up', () => {
+    const xml = sheetXml({ rows: [[], [], []] });
+    eq((xml.match(/<row /g) || []).length, 3);
+    ok(/<row r="3">/.test(xml), 'the third row lost its number');
+  });
+  it('caches a formula answer beside the formula', () => {
+    const xml = sheetXml({ rows: [[{ t: 'f', f: 'SUM(A1:A2)', v: 7, s: 0 }]] });
+    ok(/<f>SUM\(A1:A2\)<\/f><v>7<\/v>/.test(xml),
+       'a reader that does not calculate would show an empty total');
+  });
+});
+
+// ── A rep's month ──────────────────────────────────────────────────────
+
+describe('the statement', () => {
+  const rep = { key: 'nathan-zelena', name: 'Nathan Zelena' };
+  const brand = (over) => Object.assign({
+    paid_on: '2026-09-01', invoice_no: '21476', jetty_line: 'FW26',
+    retailer: 'Tahoe Beach Club', territory: 'NV', payment_method: 'Check',
+    gross: 642, credits: 0, freight: 30, commission_pct: 10,
+  }, over || {});
+  const ink = (over) => brand(Object.assign({
+    ink: 1, commission_pct: 2, freight: 0, gross: 1747.8, jetty_line: '2026',
+  }, over || {}));
+
+  const moneyCells = (rows) => rows.map((r) => r[12]).filter(Boolean);
+
+  it('keeps the fourteen columns the reps already read, in her order', () => {
+    eq(COLUMNS.length, 14);
+    eq(COLUMNS[0], 'Payment Date');
+    eq(COLUMNS[12], 'Amount Due');
+    eq(COLUMNS[7], '3% CC Fee');
+  });
+
+  it('names the file the way the Ledger always has', () => {
+    eq(fileName('Nathan Zelena', 2026, 9), 'Total_Commissions-Nathan_Zelena-2026-SEP.xlsx');
+    eq(periodLabel(2026, 9), '2026-SEP');
+    eq(MONTHS.length, 12);
+  });
+
+  it('strips out of a filename anything a filesystem would argue with', () => {
+    ok(!/[\\/]/.test(fileName('A/B \\ C', 2026, 1)), 'a slash survived into the filename');
+    eq(fileName('', 2026, 1), 'Total_Commissions-rep-2026-JAN.xlsx');
+  });
+
+  it('files a month under year and month, so a prefix listing is a month', () => {
+    eq(objectKey('nathan-zelena', 2026, 9), 'statements/2026/09/nathan-zelena.xlsx');
+  });
+
+  it('knows how long February is', () => {
+    eq(periodRange(2026, 2), { from: '2026-02-01', to: '2026-02-28' });
+    eq(periodRange(2028, 2), { from: '2028-02-01', to: '2028-02-29' });
+    eq(periodRange(2026, 12), { from: '2026-12-01', to: '2026-12-31' });
+  });
+
+  it('refuses a month or a year that is not one', () => {
+    ok(monthOk(1) && monthOk(12), 'a real month was refused');
+    ok(!monthOk(0) && !monthOk(13) && !monthOk('x') && !monthOk(1.5), 'a bad month got through');
+    ok(yearOk(2026), 'a real year was refused');
+    ok(!yearOk(26) && !yearOk(2101) && !yearOk('x'), 'a bad year got through');
+  });
+
+  it('puts Ink in its own section', () => {
+    const s = split([brand(), ink(), brand()]);
+    eq(s.brand.length, 2);
+    eq(s.ink.length, 1);
+  });
+
+  it('adds up to what each rate earns, with Ink counted separately', () => {
+    const b = buildStatement({ rep, year: 2026, month: 9, rows: [brand(), ink()] });
+    eq(b.brandTotal, 61.2);        // (642 - 30) x 10%
+    eq(b.inkTotal, 34.96);         // 1747.80 x 2%
+    eq(b.total, 96.16);
+    eq(b.lines, 2);
+  });
+
+  it('totals the two subtotals rather than the lines a second time', () => {
+    const b = buildStatement({ rep, year: 2026, month: 9, rows: [brand(), ink()] });
+    const grand = b.rows[b.rows.length - 1][12];
+    // Adding the two subtotal cells is what makes it obvious on the sheet
+    // that nothing has been counted twice.
+    ok(/^M\d+\+M\d+$/.test(grand.f), 'the grand total is not the two subtotals: ' + grand.f);
+    eq(grand.v, 96.16);
+  });
+
+  it('does not print a subtotal and a total that are the same number', () => {
+    const b = buildStatement({ rep, year: 2026, month: 9, rows: [brand(), brand()] });
+    const totalsOnSheet = moneyCells(b.rows).filter((c) => c.s === S.subtotal || c.s === S.grand);
+    eq(totalsOnSheet.length, 1, 'a one-section sheet grew a second total');
+    eq(totalsOnSheet[0].v, 122.4);
+  });
+
+  it('sums over the rows the lines are actually on', () => {
+    const b = buildStatement({ rep, year: 2026, month: 9, rows: [brand(), brand(), ink()] });
+    const subs = moneyCells(b.rows).filter((c) => c.s === S.subtotal);
+    eq(subs.length, 2);
+    // Two brand lines start on row 2; Ink sits below a blank and a label.
+    eq(subs[0].f, 'SUM(M2:M3)');
+    eq(subs[1].f, 'SUM(M7:M7)');
+  });
+
+  it('orders a month by the day the money landed', () => {
+    const b = buildStatement({ rep, year: 2026, month: 9, rows: [
+      brand({ paid_on: '2026-09-20', invoice_no: 'b' }),
+      brand({ paid_on: '2026-09-02', invoice_no: 'a' }),
+    ] });
+    eq(b.rows[1][1].v, 'a');
+    eq(b.rows[2][1].v, 'b');
+  });
+
+  it('says in the note why a Canadian line does not multiply out', () => {
+    const [row] = [line(brand({ cad: 1, currency: 'CAD', usd_net: 400 }), 'N Z')];
+    ok(/USD net of \$400\.00/.test(row[13].v), 'the USD figure is not said: ' + row[13].v);
+    // The rep is paid on the USD net, not on the CAD one.
+    eq(row[12].v, 40);
+  });
+
+  it('ticks the card fee the way her sheet does', () => {
+    eq(line(brand({ cc_fee: 1 }), 'N Z')[7].v, 'checked');
+    eq(line(brand({ cc_fee: 0 }), 'N Z')[7].v, '');
+  });
+
+  it('writes the rate as a fraction, because the cell is formatted as a percent', () => {
+    // 10 stored as 10% on the sheet. Writing 10 into a percent cell would
+    // read as 1000%.
+    eq(line(brand({ commission_pct: 10 }), 'N Z')[11].v, 0.1);
+    eq(line(brand({ commission_pct: 2.5 }), 'N Z')[11].v, 0.025);
+  });
+
+  it('cuts a long rep name out of the sheet name rather than out of Excel', () => {
+    const b = buildStatement({ rep: { name: 'A'.repeat(60) }, year: 2026, month: 9,
+                               rows: [brand()] });
+    ok(sheetName(b.name).length <= 31, 'the sheet name would be refused');
+  });
+
+  it('builds something openable for an empty month rather than throwing', () => {
+    const b = buildStatement({ rep, year: 2026, month: 9, rows: [] });
+    eq(b.total, 0);
+    eq(b.lines, 0);
+    ok(workbook(b).length > 0, 'an empty month produced no file');
   });
 });
 
