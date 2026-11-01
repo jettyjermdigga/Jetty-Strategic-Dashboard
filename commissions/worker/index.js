@@ -290,6 +290,10 @@ async function handleApi(request, env, url, who) {
       return json({ go, scope: want || XERO_SCOPES, clientId: env.XERO_CLIENT_ID,
                     redirect: url.origin + '/api/xero/callback' });
     }
+    // Asked for a particular scope set, this is somebody bisecting by
+    // hand in a browser rather than the button calling it, so it goes
+    // straight there instead of handing back JSON to copy.
+    if (want) return new Response(null, { status: 302, headers: { location: go } });
     return json({ go });
   }
 
