@@ -224,6 +224,11 @@
           ? '<span>accounts ' + esc(xero.accounts.join(', ')) + '</span>'
           : '<span class="cm-x-off">no wholesale accounts set</span>')
       + '<span class="cm-grow"></span>'
+      // Offered even when this says connected, because a stored token can
+      // be dead -- Xero kills a refresh token the moment it issues the
+      // next one -- and a page that only offers the way back when it
+      // already knows it is broken leaves nowhere to go when it does not.
+      + '<button class="cm-x-btn" type="button" id="xConnect">Reconnect</button>'
       + '<button class="cm-x-btn" type="button" id="xPull">Pull now</button>';
   }
 

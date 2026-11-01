@@ -198,6 +198,17 @@ await t('says plainly when the last pull failed', async () => {
   return txt.includes('failed') && txt.includes('expired')
     && (await page.locator('#xero .cm-x-off').count()) > 0;
 });
+// A stored token can be dead -- Xero kills a refresh token the moment it
+// issues the next one -- and the page cannot tell until something uses
+// it. So the way back is offered even when it believes it is connected.
+await t('offers a way back even while it says it is connected', async () => {
+  XERO = { connected: true, configured: true, tenant: 'Jetty Brand',
+           accounts: ['271'], lastResult: {}, lastRunAt: null };
+  await page.reload();
+  await page.waitForSelector('.cm-t tbody tr');
+  return (await page.locator('#xConnect').count()) === 1
+    && (await page.locator('#xPull').count()) === 1;
+});
 await t('offers Connect when nothing is connected', async () => {
   XERO = { connected: false, configured: true };
   await page.reload();

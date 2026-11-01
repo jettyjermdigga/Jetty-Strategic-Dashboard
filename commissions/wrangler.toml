@@ -90,4 +90,14 @@ XERO_CLIENT_ID = "CF90B6EE8120441B9F1AAF9ECDA97F85"
 #
 # Empty means nothing is recognised as wholesale and a pull refuses outright,
 # rather than quietly importing none.
-XERO_ACCOUNTS = ""
+# 271 is Wholesale Revenue. Read off the live chart of accounts on
+# 2026-11-01, not typed from memory.
+#
+# Not 4100 (Wholesale Revenue -- Shipping): freight is subtracted
+# before commission is worked out, and any invoice carrying shipping
+# has a 271 line on it anyway, so adding it would only pull in
+# invoices that are shipping and nothing else.
+#
+# Not 292 (Screen Printing Revenue) either. That is INK, it is what
+# the weekly INK journal credits, and the reps do not earn on it.
+XERO_ACCOUNTS = "271"
