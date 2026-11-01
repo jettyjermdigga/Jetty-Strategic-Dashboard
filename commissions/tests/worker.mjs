@@ -189,6 +189,33 @@ const xcall = async (method, p, body, env) => {
   return { status: res.status, body: json, text, headers: res.headers };
 };
 
+// The trap this codebase keeps falling into, checked against a real
+// database rather than by reading the source: a table that already
+// exists is not revisited by CREATE TABLE IF NOT EXISTS, so a column
+// added to schema.sql alone reaches every database except the live one.
+await t('gains a new column on a database that already existed', async () => {
+  const old = new DatabaseSync(':memory:');
+  // The xero table as it shipped, before refreshed_at was added to it.
+  old.exec('CREATE TABLE xero (id INTEGER PRIMARY KEY CHECK (id = 1), '
+    + 'tenant_id TEXT, tenant_name TEXT, refresh_token TEXT, oauth_state TEXT, '
+    + 'oauth_at TEXT, connected_by TEXT, connected_at TEXT, watermark TEXT, '
+    + 'last_run_at TEXT, last_result TEXT)');
+  let had = true;
+  try { old.prepare('SELECT refreshed_at FROM xero').all(); } catch (e) { had = false; }
+  for (const [table, col] of [['xero', 'refreshed_at TEXT']]) {
+    try { old.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + col); } catch (e) { /* there */ }
+  }
+  let now = true;
+  try { old.prepare('SELECT refreshed_at FROM xero').all(); } catch (e) { now = false; }
+  // And again, because every boot runs it: the second time has to be a
+  // no-op rather than an error that takes the Worker down.
+  let twice = true;
+  try {
+    old.exec('ALTER TABLE xero ADD COLUMN refreshed_at TEXT');
+  } catch (e) { twice = false; }
+  return had === false && now === true && twice === false;
+});
+
 console.log('signing in to Xero');
 
 await t('says nothing is connected yet', async () => {

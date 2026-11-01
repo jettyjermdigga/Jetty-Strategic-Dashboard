@@ -619,6 +619,24 @@ describe('everything from Xero goes through the feed gate', () => {
   // dead, and the new one comes back in the same response. Not writing it
   // back makes the connection work exactly once and then fail silently,
   // which is the worst shape this failure has.
+  // CREATE TABLE IF NOT EXISTS does not revisit a table that exists, so a
+  // column added to schema.sql alone reaches every database except the
+  // live one. This has now bitten this codebase repeatedly.
+  it('adds a new column to a database that already exists', () => {
+    const sql = fs.readFileSync(path.join(HERE, '..', 'worker', 'schema.sql'), 'utf8');
+    const added = idx.slice(idx.indexOf('const ADDED_COLUMNS'));
+    const list = added.slice(0, added.indexOf('];'));
+    // Every column the xero table has gained since it shipped has to be
+    // in both places, or it exists in exactly one of them.
+    for (const col of ['refreshed_at']) {
+      ok(new RegExp('\\b' + col + '\\b').test(sql), col + ' is not in schema.sql');
+      ok(list.includes("'" + col + " "), col + ' never reaches a live database');
+    }
+    // The executing line, not the words: this file explains the trap in a
+    // comment, and matching that would pass with nothing running at all.
+    ok(/db\.prepare\('ALTER TABLE ' \+ table \+ ' ADD COLUMN ' \+ col\)\.run\(\)/
+      .test(idx), 'the list exists but nothing runs it');
+  });
   it('writes the rotated refresh token back every time', () => {
     const uses = [...idx.matchAll(/await refreshAccess\(\{/g)].length;
     const writes = [...idx.matchAll(/SET refresh_token = \?, refreshed_at = \?/g)].length;

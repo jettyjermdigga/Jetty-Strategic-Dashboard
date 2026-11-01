@@ -41,9 +41,33 @@ const ALLOC_COLS = [
   'credits', 'freight', 'usd_net', 'cc_fee', 'cad', 'partial',
 ];
 
+/**
+ * Columns added to a table after it first shipped.
+ *
+ * CREATE TABLE IF NOT EXISTS does not revisit a table that exists, so a
+ * column added to schema.sql alone reaches every database except the live
+ * one. This codebase has now had that bug often enough to have written it
+ * down three times and walked into it again, so the list is here and runs
+ * on every boot.
+ *
+ * ALTER TABLE ADD COLUMN on a column that is already there is an error
+ * rather than a no-op, so each one is tried and its failure ignored --
+ * cheaper and more honest than reading the schema back first.
+ */
+const ADDED_COLUMNS = [
+  ['xero', 'refreshed_at TEXT'],
+];
+
 async function ensureSchema(db) {
   if (schemaReady) return;
   for (const sql of sqlStatements(SCHEMA)) await db.prepare(sql).run();
+  for (const [table, col] of ADDED_COLUMNS) {
+    try {
+      await db.prepare('ALTER TABLE ' + table + ' ADD COLUMN ' + col).run();
+    } catch (err) {
+      // Already there, which is the usual case and not a problem.
+    }
+  }
   schemaReady = true;
 }
 
