@@ -31,11 +31,13 @@ export async function refreshAccess({ refresh, clientId, clientSecret, post }) {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok || !json || !json.access_token) {
-    // A refresh token that has expired (60 days unused) or been revoked
-    // comes back here. Saying which is the difference between reconnecting
-    // and hunting a bug.
+    // A refresh token that has expired (60 days unused), been revoked, or
+    // already been used comes back here. All three mean the same thing to
+    // whoever is reading it, so it says so rather than leaving them to
+    // work out that "consumed" is something they can fix in one click.
     const why = (json && (json.error_description || json.error)) || ('HTTP ' + res.status);
-    throw new Error('Xero refused the refresh: ' + why);
+    throw new Error('Xero refused the refresh: ' + why
+      + '. Press Connect Xero and sign in again.');
   }
   return { access: json.access_token, refresh: json.refresh_token || refresh,
            scopes: heldScopes(json.access_token) };

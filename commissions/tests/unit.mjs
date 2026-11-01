@@ -639,9 +639,30 @@ describe('everything from Xero goes through the feed gate', () => {
   });
   it('writes the rotated refresh token back every time', () => {
     const uses = [...idx.matchAll(/await refreshAccess\(\{/g)].length;
-    const writes = [...idx.matchAll(/SET refresh_token = \?, refreshed_at = \?/g)].length;
+    const writes = [...idx.matchAll(/await keepRefresh\(db, tok\.refresh\)/g)].length;
     ok(uses > 0, 'nothing refreshes at all');
     eq(writes, uses, 'a refresh happens somewhere without storing what came back');
+  });
+  // The window between refreshing and storing is the window in which the
+  // connection is lost for good. Nothing optional belongs in it: this
+  // connection died because the timestamp beside the token wanted a
+  // column the live database did not have, and took the token with it.
+  it('stores the token on its own, and the timestamp separately', () => {
+    const fn = idx.slice(idx.indexOf('async function keepRefresh'),
+                         idx.indexOf('\n}', idx.indexOf('async function keepRefresh')));
+    ok(/SET refresh_token = \? WHERE id = 1/.test(fn),
+       'the token is not written by itself');
+    ok(!/refreshed_at/.test(fn.slice(0, fn.indexOf('try'))),
+       'something optional shares the statement that saves the connection');
+    ok(/try \{[\s\S]*refreshed_at[\s\S]*catch/.test(fn),
+       'the timestamp can still take the connection down with it');
+  });
+  // "Consumed" is something somebody can fix in one click, and only if
+  // the message says so.
+  it('says what to do when the refresh is refused', () => {
+    const pull = fs.readFileSync(path.join(HERE, '..', 'worker', 'xero-pull.js'), 'utf8');
+    ok(/Press Connect Xero and sign in again/.test(pull),
+       'a dead connection reads as a bug rather than a sign-in');
   });
   // One place that gets a token and the organisation, so the pull and the
   // chart of accounts cannot drift into asking for them differently.

@@ -110,6 +110,32 @@ async function xeroRow(db) {
  * one that has gone stale is a pull that writes nothing and says it worked.
  */
 /**
+ * Store the refresh token Xero just handed back.
+ *
+ * Two statements, and the order matters. Xero kills the old refresh token
+ * the moment it issues a new one, so the window between refreshing and
+ * storing is the window in which the connection can be lost for good --
+ * and losing it means somebody has to sign in again by hand.
+ *
+ * So the token goes down on its own, in the smallest statement there is.
+ * The timestamp follows separately and its failure is swallowed: it is
+ * for a human reading the page, and nothing should be able to take a
+ * working connection down with it. That is not hypothetical. Writing both
+ * in one statement is how this connection died: the column the timestamp
+ * wanted did not exist on the live database, the write failed, and the
+ * token it was carrying went with it.
+ */
+async function keepRefresh(db, refresh) {
+  await db.prepare('UPDATE xero SET refresh_token = ? WHERE id = 1').bind(refresh).run();
+  try {
+    await db.prepare('UPDATE xero SET refreshed_at = ? WHERE id = 1')
+      .bind(new Date().toISOString()).run();
+  } catch (err) {
+    // A note for a human. Never worth the connection.
+  }
+}
+
+/**
  * An access token and the organisation it reaches.
  *
  * Every run refreshes. Xero rotates the refresh token on each refresh --
@@ -129,8 +155,7 @@ async function xeroSession(env, db) {
     clientSecret: env.XERO_CLIENT_SECRET,
     post: fetch,
   });
-  await db.prepare('UPDATE xero SET refresh_token = ?, refreshed_at = ? WHERE id = 1')
-    .bind(tok.refresh, new Date().toISOString()).run();
+  await keepRefresh(db, tok.refresh);
 
   // What the token actually carries, read off it rather than assumed. A
   // missing scope does not refuse the call -- it returns invoices with an
@@ -394,8 +419,7 @@ async function handleApi(request, env, url, who) {
         // Rotated on every refresh, so it is written back even here. A
         // probe that quietly kills the connection it is diagnosing would
         // be worse than no probe.
-        await db.prepare('UPDATE xero SET refresh_token = ?, refreshed_at = ? WHERE id = 1')
-          .bind(tok.refresh, new Date().toISOString()).run();
+        await keepRefresh(db, tok.refresh);
       } catch (err) {
         why = String((err && err.message) || err);
       }
