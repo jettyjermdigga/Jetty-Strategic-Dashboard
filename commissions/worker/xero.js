@@ -27,41 +27,48 @@ export const XERO_CONNECTIONS = 'https://api.xero.com/connections';
 /**
  * What the sign-in asks Xero for.
  *
- * The identity three because Xero's sign-in wants them, offline_access
- * because without it there is no refresh token and the connection dies in
- * half an hour, and the two accounting scopes this actually reads --
- * getInvoices and getPayments both sit under accounting.transactions in
- * Xero's OpenAPI spec, and getAccounts under accounting.settings.
+ * These names are this app's, not the OpenAPI spec's, and the difference
+ * is what invalid_scope means here.
  *
- * Both read-only. This module reconciles what has already happened and
- * has no business being able to write anybody's books.
+ * A Xero app carries a list of scopes it is permitted to request, set on
+ * its Configuration page, and asking for anything outside that list is
+ * refused on Xero's own error page with nothing on it saying which one.
+ * This app's list is the granular vocabulary -- accounting.invoices,
+ * accounting.payments, accounting.banktransactions, accounting.manual-
+ * journals, each with a .read variant -- and has no accounting.transactions
+ * in it at all. The umbrella names in xero_accounting.yaml describe the
+ * API, not what any particular app may ask for, and reading them as the
+ * latter cost this module a day.
  *
- * These are the standard flow's names. A Custom Connection has a finer
- * vocabulary -- separate accounting.invoices and accounting.payments --
- * and this app is not one: it is a Web app, which the developer portal
- * says plainly and which an earlier version of this file guessed wrong
- * from a list of granted scopes. A client_credentials token on a Web app
- * is real, carries that whole list, and reaches no books at all, which is
- * what a 403 with an empty body turned out to mean.
+ * offline_access is the one that is not about data: without it Xero's
+ * consent screen offers "Allow access for 30 minutes" and hands back no
+ * refresh token, which makes an unattended nightly pull impossible.
+ *
+ * The identity three are not here. Nothing reads the identity, and a
+ * scope nobody uses is a scope that can only ever go wrong.
+ *
+ * All read-only. This module reconciles what has already happened and has
+ * no business being able to write anybody's books. Writing a manual
+ * journal will need accounting.manualjournals, which this app is
+ * permitted but has deliberately not been granted.
  */
 export const XERO_SCOPES = [
-  'openid',
-  'profile',
-  'email',
   'offline_access',
-  'accounting.transactions.read',
+  'accounting.invoices.read',
+  'accounting.payments.read',
   'accounting.settings.read',
 ].join(' ');
 
 /**
  * What has to be in the token for the pull to work.
  *
- * Narrower than what is asked for: nothing here reads the identity three,
- * and offline_access is a property of the grant rather than something the
- * access token carries.
+ * Narrower than what is asked for: offline_access is a property of the
+ * grant rather than something the access token carries, so requiring it
+ * here would refuse a connection that is perfectly good.
  */
 export const XERO_NEEDED = [
-  'accounting.transactions.read',
+  'accounting.invoices.read',
+  'accounting.payments.read',
   'accounting.settings.read',
 ].join(' ');
 

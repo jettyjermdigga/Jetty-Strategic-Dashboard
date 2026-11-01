@@ -102,7 +102,11 @@ const rows = (sql, ...b) => sqlite.prepare(sql).all(...b);
 // likely to be got wrong.
 const xero = { calls: [], issued: 0, invoicePages: {}, tokenStatus: 200,
                orgs: null, orgHeaders: null, refusedOn: '',
-               holds: ['accounting.transactions.read', 'accounting.settings.read'] };
+               holds: ['accounting.invoices.read', 'accounting.payments.read',
+                       'accounting.settings.read'] };
+// What this app is permitted to request, trimmed to what is needed.
+const HOLDS = ['accounting.invoices.read', 'accounting.payments.read',
+               'accounting.settings.read'];
 const msdate = (iso) => '/Date(' + Date.parse(iso) + '+0000)/';
 const invoice = (n, over) => Object.assign({
   Type: 'ACCREC', InvoiceID: 'inv-' + n, InvoiceNumber: String(22000 + n), Total: 610,
@@ -203,7 +207,8 @@ await t('sends you to Xero to sign in', async () => {
     && q.get('response_type') === 'code'
     && q.get('redirect_uri') === 'https://cm.test/api/xero/callback'
     && q.get('scope').includes('offline_access')
-    && q.get('scope').includes('accounting.transactions.read')
+    && q.get('scope').includes('accounting.invoices.read')
+    && q.get('scope').includes('accounting.payments.read')
     && q.get('state').length > 10;
 });
 // A callback arriving with a borrowed state is not the one this sent
@@ -256,13 +261,14 @@ await t('writes the rotated refresh token back', async () => {
 await t('stops when the token does not hold what it needs', async () => {
   xero.holds = ['accounting.settings.read'];
   const r = await xcall('GET', '/api/xero/accounts');
-  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
-  return r.status === 500 && /accounting.transactions.read/.test(r.text);
+  xero.holds = HOLDS.slice();
+  return r.status === 500 && /accounting.invoices.read/.test(r.text);
 });
 await t('accepts a token granted more than it needs', async () => {
-  xero.holds = ['accounting.transactions', 'accounting.settings', 'accounting.contacts'];
+  xero.holds = ['accounting.invoices', 'accounting.payments',
+                'accounting.settings', 'accounting.contacts'];
   const r = await xcall('GET', '/api/xero/accounts');
-  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
+  xero.holds = HOLDS.slice();
   return r.status === 200;
 });
 // Sending no tenant header answers 403 with no body. Every call carries

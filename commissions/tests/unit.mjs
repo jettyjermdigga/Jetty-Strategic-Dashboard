@@ -725,50 +725,73 @@ describe('what the pull asks Xero for', () => {
     eq(sinceHeader(null), null);
     eq(sinceHeader('not a date'), null);
   });
-  // The standard flow's names, which are the umbrella ones in Xero's own
-  // OpenAPI spec: getInvoices and getPayments both sit under
-  // accounting.transactions, getAccounts under accounting.settings.
+  // What THIS app is permitted to request, from its Configuration page in
+  // the developer portal and from the scope claim of a token it issued.
   //
-  // A Custom Connection has a finer vocabulary -- separate
-  // accounting.invoices and accounting.payments -- and this app is not
-  // one. It is a Web app, which the developer portal says plainly and
-  // which an earlier version of this module guessed wrong from a list of
-  // granted scopes. Both directions of that mistake have now been made
-  // here, so both are pinned.
-  const SPEC_SCOPES = [
+  // Not from the OpenAPI spec. The spec's securitySchemes describe the
+  // API -- accounting.transactions covers invoices, payments, credit
+  // notes and bank transactions between them -- and an app carries its
+  // own list of what it may ask for. This one has the granular
+  // vocabulary and no accounting.transactions at all, so asking for the
+  // umbrella name is refused on Xero's own error page with nothing on it
+  // saying which scope it objected to.
+  //
+  // Both directions of that mistake have now been made here, a day apart,
+  // so the list is written down and checked against.
+  const APP_SCOPES = [
     'accounting.attachments', 'accounting.attachments.read',
+    'accounting.banktransactions', 'accounting.banktransactions.read',
     'accounting.budgets.read',
     'accounting.contacts', 'accounting.contacts.read',
-    'accounting.journals.read',
-    'accounting.reports.read', 'accounting.reports.tenninetynine.read',
+    'accounting.invoices', 'accounting.invoices.read',
+    'accounting.manualjournals', 'accounting.manualjournals.read',
+    'accounting.payments', 'accounting.payments.read',
+    'accounting.reports.aged.read', 'accounting.reports.balancesheet.read',
+    'accounting.reports.banksummary.read', 'accounting.reports.budgetsummary.read',
+    'accounting.reports.executivesummary.read', 'accounting.reports.profitandloss.read',
+    'accounting.reports.taxreports.read', 'accounting.reports.tenninetynine.read',
+    'accounting.reports.trialbalance.read',
     'accounting.settings', 'accounting.settings.read',
-    'accounting.transactions', 'accounting.transactions.read',
+    'app.connections', 'assets', 'assets.read', 'files', 'files.read',
+    'payroll.employees', 'payroll.employees.read',
+    'payroll.payruns', 'payroll.payruns.read',
+    'payroll.payslip', 'payroll.payslip.read',
+    'payroll.settings', 'payroll.settings.read',
+    'payroll.timesheets', 'payroll.timesheets.read',
+    'projects', 'projects.read',
   ];
-  it('needs only accounting scopes the standard flow has', () => {
-    for (const x of XERO_NEEDED.split(' ')) {
-      ok(SPEC_SCOPES.includes(x), x + ' is not a scope the standard flow has');
+  it('asks only for scopes this app is permitted', () => {
+    for (const x of XERO_SCOPES.split(' ')) {
+      if (x === 'offline_access') continue;
+      ok(APP_SCOPES.includes(x), x + ' is not a scope this app may request');
     }
-    ok(!XERO_NEEDED.split(' ').includes('accounting.invoices.read'),
-       'that is a Custom Connection name, and this is not one');
+    ok(!APP_SCOPES.includes('accounting.transactions'),
+       'the umbrella name describes the API, not what this app may ask for');
   });
-  // The payments arrive nested inside each invoice, and both are
-  // transactions. Without the scope they come back as an empty array,
-  // which reads as a quiet month rather than as a permissions problem --
-  // the worst way for this to be wrong.
-  it('needs the transactions and the chart of accounts', () => {
+  // The payments arrive nested inside each invoice. Without the scope
+  // they come back as an empty array, which reads as a quiet month rather
+  // than as a permissions problem -- the worst way for this to be wrong.
+  it('needs the payments as well as the invoices', () => {
     const needs = XERO_NEEDED.split(' ');
-    ok(needs.includes('accounting.transactions.read'),
-       'invoices and payments are both accounting.transactions');
+    ok(needs.includes('accounting.invoices.read'));
+    ok(needs.includes('accounting.payments.read'),
+       'invoices would come back with no payments on them');
     ok(needs.includes('accounting.settings.read'), 'the chart of accounts needs this');
   });
-  // A sign-in wants the identity three, and without offline_access there
-  // is no refresh token and the connection dies in half an hour.
-  it("asks for a sign-in's scopes as well as the ones it reads", () => {
-    const asks = XERO_SCOPES.split(' ');
-    for (const x of ['openid', 'profile', 'email', 'offline_access']) {
-      ok(asks.includes(x), x + ' is missing from the sign-in');
+  // Without it the consent screen offers "Allow access for 30 minutes"
+  // and hands back no refresh token, which makes an unattended nightly
+  // pull impossible.
+  it('asks for offline_access, and does not require it of the token', () => {
+    ok(XERO_SCOPES.split(' ').includes('offline_access'), 'the connection would expire');
+    ok(!XERO_NEEDED.split(' ').includes('offline_access'),
+       'a grant property is being looked for in the token');
+  });
+  // Nothing reads the identity, and a scope nobody uses is one that can
+  // only ever go wrong.
+  it('asks for no identity it does not read', () => {
+    for (const x of ['openid', 'profile', 'email']) {
+      ok(!XERO_SCOPES.split(' ').includes(x), x + ' is asked for and never used');
     }
-    for (const x of XERO_NEEDED.split(' ')) ok(asks.includes(x), x + ' is never asked for');
   });
   // The sign-in URL is built by hand because URLSearchParams encodes a
   // space as "+", which is the form convention and not the URL one -- in
@@ -791,12 +814,21 @@ describe('what the pull asks Xero for', () => {
   // per guess.
   it('can be asked for a narrower set, to find out which one it refuses', () => {
     const u = authorizeUrl({ clientId: 'cid', redirect: 'https://x.test/cb',
-                             state: 's1', scopes: 'openid profile email' });
+                             state: 's1', scopes: 'accounting.invoices.read' });
     const q = new URLSearchParams(u.slice(u.indexOf('?') + 1));
-    eq(q.get('scope'), 'openid profile email');
+    eq(q.get('scope'), 'accounting.invoices.read');
     const idx2 = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
     ok(/scopes: want \|\| undefined/.test(idx2),
        'the connect route cannot ask for anything but the usual set');
+  });
+  // Writing a journal is a different thing from reading the books, and
+  // this module does not do it. When something does, the scope is added
+  // deliberately rather than found to have been there all along.
+  it('holds nothing that could write the books', () => {
+    for (const x of XERO_SCOPES.split(' ')) {
+      if (x === 'offline_access') continue;
+      ok(x.endsWith('.read'), x + ' is not read-only');
+    }
   });
   // The token says what the connection holds. Asking Xero for a scope is
   // what it refused; reading what it granted is what works.
@@ -823,24 +855,19 @@ describe('what the pull asks Xero for', () => {
   });
   it('counts a scope as missing only on evidence', () => {
     eq(missingScopes(null, XERO_NEEDED), [], 'unreadable is not missing');
-    eq(missingScopes(['accounting.transactions.read'], XERO_NEEDED),
-       ['accounting.settings.read']);
+    eq(missingScopes(['accounting.invoices.read', 'accounting.payments.read'],
+                     XERO_NEEDED), ['accounting.settings.read']);
     eq(missingScopes([], XERO_NEEDED), XERO_NEEDED.split(' '));
   });
   // The write variant can do everything the read one can, so a connection
   // granted it is not short of anything. Not the other way round.
   it('lets the write variant satisfy the read one', () => {
-    eq(missingScopes(['accounting.transactions', 'accounting.settings'],
-                     XERO_NEEDED), []);
-    eq(missingScopes(['accounting.transactions.read'], 'accounting.transactions'),
-       ['accounting.transactions'], 'read does not cover write');
+    eq(missingScopes(['accounting.invoices', 'accounting.payments',
+                      'accounting.settings'], XERO_NEEDED), []);
+    eq(missingScopes(['accounting.invoices.read'], 'accounting.invoices'),
+       ['accounting.invoices'], 'read does not cover write');
   });
-  it('asks for nothing that could write the books', () => {
-    for (const x of XERO_SCOPES.split(' ')) {
-      if (['openid', 'profile', 'email', 'offline_access'].includes(x)) continue;
-      ok(x.endsWith('.read'), x + ' is not read-only');
-    }
-  });
+
 });
 
 // ── Config and the copied file ─────────────────────────────────────────

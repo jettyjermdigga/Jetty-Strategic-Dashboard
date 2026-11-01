@@ -115,16 +115,33 @@ fails if they ever disagree.
    data at all. An earlier version of this module read that scope list,
    concluded Custom Connection, and spent a day on an empty 403.
 
-   The scopes are the standard flow's umbrella names:
+   The scopes are the ones **this app is permitted to request**, which is a
+   list on its own Configuration page:
 
-       accounting.transactions.read   the invoices and the payments on them
-       accounting.settings.read       the chart of accounts, to find the codes
+       accounting.invoices.read    the invoices and their line items
+       accounting.payments.read    the payments on them
+       accounting.settings.read    the chart of accounts, to find the codes
 
-   plus `openid`, `profile`, `email` for the sign-in itself and
-   `offline_access`, without which there is no refresh token and the
-   connection dies in half an hour. A Custom Connection has a finer
-   vocabulary -- separate `accounting.invoices` and `accounting.payments` --
-   and asking for those here is refused.
+   plus `offline_access`, without which Xero's consent screen offers *Allow
+   access for 30 minutes* and hands back no refresh token.
+
+   **That list is not the OpenAPI spec's.** The spec's `securitySchemes`
+   describe the API -- `accounting.transactions` covers invoices, payments,
+   credit notes and bank transactions between them -- while an app carries
+   its own list of what it may ask for. This app's is the granular
+   vocabulary and has no `accounting.transactions` in it at all, so asking
+   for the umbrella name is refused with `invalid_scope` on Xero's own
+   error page, which does not say which scope it objected to. Both
+   directions of that mistake have been made here.
+
+   `/api/xero/connect?scope=...` asks for a narrower set and goes straight
+   there, which is how to find out which one Xero is refusing without a
+   deploy per guess. `&show=1` returns the URL instead of following it.
+
+   No identity scopes. Nothing reads the identity, and a scope nobody uses
+   is one that can only ever go wrong. No write scopes either: posting a
+   manual journal would need `accounting.manualjournals`, which this app is
+   permitted and has deliberately not been granted.
 
    Xero **rotates the refresh token on every refresh**: the one just used is
    dead and the new one comes back in the same response. It is written back
