@@ -75,12 +75,12 @@ export const XERO_AUTHORIZE = 'https://login.xero.com/identity/connect/authorize
  * parameter is a space-separated list -- so "+" risks arriving as a
  * literal plus in the middle of a scope name.
  */
-export function authorizeUrl({ clientId, redirect, state }) {
+export function authorizeUrl({ clientId, redirect, state, scopes }) {
   const q = [
     'response_type=code',
     'client_id=' + encodeURIComponent(clientId || ''),
     'redirect_uri=' + encodeURIComponent(redirect || ''),
-    'scope=' + encodeURIComponent(XERO_SCOPES),
+    'scope=' + encodeURIComponent(scopes || XERO_SCOPES),
     'state=' + encodeURIComponent(state || ''),
   ].join('&');
   return XERO_AUTHORIZE + '?' + q;

@@ -275,11 +275,22 @@ async function handleApi(request, env, url, who) {
     const state = crypto.randomUUID();
     await db.prepare('UPDATE xero SET oauth_state = ?, oauth_at = ? WHERE id = 1')
       .bind(state, new Date().toISOString()).run();
-    return json({ go: authorizeUrl({
+    // ?scope= asks for something other than the usual set, and ?show=1
+    // hands back the URL instead of sending anybody to it. Both are for
+    // bisecting an invalid_scope, which Xero reports on its own error
+    // page with nothing in it that says which scope it objected to.
+    const want = url.searchParams.get('scope') || '';
+    const go = authorizeUrl({
       clientId: env.XERO_CLIENT_ID,
       redirect: url.origin + '/api/xero/callback',
       state,
-    }) });
+      scopes: want || undefined,
+    });
+    if (url.searchParams.get('show')) {
+      return json({ go, scope: want || XERO_SCOPES, clientId: env.XERO_CLIENT_ID,
+                    redirect: url.origin + '/api/xero/callback' });
+    }
+    return json({ go });
   }
 
   if (path === '/api/xero/callback' && method === 'GET') {

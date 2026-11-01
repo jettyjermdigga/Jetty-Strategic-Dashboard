@@ -785,6 +785,19 @@ describe('what the pull asks Xero for', () => {
     eq(q.get('scope'), XERO_SCOPES);
     ok(!u.includes('+'), 'a space in the scope list was encoded as a plus');
   });
+  // Xero reports invalid_scope on its own error page, with nothing on it
+  // saying which scope it objected to. Asking for a smaller set is the
+  // only way to find out, and doing that by deploying is a round trip
+  // per guess.
+  it('can be asked for a narrower set, to find out which one it refuses', () => {
+    const u = authorizeUrl({ clientId: 'cid', redirect: 'https://x.test/cb',
+                             state: 's1', scopes: 'openid profile email' });
+    const q = new URLSearchParams(u.slice(u.indexOf('?') + 1));
+    eq(q.get('scope'), 'openid profile email');
+    const idx2 = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
+    ok(/scopes: want \|\| undefined/.test(idx2),
+       'the connect route cannot ask for anything but the usual set');
+  });
   // The token says what the connection holds. Asking Xero for a scope is
   // what it refused; reading what it granted is what works.
   const jwt = (claims) => 'hdr.'
