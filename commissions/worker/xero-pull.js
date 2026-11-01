@@ -6,29 +6,21 @@
 // and without anybody's real invoices.
 
 import {
-  XERO_TOKEN, XERO_API,
+  XERO_TOKEN, XERO_CONNECTIONS, XERO_API,
   heldScopes, pageQuery, sinceHeader, rowsFromPage,
 } from './xero.js';
 
 /**
- * A token for the Custom Connection.
+ * Trade the stored refresh token for an access token.
  *
- * client_credentials: the app IS the credential, so there is no user to
- * sign in, no authorization code to exchange and no refresh token to store
- * or rotate. A token lasts about half an hour and the next run just asks
- * for another one, which removes the whole class of failure that a rotating
- * refresh token brings -- including the one where a connection unused for
- * sixty days quietly dies.
+ * Xero rotates the refresh token on every single refresh: the one just used
+ * is dead, and the new one comes back in this response. If it is not written
+ * back the connection works exactly once and then fails silently until
+ * somebody reconnects by hand, so the caller is handed it and MUST store it.
  */
-export async function accessToken({ clientId, clientSecret, post, scope }) {
-  if (!clientId || !clientSecret) {
-    throw new Error('XERO_CLIENT_ID and the XERO_CLIENT_SECRET secret are not both set.');
-  }
-  // No scope by default: the connection's own grant decides, and naming a
-  // scope is what Xero kept refusing. The probe passes one to ask about it
-  // specifically; an empty string or undefined both send none.
-  const body = new URLSearchParams({ grant_type: 'client_credentials' });
-  if (scope) body.set('scope', scope);
+export async function refreshAccess({ refresh, clientId, clientSecret, post }) {
+  if (!refresh) throw new Error('Xero is not connected yet.');
+  const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refresh });
   const res = await post(XERO_TOKEN, {
     method: 'POST',
     headers: {
@@ -39,116 +31,70 @@ export async function accessToken({ clientId, clientSecret, post, scope }) {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok || !json || !json.access_token) {
-    // invalid_client is a wrong id or secret; invalid_scope is a scope the
-    // Custom Connection was not given. Saying which is the difference
-    // between fixing it in Cloudflare and fixing it in Xero.
+    // A refresh token that has expired (60 days unused) or been revoked
+    // comes back here. Saying which is the difference between reconnecting
+    // and hunting a bug.
     const why = (json && (json.error_description || json.error)) || ('HTTP ' + res.status);
-    throw new Error('Xero refused the credentials: ' + why);
+    throw new Error('Xero refused the refresh: ' + why);
   }
-  return { access: json.access_token, scopes: heldScopes(json.access_token) };
+  return { access: json.access_token, refresh: json.refresh_token || refresh,
+           scopes: heldScopes(json.access_token) };
+}
+
+/** Swap the authorization code for the first pair of tokens. */
+export async function exchangeCode({ code, redirect, clientId, clientSecret, post }) {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code', code, redirect_uri: redirect,
+  });
+  const res = await post(XERO_TOKEN, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      authorization: 'Basic ' + btoa(clientId + ':' + clientSecret),
+    },
+    body: body.toString(),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json || !json.access_token) {
+    const why = (json && (json.error_description || json.error)) || ('HTTP ' + res.status);
+    throw new Error('Xero refused the code: ' + why);
+  }
+  if (!json.refresh_token) {
+    // Without offline_access there is no refresh token and the link dies in
+    // half an hour. Better to refuse the connection than to store one that
+    // will stop working on its own.
+    throw new Error('Xero sent no refresh token. The app needs the offline_access scope.');
+  }
+  return { access: json.access_token, refresh: json.refresh_token,
+           scopes: heldScopes(json.access_token) };
+}
+
+/** Which Xero organisation this is. A token can reach several; the one we
+ *  want is named rather than assumed to be the only one. */
+export async function tenants({ access, get }) {
+  const res = await get(XERO_CONNECTIONS, {
+    headers: { authorization: 'Bearer ' + access, accept: 'application/json' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !Array.isArray(json)) {
+    throw new Error('Could not list the Xero organisations (HTTP ' + res.status + ').');
+  }
+  return json.map((c) => ({ tenantId: c.tenantId, name: c.tenantName || c.tenantId }));
 }
 
 /**
  * The headers every call to the accounting API carries.
  *
- * xero-tenant-id always, empty when there is nothing to put in it. Omitting
- * it answers 403 with no body at all, which is the least helpful refusal
- * Xero has; sending it empty is what works, and it is what Xero's own SDK
- * does. From the xero-node README: "Because Custom Connections are only
- * valid for a single organisation you don't need to pass the xero-tenant-id
- * ... xeroTenantId can be an empty string." The generated client then sets
- * the header from that empty string unconditionally -- present and blank,
- * not absent.
- *
- * So the organisation is carried by the token and the header is a formality
- * the API still insists on.
+ * xero-tenant-id names the organisation. A sign-in can reach several, so
+ * the one chosen at connect time is stored and sent on every call; without
+ * it the API answers 403 with no body at all, which is the least helpful
+ * refusal Xero has and cost this module a day.
  */
 export function xeroHeaders(access, tenantId) {
   return {
     authorization: 'Bearer ' + access,
     'xero-tenant-id': tenantId || '',
     accept: 'application/json',
-  };
-}
-
-/**
- * Every scope worth asking Xero about, one at a time.
- *
- * Xero drops a scope it does not recognise and a scope the connection was
- * not granted, both silently, and only complains once nothing is left. So
- * a failure of the real request says "no valid scopes remaining" whether
- * the names are wrong, the grants are missing, or the app is not a Custom
- * Connection at all -- three different fixes behind one sentence.
- *
- * Asking for each on its own separates them. A scope that comes back ok is
- * one this connection really holds; if every one fails, including the
- * request that names no scope, the problem is the app and not the list.
- */
-export const PROBE_SCOPES = [
-  '',
-  'accounting.invoices.read',
-  'accounting.payments.read',
-  'accounting.transactions.read',
-  'accounting.settings.read',
-  'accounting.settings',
-  'accounting.contacts.read',
-  'accounting.reports.read',
-  'accounting.journals.read',
-  'accounting.budgets.read',
-  'accounting.attachments.read',
-  'offline_access',
-];
-
-/**
- * Ask for each scope separately and report what Xero said.
- *
- * Read-only in every sense: it gets tokens and throws them away. Tokens are
- * cheap and this runs once, by hand, when the connection will not start.
- */
-export async function probeScopes({ clientId, clientSecret, post, scopes }) {
-  const out = [];
-  for (const scope of (scopes || PROBE_SCOPES)) {
-    try {
-      await accessToken({ clientId, clientSecret, post, scope });
-      out.push({ scope: scope || '(no scope named)', ok: true, why: '' });
-    } catch (err) {
-      const why = String((err && err.message) || err)
-        .replace('Xero refused the credentials: ', '');
-      out.push({ scope: scope || '(no scope named)', ok: false, why });
-    }
-  }
-  return out;
-}
-
-/**
- * Which Xero organisation this is.
- *
- * Not from GET /connections, which a Custom Connection cannot use: that
- * endpoint wants a xero-tenant-id or xero-user-id header to filter by and
- * answers 400 without one -- "Xero-User-Id and/or Xero-Tenant-Id header
- * must be supplied" -- while the tenant id is the very thing we would be
- * calling it to learn. There is no user on a Custom Connection, so there
- * is no way out of that circle.
- *
- * There is no need to be in it either. A Custom Connection reaches exactly
- * one organisation and its token is bound to that organisation, so API
- * calls carry no tenant header and GET /Organisation simply answers for
- * whichever one it is. That is both the name to show and proof the
- * credentials reach real books.
- */
-export async function organisation({ access, get }) {
-  const res = await get(XERO_API + '/Organisation', { headers: xeroHeaders(access, '') });
-  const text = await res.text().catch(() => '');
-  let body = null;
-  try { body = JSON.parse(text); } catch (err) { body = null; }
-  const one = body && Array.isArray(body.Organisations) ? body.Organisations[0] : null;
-  if (!res.ok || !one) {
-    throw new Error('Could not read the Xero organisation (HTTP ' + res.status + '): '
-      + (text ? text.slice(0, 400) : 'no reason given'));
-  }
-  return {
-    tenantId: one.OrganisationID || '',
-    name: one.Name || one.LegalName || one.OrganisationID || 'the Xero organisation',
   };
 }
 

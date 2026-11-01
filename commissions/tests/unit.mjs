@@ -13,7 +13,8 @@ import {
 import { cleanIncoming, cleanDate } from '../worker/ingest.js';
 import {
   msDate, accountCodes, isWholesale, rowsFromInvoice, rowsFromPage,
-  pageQuery, sinceHeader, SALES, XERO_SCOPES, heldScopes, missingScopes,
+  pageQuery, sinceHeader, SALES, XERO_SCOPES, XERO_NEEDED, authorizeUrl,
+  heldScopes, missingScopes,
   revenueAccounts,
 } from '../worker/xero.js';
 import { sqlStatements } from '../worker/sql.js';
@@ -614,33 +615,57 @@ describe('everything from Xero goes through the feed gate', () => {
       ok(!cols.includes("'" + banned + "'"), 'a pull can write ' + banned);
     }
   });
-  // Nothing is stored to be stolen or to go stale: a client_credentials
-  // token lasts about half an hour and the next run asks for another.
-  it('keeps no Xero credential in the database', () => {
-    ok(!/SET refresh_token = \?/.test(idx), 'a refresh token is still being stored');
-    ok(!/refreshAccess|exchangeCode/.test(idx), 'the sign-in flow is still wired in');
+  // Xero rotates the refresh token on every refresh: the one just used is
+  // dead, and the new one comes back in the same response. Not writing it
+  // back makes the connection work exactly once and then fail silently,
+  // which is the worst shape this failure has.
+  it('writes the rotated refresh token back every time', () => {
+    const uses = [...idx.matchAll(/await refreshAccess\(\{/g)].length;
+    const writes = [...idx.matchAll(/SET refresh_token = \?, refreshed_at = \?/g)].length;
+    ok(uses > 0, 'nothing refreshes at all');
+    eq(writes, uses, 'a refresh happens somewhere without storing what came back');
   });
   // One place that gets a token and the organisation, so the pull and the
   // chart of accounts cannot drift into asking for them differently.
   it('gets its token and its organisation in one place', () => {
     ok(/async function xeroSession\(env, db\)/.test(idx), 'there is no session helper');
-    // Twice: once inside xeroSession, once in the probe route. The probe
-    // has to work when the session cannot start, which is the whole point
-    // of it, so it is the one caller allowed to go round the helper.
-    eq([...idx.matchAll(/await accessToken\(\{/g)].length, 2,
-       'a token is asked for somewhere other than the session and the probe');
-    const body = idx.slice(idx.indexOf('async function xeroSession'));
-    ok(/await accessToken\(\{/.test(body.slice(0, body.indexOf('\n}'))),
-       'the session helper does not get its own token');
-    ok([...idx.matchAll(/await xeroSession\(env, db\)/g)].length >= 3,
+    // Twice: once inside xeroSession, once in the probe. The probe has to
+    // work when the session cannot start, which is the whole point of it,
+    // so it is the one caller allowed to go round the helper.
+    eq([...idx.matchAll(/await refreshAccess\(\{/g)].length, 2,
+       'a token is refreshed somewhere other than the session and the probe');
+    // Every route that touches the accounting API goes through it. The
+    // sign-in routes do not: there is no session yet when they run.
+    ok([...idx.matchAll(/await xeroSession\(env, db\)/g)].length >= 2,
        'the session helper is not used by every caller');
+    // The pull goes through runPull, which is where its session comes
+    // from; the chart of accounts asks for one directly.
+    const at = idx.indexOf("path === '/api/xero/accounts'");
+    ok(/await xeroSession\(env, db\)/.test(idx.slice(at, at + 900)),
+       'the chart of accounts gets at Xero without going through the session');
+    const run = idx.indexOf('async function runPull');
+    ok(/await xeroSession\(env, db\)/.test(idx.slice(run, run + 900)),
+       'the pull gets at Xero without going through the session');
   });
-  // A cached tenant id that has gone stale is a pull that writes nothing
-  // and says it worked.
-  it('reads the organisation each time rather than trusting a stored one', () => {
+  // The organisation is chosen once, at sign-in, and stored. A sign-in can
+  // reach several, so it is named rather than assumed -- and every call
+  // afterwards carries it, because without the header the API answers 403
+  // with no body at all.
+  it('names the organisation at sign-in and carries it on every call', () => {
+    const cb = idx.slice(idx.indexOf("path === '/api/xero/callback'"));
+    ok(/await tenants\(\{/.test(cb.slice(0, 2000)), 'the organisations are never listed');
+    ok(/SET tenant_id = \?, tenant_name = \?/.test(cb.slice(0, 3000)),
+       'which organisation was chosen is not stored');
     const at = idx.indexOf('async function xeroSession');
     const fn = idx.slice(at, idx.indexOf('\nconst PAYMENT_COLS', at));
-    ok(/await organisation\(\{/.test(fn), 'the organisation is never read from Xero');
+    ok(/tenantId: row\.tenant_id/.test(fn), 'the session carries no organisation');
+  });
+  // A sign-in that reaches nothing is the state this app was in for a day:
+  // a token that works, pointed at no books.
+  it('refuses a sign-in that reaches no organisation', () => {
+    const cb = idx.slice(idx.indexOf("path === '/api/xero/callback'"));
+    ok(/if \(!orgs\.length\)/.test(cb.slice(0, 3000)),
+       'a connection to nothing would be stored as a connection');
   });
   // Moving it after a run that stopped on a rate limit would skip whatever
   // was left behind.
@@ -700,62 +725,65 @@ describe('what the pull asks Xero for', () => {
     eq(sinceHeader(null), null);
     eq(sinceHeader('not a date'), null);
   });
-  // What a Custom Connection is actually granted, read off a live token
-  // from Jetty's own connection. Not from the OpenAPI spec: the spec lists
-  // the umbrella scopes the user-facing flow uses, and a Custom Connection
-  // does not share that vocabulary. There is no accounting.transactions
-  // here at all -- invoices, payments, bank transactions and manual
-  // journals are granted separately.
-  const CUSTOM_CONNECTION_SCOPES = [
+  // The standard flow's names, which are the umbrella ones in Xero's own
+  // OpenAPI spec: getInvoices and getPayments both sit under
+  // accounting.transactions, getAccounts under accounting.settings.
+  //
+  // A Custom Connection has a finer vocabulary -- separate
+  // accounting.invoices and accounting.payments -- and this app is not
+  // one. It is a Web app, which the developer portal says plainly and
+  // which an earlier version of this module guessed wrong from a list of
+  // granted scopes. Both directions of that mistake have now been made
+  // here, so both are pinned.
+  const SPEC_SCOPES = [
     'accounting.attachments', 'accounting.attachments.read',
-    'accounting.banktransactions', 'accounting.banktransactions.read',
     'accounting.budgets.read',
     'accounting.contacts', 'accounting.contacts.read',
-    'accounting.invoices', 'accounting.invoices.read',
-    'accounting.manualjournals', 'accounting.manualjournals.read',
-    'accounting.payments', 'accounting.payments.read',
-    'accounting.reports.aged.read', 'accounting.reports.balancesheet.read',
-    'accounting.reports.banksummary.read', 'accounting.reports.budgetsummary.read',
-    'accounting.reports.executivesummary.read', 'accounting.reports.profitandloss.read',
-    'accounting.reports.taxreports.read', 'accounting.reports.tenninetynine.read',
-    'accounting.reports.trialbalance.read',
+    'accounting.journals.read',
+    'accounting.reports.read', 'accounting.reports.tenninetynine.read',
     'accounting.settings', 'accounting.settings.read',
-    'app.connections', 'assets', 'assets.read', 'files', 'files.read',
-    'payroll.employees', 'payroll.employees.read',
-    'payroll.payruns', 'payroll.payruns.read',
-    'payroll.payslip', 'payroll.payslip.read',
-    'payroll.settings', 'payroll.settings.read',
-    'payroll.timesheets', 'payroll.timesheets.read',
-    'projects', 'projects.read',
+    'accounting.transactions', 'accounting.transactions.read',
   ];
-  // A name from the wrong vocabulary is not refused in a way that says so.
-  // Both directions of that mistake have now been made here, so both are
-  // pinned: this list is what a Custom Connection has.
-  it('needs only scopes a Custom Connection is granted', () => {
-    for (const x of XERO_SCOPES.split(' ')) {
-      ok(CUSTOM_CONNECTION_SCOPES.includes(x),
-         x + ' is not a scope a Custom Connection is granted');
+  it('needs only accounting scopes the standard flow has', () => {
+    for (const x of XERO_NEEDED.split(' ')) {
+      ok(SPEC_SCOPES.includes(x), x + ' is not a scope the standard flow has');
     }
-    ok(!CUSTOM_CONNECTION_SCOPES.includes('accounting.transactions'),
-       'the umbrella scope belongs to the user-facing flow, not to this one');
+    ok(!XERO_NEEDED.split(' ').includes('accounting.invoices.read'),
+       'that is a Custom Connection name, and this is not one');
   });
-  // The payments arrive nested inside each invoice. Without the scope they
-  // come back as an empty array, which reads as a quiet month rather than
-  // as a permissions problem -- the worst way for this to be wrong.
-  it('needs the payments as well as the invoices', () => {
-    const scopes = XERO_SCOPES.split(' ');
-    ok(scopes.includes('accounting.invoices.read'));
-    ok(scopes.includes('accounting.payments.read'),
-       'invoices would come back with no payments on them');
-    ok(scopes.includes('accounting.settings.read'), 'the chart of accounts needs this');
+  // The payments arrive nested inside each invoice, and both are
+  // transactions. Without the scope they come back as an empty array,
+  // which reads as a quiet month rather than as a permissions problem --
+  // the worst way for this to be wrong.
+  it('needs the transactions and the chart of accounts', () => {
+    const needs = XERO_NEEDED.split(' ');
+    ok(needs.includes('accounting.transactions.read'),
+       'invoices and payments are both accounting.transactions');
+    ok(needs.includes('accounting.settings.read'), 'the chart of accounts needs this');
   });
-  // A Custom Connection is machine-to-machine: one organisation, no user
-  // and no consent screen. There is nobody to sign in.
-  it("asks for a Custom Connection's scopes, not a sign-in's", () => {
-    const scopes = XERO_SCOPES.split(' ');
+  // A sign-in wants the identity three, and without offline_access there
+  // is no refresh token and the connection dies in half an hour.
+  it("asks for a sign-in's scopes as well as the ones it reads", () => {
+    const asks = XERO_SCOPES.split(' ');
     for (const x of ['openid', 'profile', 'email', 'offline_access']) {
-      ok(!scopes.includes(x), x + ' is not a scope a Custom Connection has');
+      ok(asks.includes(x), x + ' is missing from the sign-in');
     }
+    for (const x of XERO_NEEDED.split(' ')) ok(asks.includes(x), x + ' is never asked for');
+  });
+  // The sign-in URL is built by hand because URLSearchParams encodes a
+  // space as "+", which is the form convention and not the URL one -- in
+  // a space-separated scope list that risks arriving as a literal plus in
+  // the middle of a scope name.
+  it('builds a sign-in URL Xero will accept', () => {
+    const u = authorizeUrl({ clientId: 'cid', redirect: 'https://x.test/cb', state: 's1' });
+    ok(u.startsWith('https://login.xero.com/identity/connect/authorize?'), u);
+    const q = new URLSearchParams(u.slice(u.indexOf('?') + 1));
+    eq(q.get('response_type'), 'code');
+    eq(q.get('client_id'), 'cid');
+    eq(q.get('redirect_uri'), 'https://x.test/cb');
+    eq(q.get('state'), 's1');
+    eq(q.get('scope'), XERO_SCOPES);
+    ok(!u.includes('+'), 'a space in the scope list was encoded as a plus');
   });
   // The token says what the connection holds. Asking Xero for a scope is
   // what it refused; reading what it granted is what works.
@@ -781,22 +809,24 @@ describe('what the pull asks Xero for', () => {
     eq(heldScopes(null), null);
   });
   it('counts a scope as missing only on evidence', () => {
-    eq(missingScopes(null, XERO_SCOPES), [], 'unreadable is not missing');
-    eq(missingScopes(['accounting.invoices.read', 'accounting.payments.read'],
-                     XERO_SCOPES),
+    eq(missingScopes(null, XERO_NEEDED), [], 'unreadable is not missing');
+    eq(missingScopes(['accounting.transactions.read'], XERO_NEEDED),
        ['accounting.settings.read']);
-    eq(missingScopes([], XERO_SCOPES), XERO_SCOPES.split(' '));
+    eq(missingScopes([], XERO_NEEDED), XERO_NEEDED.split(' '));
   });
   // The write variant can do everything the read one can, so a connection
   // granted it is not short of anything. Not the other way round.
   it('lets the write variant satisfy the read one', () => {
-    eq(missingScopes(['accounting.invoices', 'accounting.payments',
-                      'accounting.settings'], XERO_SCOPES), []);
-    eq(missingScopes(['accounting.invoices.read'], 'accounting.invoices'),
-       ['accounting.invoices'], 'read does not cover write');
+    eq(missingScopes(['accounting.transactions', 'accounting.settings'],
+                     XERO_NEEDED), []);
+    eq(missingScopes(['accounting.transactions.read'], 'accounting.transactions'),
+       ['accounting.transactions'], 'read does not cover write');
   });
   it('asks for nothing that could write the books', () => {
-    for (const x of XERO_SCOPES.split(' ')) ok(x.endsWith('.read'), x + ' is not read-only');
+    for (const x of XERO_SCOPES.split(' ')) {
+      if (['openid', 'profile', 'email', 'offline_access'].includes(x)) continue;
+      ok(x.endsWith('.read'), x + ' is not read-only');
+    }
   });
 });
 

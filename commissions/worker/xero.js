@@ -25,32 +25,66 @@ export const XERO_TOKEN = 'https://identity.xero.com/connect/token';
 export const XERO_CONNECTIONS = 'https://api.xero.com/connections';
 
 /**
- * The scopes this module needs -- which is not the same as the scopes it
- * asks for. It asks for none.
+ * What the sign-in asks Xero for.
  *
- * These three names come from the live connection's own grant, read off a
- * token (see heldScopes) rather than from documentation. That matters,
- * because a Custom Connection and a Web app do not have the same scope
- * vocabulary and only one of them is in the OpenAPI spec.
+ * The identity three because Xero's sign-in wants them, offline_access
+ * because without it there is no refresh token and the connection dies in
+ * half an hour, and the two accounting scopes this actually reads --
+ * getInvoices and getPayments both sit under accounting.transactions in
+ * Xero's OpenAPI spec, and getAccounts under accounting.settings.
  *
- * The spec's securitySchemes list the umbrella scopes the user-facing flow
- * uses -- accounting.transactions covers invoices, payments, credit notes
- * and bank transactions between them. A Custom Connection is granted
- * something finer: separate accounting.invoices, accounting.payments,
- * accounting.banktransactions and accounting.manualjournals, each with a
- * .read variant, and no accounting.transactions at all. Asking a Custom
- * Connection for the umbrella name gets it refused, which is the trap this
- * walked into from the other side.
+ * Both read-only. This module reconciles what has already happened and
+ * has no business being able to write anybody's books.
  *
- * So: invoices for the invoices and their line items, payments because the
- * payments arrive nested inside them, settings for the chart of accounts.
- * All three read-only.
+ * These are the standard flow's names. A Custom Connection has a finer
+ * vocabulary -- separate accounting.invoices and accounting.payments --
+ * and this app is not one: it is a Web app, which the developer portal
+ * says plainly and which an earlier version of this file guessed wrong
+ * from a list of granted scopes. A client_credentials token on a Web app
+ * is real, carries that whole list, and reaches no books at all, which is
+ * what a 403 with an empty body turned out to mean.
  */
 export const XERO_SCOPES = [
-  'accounting.invoices.read',
-  'accounting.payments.read',
+  'openid',
+  'profile',
+  'email',
+  'offline_access',
+  'accounting.transactions.read',
   'accounting.settings.read',
 ].join(' ');
+
+/**
+ * What has to be in the token for the pull to work.
+ *
+ * Narrower than what is asked for: nothing here reads the identity three,
+ * and offline_access is a property of the grant rather than something the
+ * access token carries.
+ */
+export const XERO_NEEDED = [
+  'accounting.transactions.read',
+  'accounting.settings.read',
+].join(' ');
+
+export const XERO_AUTHORIZE = 'https://login.xero.com/identity/connect/authorize';
+
+/**
+ * The sign-in URL.
+ *
+ * Built by hand rather than with URLSearchParams, which encodes a space as
+ * "+". That is the HTML form convention, not the URL one, and the scope
+ * parameter is a space-separated list -- so "+" risks arriving as a
+ * literal plus in the middle of a scope name.
+ */
+export function authorizeUrl({ clientId, redirect, state }) {
+  const q = [
+    'response_type=code',
+    'client_id=' + encodeURIComponent(clientId || ''),
+    'redirect_uri=' + encodeURIComponent(redirect || ''),
+    'scope=' + encodeURIComponent(XERO_SCOPES),
+    'state=' + encodeURIComponent(state || ''),
+  ].join('&');
+  return XERO_AUTHORIZE + '?' + q;
+}
 
 /**
  * The scopes a token actually carries.
@@ -98,7 +132,7 @@ export function heldScopes(access) {
 export function missingScopes(held, want) {
   if (held == null) return [];
   const have = new Set(held);
-  return String(want == null ? XERO_SCOPES : want).split(' ').filter(Boolean)
+  return String(want == null ? XERO_NEEDED : want).split(' ').filter(Boolean)
     .filter((s) => !have.has(s) && !have.has(s.replace(/\.read$/, '')));
 }
 

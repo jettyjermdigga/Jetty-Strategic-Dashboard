@@ -100,18 +100,9 @@ const rows = (sql, ...b) => sqlite.prepare(sql).all(...b);
 // replaced. Everything below is Xero's real response shape, taken from its
 // OpenAPI spec -- including the Microsoft dates, which are the thing most
 // likely to be got wrong.
-const xero = { calls: [], issued: 0, invoicePages: {}, tokenStatus: 200, orgs: null, orgHeaders: null,
-               granted: null, refuseNamed: false,
-               holds: ['accounting.invoices.read', 'accounting.payments.read',
-                       'accounting.settings.read'] };
-// A Xero access token is a JWT and the scope claim is read off it, so the
-// stub has to hand back something shaped like one.
-const token = (n) => 'hdr.' + btoa(JSON.stringify({
-  sub: 'conn', scope: xero.holds.join(' '), jti: String(n),
-})).replace(/=+$/, '') + '.sig';
-// What Jetty's own Custom Connection holds, trimmed to what is needed.
-const HOLDS = ['accounting.invoices.read', 'accounting.payments.read',
-               'accounting.settings.read'];
+const xero = { calls: [], issued: 0, invoicePages: {}, tokenStatus: 200,
+               orgs: null, orgHeaders: null, refusedOn: '',
+               holds: ['accounting.transactions.read', 'accounting.settings.read'] };
 const msdate = (iso) => '/Date(' + Date.parse(iso) + '+0000)/';
 const invoice = (n, over) => Object.assign({
   Type: 'ACCREC', InvoiceID: 'inv-' + n, InvoiceNumber: String(22000 + n), Total: 610,
@@ -126,59 +117,43 @@ const reply = (status, body) => ({
   ok: status >= 200 && status < 300,
   status,
   json: async () => body,
-  // tenants() reads the body as text so a failure can quote it, so the
-  // stub has to be able to hand out both.
   text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
 });
+
+// A Xero access token is a JWT and the scope claim is read off it, so the
+// stub has to hand back something shaped like one.
+const token = (n) => 'hdr.' + btoa(JSON.stringify({
+  sub: 'conn', scope: xero.holds.join(' '), jti: String(n),
+})).replace(/=+$/, '') + '.sig';
 
 globalThis.fetch = async (url, opts) => {
   const u = String(url);
   xero.calls.push({ url: u, opts });
   if (u.startsWith('https://identity.xero.com/connect/token')) {
     if (xero.tokenStatus !== 200) {
-      return reply(xero.tokenStatus, { error: 'invalid_scope',
-                                       error_description: 'Invalid scope' });
-    }
-    // Xero filters the requested scopes down to the ones this app was
-    // granted, then fails only when nothing survives -- which is why a
-    // single wrong name goes unnoticed and a list of them does not.
-    // What the live connection does: a request naming any scope is
-    // refused, a request naming none returns a token.
-    if (xero.refuseNamed && new URLSearchParams(opts.body).has('scope')) {
-      return reply(400, { error: 'invalid_scope',
-        error_description: 'Client credentials scope validation failed' });
-    }
-    if (xero.granted) {
-      // Naming no scope and naming an empty one are different requests:
-      // the first asks for everything granted, the second asks for nothing.
-      const sent = new URLSearchParams(opts.body);
-      const kept = sent.has('scope')
-        ? sent.get('scope').split(' ').filter((x) => xero.granted.includes(x))
-        : xero.granted;
-      if (!kept.length) {
-        return reply(400, { error: 'invalid_scope',
-          error_description: 'No valid scopes remaining after filtering for grant type' });
-      }
+      return reply(xero.tokenStatus, { error: 'invalid_grant',
+                                       error_description: 'Refresh token expired' });
     }
     xero.issued += 1;
-    return reply(200, { access_token: token(xero.issued), expires_in: 1800 });
+    // Rotated on every single refresh: the one just used is dead. A stub
+    // that handed the same one back would hide the bug this is for.
+    return reply(200, { access_token: token(xero.issued), expires_in: 1800,
+                        refresh_token: 'refresh-' + xero.issued });
   }
-  // A Custom Connection cannot use /connections at all: it wants a tenant
-  // or user header to filter by, and answers 400 without one.
   if (u === 'https://api.xero.com/connections') {
-    return reply(400, '{"Title":"BadRequest","Detail":"Xero-User-Id and/or '
-      + 'Xero-Tenant-Id header must be supplied."}');
+    return reply(200, xero.orgs === null
+      ? [{ tenantId: 'tenant-1', tenantName: 'Jetty Brand' }] : xero.orgs);
   }
   if (u.startsWith('https://api.xero.com/api.xro/2.0/')) {
-    if (!('xero-tenant-id' in (opts.headers || {}))) return reply(403, '');
-  }
-  if (u === 'https://api.xero.com/api.xro/2.0/Organisation') {
-    xero.orgHeaders = opts.headers;
-    return reply(200, xero.orgs === null
-      ? { Organisations: [{ OrganisationID: 'tenant-1', Name: 'Jetty Brand' }] }
-      : xero.orgs);
+    // Without the tenant header the real API answers 403 with no body at
+    // all, which is the least helpful refusal it has and the one that
+    // cost this module a day.
+    const t = (opts.headers || {})['xero-tenant-id'];
+    if (!t) return reply(403, '');
+    if (xero.refusedOn && u.includes(xero.refusedOn)) return reply(403, '');
   }
   if (u.startsWith('https://api.xero.com/api.xro/2.0/Accounts')) {
+    xero.orgHeaders = opts.headers;
     return reply(200, { Accounts: [
       { Code: '200', Name: 'Wholesale Revenue', Class: 'REVENUE', Status: 'ACTIVE' },
       { Code: '090', Name: 'Bank', Class: 'ASSET', Status: 'ACTIVE' },
@@ -187,6 +162,9 @@ globalThis.fetch = async (url, opts) => {
   if (u.startsWith('https://api.xero.com/api.xro/2.0/Invoices')) {
     const page = Number(new URL(u).searchParams.get('page'));
     return reply(200, { Invoices: xero.invoicePages[page] || [] });
+  }
+  if (u.startsWith('https://api.xero.com/api.xro/2.0/Organisation')) {
+    return reply(200, { Organisations: [{ OrganisationID: 'tenant-1', Name: 'Jetty Brand' }] });
   }
   throw new Error('unexpected fetch: ' + u);
 };
@@ -199,231 +177,141 @@ const xcall = async (method, p, body, env) => {
     headers: { 'content-type': 'application/json',
                'Cf-Access-Authenticated-User-Email': 'amy@jettylife.com' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    redirect: 'manual',
   }), env || XENV, { waitUntil() {} });
   const text = await res.text();
   let json = null;
   try { json = JSON.parse(text); } catch (e) { /* not json */ }
-  return { status: res.status, body: json, text };
+  return { status: res.status, body: json, text, headers: res.headers };
 };
 
-console.log('talking to Xero');
+console.log('signing in to Xero');
 
-await t('says nothing has answered yet', async () => {
+await t('says nothing is connected yet', async () => {
   const r = await xcall('GET', '/api/xero/status');
   return r.status === 200 && r.body.connected === false && r.body.configured === true;
 });
-// A Custom Connection has no sign-in to send anybody to.
-// Naming a scope is what Xero refused, every name alike, while naming
-// none returned a token. So the request names none and the connection's
-// own grant decides.
-await t('asks for a token without naming a scope', async () => {
-  const r = await xcall('POST', '/api/xero/connect', {});
-  const tok = xero.calls.filter((c) => c.url.includes('/connect/token')).pop();
-  const sent = new URLSearchParams(tok.opts.body);
-  return r.status === 200 && r.body.tenant === 'Jetty Brand'
-    && sent.get('grant_type') === 'client_credentials'
-    && !sent.has('scope');
+// A Web app reaches an organisation only once somebody authorises it
+// against one. Until then a token is real and points at no books, which
+// is exactly the state this module spent a day in.
+await t('sends you to Xero to sign in', async () => {
+  const r = await xcall('GET', '/api/xero/connect');
+  const go = (r.body && r.body.go) || '';
+  const q = new URLSearchParams(go.slice(go.indexOf('?') + 1));
+  return r.status === 200
+    && go.startsWith('https://login.xero.com/identity/connect/authorize?')
+    && q.get('response_type') === 'code'
+    && q.get('redirect_uri') === 'https://cm.test/api/xero/callback'
+    && q.get('scope').includes('offline_access')
+    && q.get('scope').includes('accounting.transactions.read')
+    && q.get('state').length > 10;
+});
+// A callback arriving with a borrowed state is not the one this sent
+// somebody off with.
+await t('refuses a callback whose state it did not issue', async () => {
+  const r = await xcall('GET', '/api/xero/callback?code=abc&state=not-the-one');
+  return r.status === 400 && /did not match/.test(r.text);
+});
+// Xero says why it refused in the URL rather than in a body, and "that
+// did not match" would be a lie about a scope it would not grant.
+await t('passes on what Xero said when it refuses the sign-in', async () => {
+  const r = await xcall('GET',
+    '/api/xero/callback?error=invalid_scope&error_description=Bad%20scope');
+  return r.status === 400 && /invalid_scope/.test(r.text) && /Bad scope/.test(r.text);
+});
+await t('takes the code and remembers the organisation', async () => {
+  const start = await xcall('GET', '/api/xero/connect');
+  const state = new URLSearchParams(start.body.go.slice(start.body.go.indexOf('?') + 1))
+    .get('state');
+  const r = await xcall('GET', '/api/xero/callback?code=abc&state=' + state);
+  const row = rows('SELECT * FROM xero WHERE id = 1')[0];
+  return r.status === 302 && /connected=Jetty%20Brand/.test(r.headers.get('location'))
+    && row.tenant_id === 'tenant-1' && row.tenant_name === 'Jetty Brand'
+    && Boolean(row.refresh_token);
+});
+// One-time: the same callback replayed is not a second sign-in.
+await t('will not take the same callback twice', async () => {
+  const start = await xcall('GET', '/api/xero/connect');
+  const state = new URLSearchParams(start.body.go.slice(start.body.go.indexOf('?') + 1))
+    .get('state');
+  await xcall('GET', '/api/xero/callback?code=abc&state=' + state);
+  const again = await xcall('GET', '/api/xero/callback?code=abc&state=' + state);
+  return again.status === 400;
+});
+await t('says which organisation it reached', async () => {
+  const r = await xcall('GET', '/api/xero/status');
+  return r.body.connected === true && r.body.tenant === 'Jetty Brand';
+});
+// Xero rotates the refresh token on every refresh. Not writing the new
+// one back makes the connection work exactly once and then fail silently.
+await t('writes the rotated refresh token back', async () => {
+  const before = rows('SELECT refresh_token FROM xero WHERE id = 1')[0].refresh_token;
+  await xcall('GET', '/api/xero/accounts');
+  const after = rows('SELECT refresh_token FROM xero WHERE id = 1')[0].refresh_token;
+  return before !== after && Boolean(after);
 });
 // A missing scope does not refuse the call. It returns invoices with an
 // empty Payments array, which reads as a quiet month rather than as a
-// permissions problem -- so this has to be caught at the token, not later.
-await t('stops when the connection does not hold what it needs', async () => {
-  xero.holds = ['accounting.contacts.read'];
-  const r = await xcall('POST', '/api/xero/connect', {});
-  xero.holds = HOLDS.slice();
-  return r.status === 500 && /accounting.invoices.read/.test(r.text)
-    && /accounting.settings.read/.test(r.text)
-    && /holds accounting.contacts.read/.test(r.text);
+// permissions problem -- so it has to be caught at the token.
+await t('stops when the token does not hold what it needs', async () => {
+  xero.holds = ['accounting.settings.read'];
+  const r = await xcall('GET', '/api/xero/accounts');
+  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
+  return r.status === 500 && /accounting.transactions.read/.test(r.text);
 });
-// The write variant covers the read one. Refusing to start on a
-// connection that can do more than it needs would be a wrong no.
-await t('accepts a connection granted more than it needs', async () => {
-  xero.holds = ['accounting.invoices', 'accounting.payments',
-                'accounting.settings', 'accounting.contacts'];
-  const r = await xcall('POST', '/api/xero/connect', {});
-  xero.holds = HOLDS.slice();
-  return r.status === 200 && r.body.tenant === 'Jetty Brand';
-});
-// An unreadable token is not evidence of a missing scope, and treating it
-// as one would refuse to start over a token that works.
-await t('does not block on a token whose scopes cannot be read', async () => {
-  const real = globalThis.fetch;
-  globalThis.fetch = async (u, o) => (String(u).includes('/connect/token')
-    ? reply(200, { access_token: 'opaque', expires_in: 1800 }) : real(u, o));
-  const r = await xcall('POST', '/api/xero/connect', {});
-  globalThis.fetch = real;
+await t('accepts a token granted more than it needs', async () => {
+  xero.holds = ['accounting.transactions', 'accounting.settings', 'accounting.contacts'];
+  const r = await xcall('GET', '/api/xero/accounts');
+  xero.holds = ['accounting.transactions.read', 'accounting.settings.read'];
   return r.status === 200;
 });
-await t('sends the id and secret as Basic auth, not in the body', async () => {
-  const tok = xero.calls.filter((c) => c.url.includes('/connect/token')).pop();
-  const sent = new URLSearchParams(tok.opts.body);
-  return tok.opts.headers.authorization === 'Basic ' + btoa('cid:csecret')
-    && !sent.get('client_secret');
+// Sending no tenant header answers 403 with no body. Every call carries
+// the organisation that was chosen at sign-in.
+await t('carries the organisation on every call', async () => {
+  await xcall('GET', '/api/xero/accounts');
+  return xero.orgHeaders && xero.orgHeaders['xero-tenant-id'] === 'tenant-1';
 });
-await t('remembers which organisation answered', async () => {
-  const row = rows('SELECT * FROM xero WHERE id = 1')[0];
-  const r = await xcall('GET', '/api/xero/status');
-  return row.tenant_id === 'tenant-1' && row.tenant_name === 'Jetty Brand'
-    && r.body.connected === true;
-});
-// There is nothing to store, so nothing to go stale or be stolen.
-await t('keeps no credential in the database', async () => {
-  const row = rows('SELECT * FROM xero WHERE id = 1')[0];
-  return !row.refresh_token && !row.oauth_state;
-});
-// invalid_scope is what sent us here in the first place.
 await t('says what Xero refused rather than swallowing it', async () => {
   xero.tokenStatus = 400;
-  const r = await xcall('POST', '/api/xero/connect', {});
+  const r = await xcall('GET', '/api/xero/accounts');
   xero.tokenStatus = 200;
-  return r.status === 500 && /Invalid scope/.test(r.text);
+  return r.status === 500 && /Refresh token expired/.test(r.text);
 });
-await t('refuses outright when the credentials are not both set', async () => {
-  const r = await xcall('POST', '/api/xero/connect', {}, { ...XENV, XERO_CLIENT_SECRET: '' });
-  return r.status === 500 && /XERO_CLIENT_SECRET/.test(r.text);
+await t('refuses outright when nobody has signed in', async () => {
+  const had = rows('SELECT refresh_token FROM xero WHERE id = 1')[0].refresh_token;
+  sqlite.exec('UPDATE xero SET refresh_token = NULL WHERE id = 1');
+  const r = await xcall('GET', '/api/xero/accounts');
+  sqlite.prepare('UPDATE xero SET refresh_token = ? WHERE id = 1').run(had);
+  return r.status === 500 && /not connected/.test(r.text);
 });
-// A Custom Connection that is not attached to an organisation would
-// otherwise pull nothing and say it worked.
-await t('refuses when no organisation answers', async () => {
-  xero.orgs = { Organisations: [] };
-  const r = await xcall('POST', '/api/xero/connect', {});
-  xero.orgs = null;
-  return r.status === 500 && /Could not read the Xero organisation/.test(r.text);
-});
-// The circle this replaced: /connections wants the tenant id we would be
-// calling it to learn, and a Custom Connection has no user to ask about
-// instead.
-await t('never calls the endpoint a Custom Connection cannot use', async () => {
-  return !xero.calls.some((c) => c.url === 'https://api.xero.com/connections');
-});
-// Omitting the header answers 403 with no body at all. Sending it empty
-// is what works, and is what Xero's own SDK does -- the organisation
-// rides on the token and the header is a formality the API insists on.
-await t('sends the tenant header empty rather than leaving it out', async () => {
-  await xcall('POST', '/api/xero/connect', {});
-  return xero.orgHeaders && 'xero-tenant-id' in xero.orgHeaders
-    && xero.orgHeaders['xero-tenant-id'] === ''
-    && xero.orgHeaders.authorization.startsWith('Bearer ');
-});
-// A bare status names neither the problem nor where to fix it, and this
-// is the one call standing between a working token and the first pull.
-await t('quotes what Xero said when the organisation cannot be read', async () => {
-  const real = globalThis.fetch;
-  globalThis.fetch = async (u, o) => (String(u).endsWith('/Organisation')
-    ? reply(400, '{"Title":"Bad Request","Detail":"something specific"}') : real(u, o));
-  const r = await xcall('POST', '/api/xero/connect', {});
-  globalThis.fetch = real;
-  return r.status === 500 && /something specific/.test(r.text) && /400/.test(r.text);
-});
-await t('says so plainly when the reason comes back empty', async () => {
-  const real = globalThis.fetch;
-  globalThis.fetch = async (u, o) => (String(u).endsWith('/Organisation')
-    ? reply(400, '') : real(u, o));
-  const r = await xcall('POST', '/api/xero/connect', {});
-  globalThis.fetch = real;
-  return r.status === 500 && /no reason given/.test(r.text);
-});
-// The probe makes the same call so the next round needs one look, not two.
-await t('shows the organisation call verbatim in the probe', async () => {
-  const real = globalThis.fetch;
-  globalThis.fetch = async (u, o) => (String(u).endsWith('/Organisation')
-    ? reply(400, '{"Detail":"why it refused"}') : real(u, o));
-  const r = await xcall('GET', '/api/xero/probe');
-  globalThis.fetch = real;
-  return r.body.organisation.status === 400
-    && /why it refused/.test(r.body.organisation.body);
-});
-// A 403 with an empty body is the least informative refusal Xero has, so
-// the probe asks the same question every plausible way at once rather
-// than one way per deploy.
-await t('tries the call more than one way', async () => {
-  const r = await xcall('GET', '/api/xero/probe');
-  const names = r.body.tries.map((x) => x.name);
-  return names.length >= 6
-    && names.some((n) => /token only/.test(n))
-    && names.some((n) => /empty tenant/.test(n))
-    && names.some((n) => /accept/.test(n))
-    && names.some((n) => /connections/.test(n));
-});
-// Including the one that answers nothing: an empty body reported as
-// empty is the finding, and reported as blank it looks like a bug here.
-await t('reports an empty refusal as an empty refusal', async () => {
-  const real = globalThis.fetch;
-  globalThis.fetch = async (u, o) => (String(u).includes('/api.xro/')
-    ? reply(403, '') : real(u, o));
-  const r = await xcall('GET', '/api/xero/probe');
-  globalThis.fetch = real;
-  const one = r.body.tries.find((x) => /^Organisation/.test(x.name));
-  return one.status === 403 && one.body === '(empty)';
-});
-// When one of them does work, the probe has to say which -- that is the
-// whole answer, and it is one word.
-await t('names the way that worked, when one does', async () => {
-  const r = await xcall('GET', '/api/xero/probe');
-  return r.body.organisation.status === 200 && /Organisation/.test(r.body.organisation.which);
-});
-// Claim values are not printed unless they could name the organisation.
-await t('shows the token claims without printing their values', async () => {
-  const r = await xcall('GET', '/api/xero/probe');
-  return r.body.claims && r.body.claims.sub === '(present)'
-    && typeof r.body.claims.scope === 'string';
-});
-
 await t('reads the chart of accounts for the wholesale codes', async () => {
   const r = await xcall('GET', '/api/xero/accounts');
   return r.status === 200 && r.body.accounts.length === 1
     && r.body.accounts[0].code === '200' && r.body.chosen.includes('200');
 });
 
-// The probe exists because one sentence from Xero covers several causes,
-// and the module cannot tell them apart from the failure alone.
-await t('reports what the token actually carries', async () => {
-  xero.holds = HOLDS.slice();
-  xero.refuseNamed = true;
+// The probe exists because a 403 with an empty body is the least
+// informative refusal Xero has, and guessing at one cost a day.
+await t('asks the same question several ways and reports each', async () => {
   const r = await xcall('GET', '/api/xero/probe');
-  xero.refuseNamed = false;
-  return r.status === 200
-    && r.body.holds.join(' ') === HOLDS.join(' ')
-    && r.body.missing.length === 0
-    && r.body.namedScopesAccepted.length === 0
-    && /holds everything this needs/.test(r.body.reading);
+  const names = r.body.tries.map((x) => x.name);
+  return r.body.connected === true && names.length >= 4
+    && names.some((n) => /with the tenant/.test(n))
+    && names.some((n) => /no tenant header/.test(n));
 });
-// This is the case the live connection is in: every named scope refused,
-// the bare request fine. The grant is what counts, not the refusals.
-await t('reads the grant off the token even when every name is refused', async () => {
-  xero.holds = ['accounting.contacts.read'];
-  xero.refuseNamed = true;
+await t('reports an empty refusal as an empty refusal', async () => {
   const r = await xcall('GET', '/api/xero/probe');
-  xero.refuseNamed = false;
-  xero.holds = HOLDS.slice();
-  return r.body.missing.join(' ') === HOLDS.join(' ')
-    && /needs a new one/.test(r.body.reading);
+  const bare = r.body.tries.find((x) => /no tenant header/.test(x.name));
+  return bare.status === 403 && bare.body === '(empty)';
 });
-await t('names which scopes a connection will narrow to, when it will', async () => {
-  xero.granted = ['accounting.invoices.read', 'accounting.contacts.read'];
-  const r = await xcall('GET', '/api/xero/probe');
-  xero.granted = null;
-  return r.body.namedScopesAccepted.includes('accounting.invoices.read')
-    && r.body.namedScopesAccepted.includes('accounting.contacts.read')
-    && !r.body.namedScopesAccepted.includes('offline_access');
-});
-// No token at all, not even bare, is the app or the credentials.
-await t('says it is the app when even a bare request is refused', async () => {
-  xero.tokenStatus = 400;
-  const r = await xcall('GET', '/api/xero/probe');
-  xero.tokenStatus = 200;
-  return r.status === 200 && r.body.holds === null
-    && /Custom Connection and nothing else/.test(r.body.reading);
-});
-await t('does not call a token with no scopes a token with unknown ones', async () => {
-  const real = globalThis.fetch;
-  globalThis.fetch = async (u, o) => (String(u).includes('/connect/token')
-    ? reply(200, { access_token: 'hdr.' + btoa('{"scope":""}').replace(/=+$/, '') + '.sig' })
-    : real(u, o));
-  const r = await xcall('GET', '/api/xero/probe');
-  globalThis.fetch = real;
-  return Array.isArray(r.body.holds) && r.body.holds.length === 0
-    && /carrying no scopes at all/.test(r.body.reading);
+// A probe that quietly kills the connection it is diagnosing would be
+// worse than no probe.
+await t('does not break the connection it is diagnosing', async () => {
+  const before = rows('SELECT refresh_token FROM xero WHERE id = 1')[0].refresh_token;
+  await xcall('GET', '/api/xero/probe');
+  const after = rows('SELECT refresh_token FROM xero WHERE id = 1')[0].refresh_token;
+  const r = await xcall('GET', '/api/xero/accounts');
+  return before !== after && r.status === 200;
 });
 
 console.log('');
@@ -479,7 +367,7 @@ await t('records why a pull failed rather than throwing it away', async () => {
   xero.tokenStatus = 400;
   const r = await xcall('POST', '/api/xero/pull', {});
   xero.tokenStatus = 200;
-  return r.status === 500 && /Invalid scope/.test(r.text);
+  return r.status === 500 && /Refresh token expired/.test(r.text);
 });
 
 console.log('');

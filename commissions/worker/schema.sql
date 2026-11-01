@@ -130,6 +130,11 @@ CREATE TABLE IF NOT EXISTS xero (
   oauth_at      TEXT,
   connected_by  TEXT,
   connected_at  TEXT,
+  -- When the access token was last refreshed. Xero rotates the refresh
+  -- token on every refresh, so this is also when refresh_token last
+  -- changed -- and a date far in the past is how a connection that has
+  -- quietly stopped running looks.
+  refreshed_at  TEXT,
   -- How far the last pull got, as a Xero UpdatedDateUTC. The next pull asks
   -- only for what changed after it, which is the difference between a nightly
   -- run and re-reading every invoice ever raised.

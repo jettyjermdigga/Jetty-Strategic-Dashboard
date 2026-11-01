@@ -64,9 +64,8 @@ fails if they ever disagree.
   now button. Each run moves a watermark so the next one asks only for what
   changed -- except when it stopped early on a rate limit, where the watermark
   stays put so nothing is skipped.
-* **Checking Xero**, from the line above the queue. It asks for a token and
-  names the organisation that answered. What the last run did is shown there
-  too, including why it failed.
+* **Connecting Xero**, from the line above the queue: a sign-in, once.
+  What the last run did is shown there too, including why it failed.
 
 ## What is not built yet
 
@@ -91,94 +90,56 @@ fails if they ever disagree.
    on a verified Access token, and with a team domain set and no audience
    there is nothing to verify against. It fails closed rather than falling
    back to trusting a header anyone can send.
-3. **Make a Xero Custom Connection** -- not a Web app. A Custom Connection is
-   machine-to-machine: it signs in as itself rather than as a person, holds
-   one organisation, and has no consent screen, no callback and no refresh
-   token to go stale. There is nobody whose leaving breaks the pull.
-
-   Give it these three scopes, all read-only:
-
-       accounting.invoices.read    the invoices and their line items
-       accounting.payments.read    the payments on them
-       accounting.settings.read    the chart of accounts, to find the codes
-
-   A Custom Connection and a Web app do not share a scope vocabulary, and
-   only the Web app's is in the OpenAPI spec. The spec's `securitySchemes`
-   list umbrella scopes -- `accounting.transactions` covers invoices,
-   payments, credit notes and bank transactions between them -- and a
-   Custom Connection has no `accounting.transactions` at all. It is granted
-   `accounting.invoices`, `accounting.payments`,
-   `accounting.banktransactions` and `accounting.manualjournals` separately,
-   each with a `.read` variant. Ask a Custom Connection for the umbrella
-   name and it is refused.
-
-   Pick them when you create the connection. They are fixed from then on:
-   Xero does not let an existing Custom Connection be widened, so a missing
-   scope means making a new one.
-
-   **Nothing calls `GET /connections`.** That is the documented way to find
-   the tenant id, and a Custom Connection cannot use it: it wants a
-   `xero-tenant-id` or `xero-user-id` header to filter by and answers 400
-   without one -- *Xero-User-Id and/or Xero-Tenant-Id header must be
-   supplied* -- while the tenant id is the very thing we would be calling it
-   to learn. There is no user on a Custom Connection, so there is no way out
-   of that circle.
-
-   There is no need to be in it. A Custom Connection reaches exactly one
-   organisation and its token is bound to it, so `GET /Organisation` simply
-   answers for whichever one it is -- the name the page shows, and proof the
-   credentials reach real books.
-
-   **Every call still carries `xero-tenant-id`, empty.** Leaving the header
-   out answers 403 with no body, which is the least helpful refusal Xero
-   has. Sending it blank works, and is what Xero's own SDK does -- from the
-   `xero-node` README, *"Because Custom Connections are only valid for a
-   single organisation you don't need to pass the `xero-tenant-id` ...
-   `xeroTenantId` can be an empty string"*, and the generated client then
-   sets the header from that empty string unconditionally. Present and
-   blank, not absent. The organisation rides on the token; the header is a
-   formality the API insists on anyway.
-
-   **The token request names no scope at all.** That is deliberate and it is
-   not an oversight. A Custom Connection already knows its grant, and asking
-   Xero to narrow it was refused here for every scope name alike -- with two
-   different messages, *Client credentials scope validation failed* and *No
-   valid scopes remaining after filtering for grant type*, neither of which
-   depends on the name being right -- while the request naming nothing
-   returned a token. So the connection's own grant decides, and what it
-   decided is read back off the token's `scope` claim rather than assumed.
-   `heldScopes` does that reading and `missingScopes` checks it, before the
-   first API call rather than after.
-
-   That check matters more than it looks. A missing scope does not refuse
-   the call: it returns invoices with an empty `Payments` array, or an empty
-   chart of accounts. That reads as a quiet month rather than as a
-   permissions problem, which is the worst way for this to be wrong.
-
-   Put its client id in `XERO_CLIENT_ID` in `wrangler.toml` and its secret
-   where secrets go:
+3. **Use the Xero app that exists, or make a Web app.** At
+   developer.xero.com/app/manage. Its **OAuth 2.0 redirect URI** must be
+   exactly `<this module's URL>/api/xero/callback` -- Xero refuses a sign-in
+   whose redirect it does not recognise. Put the client id in
+   `XERO_CLIENT_ID` in `wrangler.toml` and the secret where secrets go:
 
        cd commissions && npx wrangler secret put XERO_CLIENT_SECRET
 
    Not in `[vars]`: a deploy overwrites every var in that file and leaves
    secrets alone.
 
-   If it will not start, open `/api/xero/probe`. It asks for a token naming
-   no scope, reports what that token carries and what is missing, then asks
-   about each scope separately, and says in a sentence what the numbers
-   mean. A bare request that is itself refused is the app or the
-   credentials rather than the scopes -- `client_credentials` works on a
-   Custom Connection and nothing else.
+   Then press **Connect Xero**, sign in, and pick the organisation. That is
+   the step that matters: an app with *0 of 5 connections* has never been
+   authorised against any books, and a token it issues is real and reaches
+   nothing. Which is what a 403 with an empty body turns out to mean.
 
-   Then press **Check Xero**, which asks for a token and reports which
-   organisation answered. Open `/api/xero/accounts` to see the chart of
-   accounts, and set `XERO_ACCOUNTS` to the code or codes that mean wholesale
-   revenue. Until `XERO_ACCOUNTS` is set a pull refuses outright rather than
-   quietly importing nothing.
+   **This is a Web app, not a Custom Connection**, and the difference is
+   not cosmetic. A Custom Connection is machine-to-machine: one
+   organisation, no sign-in, `client_credentials`. A Web app signs a person
+   in and hands back a refresh token. A Web app *will* issue a
+   `client_credentials` token -- Xero uses those for App Store billing --
+   and it carries the whole granted scope list while reaching no accounting
+   data at all. An earlier version of this module read that scope list,
+   concluded Custom Connection, and spent a day on an empty 403.
 
-   Nothing is stored: every run asks for a fresh token, so there is no
-   credential in the database to leak and nothing to re-authorise in sixty
-   days' time.
+   The scopes are the standard flow's umbrella names:
+
+       accounting.transactions.read   the invoices and the payments on them
+       accounting.settings.read       the chart of accounts, to find the codes
+
+   plus `openid`, `profile`, `email` for the sign-in itself and
+   `offline_access`, without which there is no refresh token and the
+   connection dies in half an hour. A Custom Connection has a finer
+   vocabulary -- separate `accounting.invoices` and `accounting.payments` --
+   and asking for those here is refused.
+
+   Xero **rotates the refresh token on every refresh**: the one just used is
+   dead and the new one comes back in the same response. It is written back
+   before anything else happens, including in the probe. A refresh token
+   also expires after sixty days unused, which the nightly cron prevents.
+
+   If something will not start, open `/api/xero/probe`. It refreshes, says
+   what the token holds and what is missing, then asks the API the same
+   question several ways -- with the tenant header and without, across
+   three endpoints -- and reports each answer with whatever body came back.
+
+   Then open `/api/xero/accounts` to see the chart of accounts, and set
+   `XERO_ACCOUNTS` to the code or codes that mean wholesale revenue. Until
+   it is set a pull refuses outright rather than quietly importing nothing.
+
 4. **Import the history.** Run the *Import commissions from Airtable*
    workflow. Leave `apply` unticked for a dry run; it reports what it would
    write without touching D1. It is keyed on Airtable record ids, so running

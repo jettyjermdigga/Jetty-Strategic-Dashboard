@@ -16,41 +16,14 @@ import { cleanAllocation, totals } from './commission.js';
 import { cleanIncoming } from './ingest.js';
 import { buildWhere, cleanLimit, STATUSES } from './filters.js';
 import {
-  XERO_SCOPES, XERO_API, XERO_CONNECTIONS, missingScopes, tokenClaims,
-  accountCodes, revenueAccounts,
+  XERO_SCOPES, XERO_NEEDED, XERO_API, XERO_CONNECTIONS, authorizeUrl,
+  missingScopes, tokenClaims, accountCodes, revenueAccounts,
 } from './xero.js';
 import {
-  accessToken, probeScopes, organisation, xeroHeaders, pullRows, chartOfAccounts,
+  refreshAccess, exchangeCode, tenants, xeroHeaders,
+  pullRows, chartOfAccounts,
 } from './xero-pull.js';
 import SCHEMA from './schema.sql';
-
-/**
- * What the probe's numbers mean, in a sentence, because the person reading
- * them is reading them at the point where nothing works.
- */
-function reading(bare, bareWhy, holds, short) {
-  if (!bare) {
-    return 'Xero would not issue a token even for a request naming no scope: '
-      + bareWhy + '. That is the app or the credentials rather than the scope '
-      + 'list -- client_credentials works on a Custom Connection and nothing else.';
-  }
-  if (holds == null) {
-    return 'A token came back but its scopes could not be read off it, so what '
-      + 'this connection holds is unknown. Press Check Xero: it will work or '
-      + 'say what Xero refused.';
-  }
-  if (!holds.length) {
-    return 'A token came back carrying no scopes at all. The connection was '
-      + 'made without any, and they cannot be added afterwards -- this needs a '
-      + 'new Custom Connection in Xero.';
-  }
-  if (short.length) {
-    return 'The connection holds ' + holds.join(' ') + ' but needs '
-      + short.join(' and ') + '. Scopes are fixed when a Custom Connection is '
-      + 'made, so this needs a new one.';
-  }
-  return 'The connection holds everything this needs. Press Check Xero.';
-}
 
 const json = (body, status) => new Response(JSON.stringify(body), {
   status: status || 200,
@@ -112,30 +85,41 @@ async function xeroRow(db) {
  * read each time too -- it is one extra call on a nightly job, and a cached
  * one that has gone stale is a pull that writes nothing and says it worked.
  */
+/**
+ * An access token and the organisation it reaches.
+ *
+ * Every run refreshes. Xero rotates the refresh token on each refresh --
+ * the one just used is dead and the new one comes back in the same
+ * response -- so it is written back before anything else happens. Not
+ * writing it back makes the connection work exactly once and then fail
+ * silently, which is the worst shape this failure has.
+ */
 async function xeroSession(env, db) {
-  const tok = await accessToken({
+  const row = await xeroRow(db);
+  if (!row || !row.refresh_token || !row.tenant_id) {
+    throw new Error('Xero is not connected yet. Press Connect Xero and sign in.');
+  }
+  const tok = await refreshAccess({
+    refresh: row.refresh_token,
     clientId: env.XERO_CLIENT_ID,
     clientSecret: env.XERO_CLIENT_SECRET,
     post: fetch,
   });
-  // What the connection was actually granted, read off the token rather
-  // than asked for. A missing scope does not refuse the call -- it returns
-  // invoices with an empty Payments array, or an empty chart of accounts,
-  // which reads as a quiet month rather than as a permissions problem.
-  // That is the worst way for this to be wrong, so it stops here instead.
-  const short = missingScopes(tok.scopes, XERO_SCOPES);
+  await db.prepare('UPDATE xero SET refresh_token = ?, refreshed_at = ? WHERE id = 1')
+    .bind(tok.refresh, new Date().toISOString()).run();
+
+  // What the token actually carries, read off it rather than assumed. A
+  // missing scope does not refuse the call -- it returns invoices with an
+  // empty Payments array, or an empty chart of accounts, which reads as a
+  // quiet month rather than as a permissions problem. That is the worst
+  // way for this to be wrong, so it stops here instead.
+  const short = missingScopes(tok.scopes);
   if (short.length) {
-    throw new Error('The Xero Custom Connection is missing ' + short.join(' and ')
+    throw new Error('This Xero connection is missing ' + short.join(' and ')
       + '. It holds ' + ((tok.scopes || []).join(' ') || 'nothing')
-      + '. Scopes are set when the connection is made and cannot be widened '
-      + 'afterwards, so this needs a new Custom Connection in Xero.');
+      + '. Press Connect Xero and sign in again to grant them.');
   }
-  const org = await organisation({ access: tok.access, get: fetch });
-  await xeroRow(db);
-  await db.prepare(
-    'UPDATE xero SET tenant_id = ?, tenant_name = ?, connected_at = ? WHERE id = 1')
-    .bind(org.tenantId, org.name, new Date().toISOString()).run();
-  return { access: tok.access, tenantId: org.tenantId, tenantName: org.name };
+  return { access: tok.access, tenantId: row.tenant_id, tenantName: row.tenant_name };
 }
 
 const PAYMENT_COLS = ['source', 'source_ref', 'paid_on', 'invoice_no', 'retailer',
@@ -280,113 +264,166 @@ async function handleApi(request, env, url, who) {
   // There is no sign-in to send anybody to. This asks Xero for a token and
   // says which organisation came back, which is the only thing there is to
   // check before a pull.
-  if (path === '/api/xero/connect' && method === 'POST') {
-    const session = await xeroSession(env, db);
-    return json({ connected: true, tenant: session.tenantName });
+  // Off to Xero to sign in. A Web app reaches an organisation only once
+  // somebody authorises it against one, which is what this starts.
+  if (path === '/api/xero/connect' && method === 'GET') {
+    if (!env.XERO_CLIENT_ID || !env.XERO_CLIENT_SECRET) {
+      return json({ error: 'XERO_CLIENT_ID and the XERO_CLIENT_SECRET secret '
+        + 'are not both set.' }, 503);
+    }
+    await xeroRow(db);
+    const state = crypto.randomUUID();
+    await db.prepare('UPDATE xero SET oauth_state = ?, oauth_at = ? WHERE id = 1')
+      .bind(state, new Date().toISOString()).run();
+    return json({ go: authorizeUrl({
+      clientId: env.XERO_CLIENT_ID,
+      redirect: url.origin + '/api/xero/callback',
+      state,
+    }) });
   }
 
-  // What this Custom Connection will actually let us ask for.
-  //
-  // Only useful when Check Xero will not start, and only by hand -- open it
-  // in a browser and read the list. Nothing calls it and nothing depends on
-  // it, which is why it is allowed to be slow: it makes one token request
-  // per scope.
-  if (path === '/api/xero/probe' && method === 'GET') {
-    // The bare request first, because it is the one that matters: a
-    // Custom Connection answers it and nothing else does.
-    let bare = null;
-    let bareWhy = '';
-    try {
-      bare = await accessToken({
-        clientId: env.XERO_CLIENT_ID, clientSecret: env.XERO_CLIENT_SECRET, post: fetch,
-      });
-    } catch (err) {
-      bareWhy = String((err && err.message) || err);
+  if (path === '/api/xero/callback' && method === 'GET') {
+    const row = await xeroRow(db);
+    const state = url.searchParams.get('state') || '';
+    const code = url.searchParams.get('code') || '';
+    // Xero says why it refused in the URL rather than in a body, and
+    // "that sign-in did not match" would be a lie about, say, a scope it
+    // would not grant.
+    const refused = url.searchParams.get('error');
+    if (refused) {
+      return json({ error: 'Xero refused the sign-in: ' + refused
+        + (url.searchParams.get('error_description')
+          ? ' \u2014 ' + url.searchParams.get('error_description') : '') }, 400);
     }
-    const holds = bare ? bare.scopes : null;
-    // The call that stands between a working token and the first pull.
-    // Verbatim, because its status alone says nothing.
-    // Eight ways of asking the same question.
-    //
-    // A 403 with an empty body is the least informative refusal Xero has,
-    // and guessing at it has cost two rounds already. So every plausible
-    // difference is tried at once -- the header present and absent, the
-    // accept header on and off, two endpoints and the connections call --
-    // and each answer is reported with whatever body came back. One look
-    // settles which of them Xero is actually objecting to.
-    const bearer = bare ? 'Bearer ' + bare.access : '';
-    const TRIES = [
-      ['Organisation, token only',
-       XERO_API + '/Organisation', { authorization: bearer }],
-      ['Organisation, empty tenant header',
-       XERO_API + '/Organisation', { authorization: bearer, 'xero-tenant-id': '' }],
-      ['Organisation, accept json',
-       XERO_API + '/Organisation', { authorization: bearer, accept: 'application/json' }],
-      ['Organisation, empty tenant + accept',
+    // One-time, and only for a few minutes: a callback arriving with a
+    // stale or borrowed state is not the one we sent somebody off with.
+    const issued = row && row.oauth_at ? Date.parse(row.oauth_at) : 0;
+    const fresh = issued && (Date.now() - issued) < 15 * 60 * 1000;
+    if (!code || !state || !row || !row.oauth_state || state !== row.oauth_state || !fresh) {
+      return json({ error: 'That sign-in did not match the one this module '
+        + 'started.' }, 400);
+    }
+    await db.prepare('UPDATE xero SET oauth_state = NULL WHERE id = 1').run();
+
+    const tok = await exchangeCode({
+      code,
+      redirect: url.origin + '/api/xero/callback',
+      clientId: env.XERO_CLIENT_ID,
+      clientSecret: env.XERO_CLIENT_SECRET,
+      post: fetch,
+    });
+    const orgs = await tenants({ access: tok.access, get: fetch });
+    if (!orgs.length) {
+      return json({ error: 'That Xero sign-in reaches no organisations. The app '
+        + 'has to be authorised against one.' }, 400);
+    }
+    const org = orgs[0];
+    await db.prepare(
+      'UPDATE xero SET tenant_id = ?, tenant_name = ?, refresh_token = ?, '
+      + 'connected_by = ?, connected_at = ? WHERE id = 1')
+      .bind(org.tenantId, org.name, tok.refresh, who.email,
+            new Date().toISOString()).run();
+    // Back to the page rather than a wall of JSON: this is the end of a
+    // journey somebody started by pressing a button.
+    return new Response(null, { status: 302, headers: {
+      location: '/?connected=' + encodeURIComponent(org.name) } });
+  }
+
+  // What this connection will actually let us ask for.
+  //
+  // Only useful when something will not start, and only by hand: open it
+  // in a browser and read it. Nothing calls it and nothing depends on it.
+  //
+  // It exists because a 403 with an empty body is the least informative
+  // refusal Xero has, and guessing at one cost this module a day. So it
+  // asks the same question every plausible way at once and reports each
+  // answer with whatever body came back.
+  if (path === '/api/xero/probe' && method === 'GET') {
+    const row = await xeroRow(db);
+    const connected = Boolean(row && row.refresh_token && row.tenant_id);
+
+    let tok = null;
+    let why = '';
+    if (connected) {
+      try {
+        tok = await refreshAccess({
+          refresh: row.refresh_token,
+          clientId: env.XERO_CLIENT_ID,
+          clientSecret: env.XERO_CLIENT_SECRET,
+          post: fetch,
+        });
+        // Rotated on every refresh, so it is written back even here. A
+        // probe that quietly kills the connection it is diagnosing would
+        // be worse than no probe.
+        await db.prepare('UPDATE xero SET refresh_token = ?, refreshed_at = ? WHERE id = 1')
+          .bind(tok.refresh, new Date().toISOString()).run();
+      } catch (err) {
+        why = String((err && err.message) || err);
+      }
+    }
+
+    const holds = tok ? tok.scopes : null;
+    const short = missingScopes(holds);
+    const bearer = tok ? 'Bearer ' + tok.access : '';
+    const tenant = (row && row.tenant_id) || '';
+    const TRIES = tok ? [
+      ['Organisation, with the tenant',
        XERO_API + '/Organisation',
-       { authorization: bearer, 'xero-tenant-id': '', accept: 'application/json' }],
-      ['Accounts, empty tenant + accept',
+       { authorization: bearer, 'xero-tenant-id': tenant, accept: 'application/json' }],
+      ['Organisation, no tenant header',
+       XERO_API + '/Organisation', { authorization: bearer, accept: 'application/json' }],
+      ['Accounts, with the tenant',
        XERO_API + '/Accounts',
-       { authorization: bearer, 'xero-tenant-id': '', accept: 'application/json' }],
-      ['connections, token only',
-       XERO_CONNECTIONS, { authorization: bearer }],
-      ['connections, accept json',
+       { authorization: bearer, 'xero-tenant-id': tenant, accept: 'application/json' }],
+      ['Invoices, with the tenant',
+       XERO_API + '/Invoices?page=1',
+       { authorization: bearer, 'xero-tenant-id': tenant, accept: 'application/json' }],
+      ['connections',
        XERO_CONNECTIONS, { authorization: bearer, accept: 'application/json' }],
-      ['connections, empty user header',
-       XERO_CONNECTIONS,
-       { authorization: bearer, 'xero-user-id': '', accept: 'application/json' }],
-    ];
+    ] : [];
 
     const tries = [];
-    let org = null;
-    if (bare) {
-      for (const [name, url2, headers] of TRIES) {
-        try {
-          const res = await fetch(url2, { headers });
-          const body = (await res.text()).slice(0, 300);
-          tries.push({ name, status: res.status, body: body || '(empty)' });
-          // Only an Organisation call answers "which organisation is
-          // this". Accounts coming back fine would be a fine thing to
-          // learn and is not that answer.
-          if (!org && res.ok && String(name).startsWith('Organisation')) {
-            org = { status: res.status, body, which: name };
-          }
-        } catch (err) {
-          tries.push({ name, status: 0, body: String((err && err.message) || err) });
-        }
-      }
-      if (!org) {
-        const first = tries.find((t) => String(t.name).startsWith('Organisation'));
-        org = { status: first.status, body: first.body };
+    for (const [name, url2, headers] of TRIES) {
+      try {
+        const res = await fetch(url2, { headers });
+        const body = (await res.text()).slice(0, 300);
+        tries.push({ name, status: res.status, body: body || '(empty)' });
+      } catch (err) {
+        tries.push({ name, status: 0, body: String((err && err.message) || err) });
       }
     }
 
-    // Claim names only, and the ones that carry no secret. Enough to see
-    // whether the organisation is named in the token itself.
+    // Claim names only, and values only where they could not be a secret.
     let claims = null;
-    if (bare) {
-      const safe = {};
-      const all = tokenClaims(bare.access) || {};
+    if (tok) {
+      claims = {};
+      const all = tokenClaims(tok.access) || {};
       for (const k of Object.keys(all)) {
-        safe[k] = /tenant|org|scope|aud|iss/i.test(k) ? all[k] : '(present)';
+        claims[k] = /tenant|org|scope|aud|iss/i.test(k) ? all[k] : '(present)';
       }
-      claims = safe;
     }
-    const results = await probeScopes({
-      clientId: env.XERO_CLIENT_ID, clientSecret: env.XERO_CLIENT_SECRET, post: fetch,
-    });
-    const short = missingScopes(holds, XERO_SCOPES);
+
     return json({
-      needs: XERO_SCOPES.split(' '),
+      connected,
+      organisation: connected ? { id: tenant, name: row.tenant_name } : null,
+      needs: XERO_NEEDED.split(' '),
+      asks: XERO_SCOPES.split(' '),
       holds,
       missing: short,
-      namedScopesAccepted: results.filter((r) => r.ok && r.scope !== '(no scope named)')
-        .map((r) => r.scope),
-      organisation: org,
       tries,
       claims,
-      results,
-      reading: reading(bare, bareWhy, holds, short),
+      reading: !connected
+        ? 'Nobody has signed in yet, so there is no organisation to reach. '
+          + 'Press Connect Xero.'
+        : !tok
+          ? 'The stored connection would not refresh: ' + why
+            + ' A refresh token dies after sixty days unused, and is dead '
+            + 'once used, so this usually means signing in again.'
+          : short.length
+            ? 'The token is good but holds ' + (holds || []).join(' ')
+              + ', which is missing ' + short.join(' and ') + '. Sign in again.'
+            : 'The token is good and reaches ' + row.tenant_name
+              + '. If a call below still fails, the answer is in its body.',
     });
   }
 

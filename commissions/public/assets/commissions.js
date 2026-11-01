@@ -205,10 +205,12 @@
         + '<span>XERO_CLIENT_ID and the XERO_CLIENT_SECRET secret are both needed.</span>';
     }
     if (!xero.connected) {
-      return '<span class="cm-x-off">Xero has not answered yet.</span>'
-        + '<span>Custom Connection \u2014 there is no sign-in, just credentials.</span>'
+      return '<span class="cm-x-off">Xero is not connected yet.</span>'
+        + '<span>Sign in once and pick the organisation; it stays connected '
+        + 'after that.</span>'
         + '<span class="cm-grow"></span>'
-        + '<button class="cm-x-btn" type="button" id="xConnect">Check Xero</button>';
+        + '<button class="cm-x-btn" type="button" id="xConnect">'
+        + 'Connect Xero</button>';
     }
     var r = xero.lastResult || {};
     var last = xero.lastRunAt
@@ -376,13 +378,20 @@
     document.addEventListener('click', function (e) {
       if (e.target.id === 'xConnect') {
         e.target.disabled = true;
-        e.target.textContent = 'Checking\u2026';
-        api('/api/xero/connect', { method: 'POST', body: '{}' })
-          .then(function () { return refreshXero(); })
-          .then(render)
+        e.target.textContent = 'Opening Xero\u2026';
+        // Off to Xero's own sign-in, and back to the callback, which
+        // redirects here. Full navigation rather than a popup: a consent
+        // screen in a popup is a consent screen somebody's browser
+        // blocks.
+        api('/api/xero/connect')
+          .then(function (out) {
+            if (out && out.go) { window.location.href = out.go; return; }
+            throw new Error('Xero sent no sign-in to go to.');
+          })
           .catch(function (err) {
+            e.target.disabled = false;
+            e.target.textContent = 'Connect Xero';
             say(err.message || 'Xero did not answer.');
-            return refreshXero().then(render);
           });
         return;
       }
