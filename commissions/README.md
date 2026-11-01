@@ -71,11 +71,34 @@ fails if they ever disagree.
 
 * Marking a month's commission paid (`cleanPaid` exists and is tested; nothing
   calls it).
-* The monthly statement: the `.xlsx` per rep, R2 storage and the email.
-  `statements` exists and the import fills it in.
+
+* **The monthly statement.** The piece Amy actually does, and the reason the
+  Reps tab in the Ledger still exists: one `.xlsx` per rep per month, kept,
+  and sent to that rep when the payment goes out. `statements` is the index
+  and the import has already filled it with the history; the R2 bucket is
+  bound and empty.
+
+  Four things it has to do, in her words: build a file per rep for a given
+  month, store it, send it, and record that it went. Worth settling with her
+  before building: what belongs on the sheet beyond the lines and the total,
+  whether a statement can be re-sent or re-issued after a correction, and
+  whether "paid" and "sent" are one act or two -- they are not the same
+  question and this module currently answers neither.
+
 * Moving the historic report files out of Airtable. Their attachment URLs
   expire, so copying them into R2 is its own job; the import keeps the
   filenames so a statement can be matched up by hand until then.
+
+* **Reps imported from the Ledger carry record ids instead of names.** In
+  the Ledger's Reps tab, Sales Rep is a linked-record field, so Airtable
+  returns `rec...` ids rather than names. `scripts/import_commissions.py`
+  takes that id for a name and slugifies it, which is why the rep list has
+  entries like `rec4xy...` beside the real ones. The table carries a lookup
+  field holding the actual name, which is what the script should read.
+
+  Fixing it means two things, not one: reading the right field next time,
+  and merging each junk rep into the real one so the statements already
+  imported against it keep their history rather than being orphaned.
 
 ## Setting it up
 
