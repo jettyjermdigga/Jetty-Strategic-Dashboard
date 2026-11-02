@@ -74,12 +74,18 @@ export const SEED = SEASONS.flatMap(
  * it still adds up correctly because the total counts every year stored
  * rather than only the three on screen.
  */
-export const YEAR_REACH = 1;
+// Asymmetric on purpose. Backwards is where the prior seasons are, and
+// backfilling them is what makes a trend a trend -- so the sheet reaches
+// far enough back to hold a few of them without anybody touching the year
+// picker. Forwards it only needs the spillover year: nobody is putting a
+// deposit down two years ahead of a season.
+export const YEARS_BACK = 3;
+export const YEARS_FORWARD = 1;
 
 export function yearsAround(budgetYear) {
   const y = Number(budgetYear);
   const out = [];
-  for (let i = -YEAR_REACH; i <= YEAR_REACH; i += 1) out.push(String(y + i));
+  for (let i = -YEARS_BACK; i <= YEARS_FORWARD; i += 1) out.push(String(y + i));
   return out;
 }
 

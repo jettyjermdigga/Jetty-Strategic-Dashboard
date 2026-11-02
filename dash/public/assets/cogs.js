@@ -82,8 +82,8 @@
     });
   }
 
-  // What a line holds in years the three columns cannot show. Nothing is
-  // ever hidden by the window: the total counts every year, and a line with
+  // What a line holds in years the columns cannot show. Nothing is ever
+  // hidden by the window: the total counts every year, and a line with
   // money off-screen says so rather than looking like it does not add up.
   function outside(r) {
     var on = {};
@@ -152,7 +152,7 @@
       // parts are beside it is how two of them end up disagreeing.
       + '<td class="bd-n lb-tot' + (outside(r) ? ' cg-out' : '') + '"'
       + (outside(r) ? ' title="' + esc(money(outside(r))) + ' of this sits in a year'
-         + ' outside these three columns. Change the year above to see it."' : '')
+         + ' outside these columns. Change the year above to see it."' : '')
       + '>' + (r.amount == null ? '<span class="lb-none">—</span>' : money(r.amount))
       + (outside(r) ? '<span class="cg-flag">+</span>' : '') + '</td>'
       + '<td><input class="bd-note" data-f="note" value="' + esc(r.note) + '"'
@@ -180,7 +180,7 @@
       }).join('')
       + '<td class="bd-n lb-tot' + (off ? ' cg-out' : '') + '"'
       + (off ? ' title="' + esc(money(off)) + ' of this sits in years outside'
-         + ' these three columns."' : '')
+         + ' these columns."' : '')
       + '>' + money(total) + (off ? '<span class="cg-flag">+</span>' : '') + '</td>'
       + '<td colspan="2"></td></tr>';
   }
@@ -209,8 +209,8 @@
     var yr = $('#fYear');
     if (yr) {
       // Wide enough to backfill a season from a few years ago and to carry
-      // a deposit for one a few years out. The columns are whichever three
-      // sit around the pick.
+      // a deposit for one a few years out. The columns reach three years
+      // back from the pick and one forward.
       var opts = [];
       for (var y = (D.baselineYear || 2026) - 4; y <= (D.firstYear || 2027) + 4; y++) {
         opts.push('<option value="' + y + '"' + (y === D.year ? ' selected' : '')

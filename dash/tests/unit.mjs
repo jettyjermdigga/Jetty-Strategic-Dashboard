@@ -2050,9 +2050,12 @@ describe('the COGS years', () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const rd = (f) => fs.readFileSync(path.join(here, '..', f), 'utf8');
 
-  it('opens three columns around the year being budgeted', () => {
-    eq(cogsYearsAround(2027), ['2026', '2027', '2028']);
-    eq(cogsYearsAround(2025), ['2024', '2025', '2026']);
+  // Three years back and one forward, not a window centred on the pick:
+  // backwards is where the prior seasons are and backfilling them is the
+  // point, while forwards only the spillover year is ever used.
+  it('reaches further back than forward', () => {
+    eq(cogsYearsAround(2027), ['2024', '2025', '2026', '2027', '2028']);
+    eq(cogsYearsAround(2025), ['2022', '2023', '2024', '2025', '2026']);
   });
 
   it('reads the drop year off the season name', () => {
@@ -2128,13 +2131,13 @@ describe('the COGS years', () => {
     ok(rs.filter((r) => r.amount == null).length > 10, 'lines arrived costed');
   });
 
-  it('counts every year anything is filed under, not the three on screen', () => {
+  it('counts every year anything is filed under, not the ones on screen', () => {
     const rs = cogsRows({
-      'sp27:bulk': { season: 'sp27', kind: 'bulk', years: { 2024: 1000, 2027: 9000 } },
+      'sp27:bulk': { season: 'sp27', kind: 'bulk', years: { 2021: 1000, 2027: 9000 } },
     }, 2027);
     const sum = cogsSummary(rs);
-    // 2024 is three columns away from the window and is still in the total.
-    eq(sum.byYear, { 2024: 1000, 2027: 9000 });
+    // 2021 is off the left of the window and is still in the total.
+    eq(sum.byYear, { 2021: 1000, 2027: 9000 });
     eq(sum.total, 10000);
   });
 

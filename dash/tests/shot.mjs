@@ -309,8 +309,8 @@ const COGS = (() => {
     'f27:bulk': { season: 'f27', years: { 2027: 1180000, 2028: 200000 } },
     'f27:sms': { season: 'f27', years: { 2027: 52000 } },
     'starboard:bulk': { season: 'starboard', years: { 2027: 165000 } },
-    // A prior season, paid for before the three columns on screen can
-    // reach -- so its total carries the mark that says so.
+    // A prior season, now inside the window: 2025 is on screen against a
+    // 2027 budget, which is what the wider reach is for.
     'sp26:bulk': { added: true, season: 'sp26', kind: 'bulk',
                    seasonLabel: 'SP26', years: { 2025: 240000, 2026: 952000 } },
     'sp26:sms': { added: true, season: 'sp26', kind: 'sms',

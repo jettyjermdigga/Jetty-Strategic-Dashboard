@@ -150,14 +150,15 @@
 
    Deliberately not .lb-t -- that one sets min-width:100% so seventeen
    columns can run off the side, which would undo the cap here. */
-/* Three year columns and a total wider than the one figure it replaced. */
-.cg-wrap{max-width:1180px}
-.cg-t th,.cg-t td{padding:6px 10px}
-.cg-t th:first-child,.cg-t td:first-child{text-align:left;width:150px}
-.cg-t th:nth-child(2),.cg-t td:nth-child(2){width:120px}
+/* Five year columns -- 2024 to 2028 against a 2027 budget -- and a total
+   wider than the one figure they replaced. */
+.cg-wrap{max-width:1420px}
+.cg-t th,.cg-t td{padding:6px 7px}
+.cg-t th:first-child,.cg-t td:first-child{text-align:left;width:135px}
+.cg-t th:nth-child(2),.cg-t td:nth-child(2){width:98px}
 .cg-t .lb-sel{width:100%;max-width:none}
-.cg-t .cg-amt{width:96px;text-align:right}
-.cg-t .bd-note{width:100%;min-width:150px}
+.cg-t .cg-amt{width:84px;text-align:right}
+.cg-t .bd-note{width:100%;min-width:120px}
 .cg-t .lb-foot td{background:var(--bd-row)}
 
 /* ── COGS: the year columns ──────────────────────────────────────────────
