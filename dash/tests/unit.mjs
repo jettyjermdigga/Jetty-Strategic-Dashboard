@@ -2219,6 +2219,17 @@ describe('the COGS years', () => {
     // Two scales, so each has to say so: a column on one is not comparable
     // by height to a column on the other.
     ok(/own scale/.test(page), 'the separate scales are not declared');
+    // Oldest on the left, Spring before Summer before Fall before Holiday,
+    // with SS -- the older naming, where the two were bought as one --
+    // between Spring and Summer.
+    ok(/SEASON_RANK = \{ sp: 1, ss: 2, su: 3, f: 4, h: 5 \}/.test(page),
+       'the season order is not Spring, SS, Summer, Fall, Holiday');
+    ok(/seasonWhen/.test(page), 'the chart is back on the sheet order');
+    // The export reads styles off the LIVE nodes. getComputedStyle on a
+    // detached clone resolves nothing, which took the colour out of the
+    // whole picture and left black bars in a default serif.
+    ok(/inlineStyles\(svg, clone, window\)/.test(page),
+       'the export reads styles off the detached clone');
   });
 
   it('files a figure typed before the columns, once, at boot', () => {

@@ -282,6 +282,23 @@
 
   var KIND_CLASS = { bulk: 'bulk', sms: 'sms' };
 
+  /**
+   * Where a season falls in time, from its own name.
+   *
+   * Spring, Summer, Fall, Holiday is the order within a year. SS is the
+   * older naming, where Spring and Summer were bought as one -- SS26 covers
+   * what SP26 and SU26 would, so it sits between them.
+   *
+   * A name this cannot read gets no date rather than a guessed one.
+   */
+  var SEASON_RANK = { sp: 1, ss: 2, su: 3, f: 4, h: 5 };
+
+  function seasonWhen(key) {
+    var m = /^([a-z]+)[-\s]?(\d{2})$/.exec(String(key || '').toLowerCase());
+    if (!m || !SEASON_RANK[m[1]]) return null;
+    return (2000 + Number(m[2])) * 10 + SEASON_RANK[m[1]];
+  }
+
   /** Compact money for a column's cap. Full figures live in the tooltip
    *  and in the sheet; a chart in full is a chart of nine-digit strings. */
   function brief(n) {
@@ -364,8 +381,20 @@
     });
 
     var cols = order.map(function (k) { return by[k]; });
+    // Oldest on the left. A chart of a history that is not in time order is
+    // not a history -- the sheet keeps its own order, where a backfilled
+    // season stays behind next year's rather than shuffling into the middle
+    // of it, but on the chart the axis IS the time.
     cols.sort(function (a, b) {
       if (f.graphBy === 'year') return Number(a.key) - Number(b.key);
+      var wa = seasonWhen(a.key);
+      var wb = seasonWhen(b.key);
+      if (wa != null && wb != null) return wa - wb;
+      // Collab, Special Drops and Starboard carry no season and no year and
+      // never will, so they sit after the calendar in the sheet's order
+      // rather than being given a date they do not have.
+      if (wa != null) return -1;
+      if (wb != null) return 1;
       var ia = at[a.key] == null ? 999 : at[a.key];
       var ib = at[b.key] == null ? 999 : at[b.key];
       return ia - ib;
@@ -441,12 +470,12 @@
 
       // The hit target is the whole band, not the painted pixels, so the
       // pointer never has to find a 24px column.
-      out.push('<rect class="hit" x="' + (L + band * i).toFixed(1) + '" y="' + T
+      out.push('<rect class="hit" data-layer="hit" x="' + (L + band * i).toFixed(1) + '" y="' + T
         + '" width="' + band.toFixed(1) + '" height="' + plotH + '" fill="transparent"'
         + ' tabindex="0" role="button" data-col="' + esc(c.key) + '"'
         + ' data-kind="' + esc(kind || '') + '"'
         + ' aria-label="' + esc(c.label + ', ' + money(v)) + '"/>');
-      out.push('<rect class="lift" x="' + (L + band * i).toFixed(1) + '" y="' + T
+      out.push('<rect class="lift" data-layer="lift" x="' + (L + band * i).toFixed(1) + '" y="' + T
         + '" width="' + band.toFixed(1) + '" height="' + plotH + '" rx="4"/>');
     });
 
@@ -498,6 +527,143 @@
       + '</div>';
   }
 
+  // ── taking the chart away ─────────────────────────────────────────────
+  //
+  // A PNG, because it is going into a deck or an email. Built by cloning
+  // what is on screen and resolving every style onto the elements
+  // themselves: an SVG in an <img> gets no stylesheet and no web fonts, so
+  // anything left in a class attribute arrives black and unstyled.
+
+  var LIFT_OUT = ['hit', 'lift'];
+  var KEEP = ['fill', 'stroke', 'stroke-width', 'font-family', 'font-size',
+              'font-weight', 'text-anchor', 'opacity'];
+
+  /**
+   * Copy the live element's resolved styles onto its clone.
+   *
+   * Read from the ORIGINAL, which is in the document, and written to the
+   * clone, which is not: getComputedStyle on a detached node resolves
+   * nothing, so a first version of this read the clone and exported a
+   * chart of black bars in a default serif.
+   */
+  function inlineStyles(live, clone, win) {
+    var cs = win.getComputedStyle(live);
+    KEEP.forEach(function (prop) {
+      var v = cs.getPropertyValue(prop);
+      if (!v || (prop === 'stroke' && v === 'none')) return;
+      // A generic has to be last in the chain, because the rasteriser has
+      // none of this page's web fonts.
+      if (prop === 'font-family') v = v + ', sans-serif';
+      clone.setAttribute(prop, v.trim());
+    });
+    clone.removeAttribute('class');
+    clone.removeAttribute('tabindex');
+    clone.removeAttribute('role');
+    var kids = [].slice.call(live.children);
+    var mine = [].slice.call(clone.children);
+    for (var i = 0; i < kids.length && i < mine.length; i += 1) {
+      inlineStyles(kids[i], mine[i], win);
+    }
+  }
+
+  function exportSvg() {
+    var panels = [].slice.call(document.querySelectorAll('.cg-panel'));
+    var svgs = panels.map(function (el) { return el.querySelector('.cg-svg'); })
+      .filter(Boolean);
+    if (!svgs.length) return null;
+
+    var PAD = 20;
+    var GAPX = 34;
+    var HEAD = 58;      // the chart's own title
+    var PHEAD = 34;     // each panel's title and its scale note
+    var card = getComputedStyle($('#chart'));
+    var bg = card.backgroundColor;
+    var ink = getComputedStyle(document.body).color;
+
+    var widths = svgs.map(function (el) { return Number(el.getAttribute('width')); });
+    var height = Math.max.apply(null, svgs.map(function (el) {
+      return Number(el.getAttribute('height'));
+    }));
+    var W = PAD * 2 + widths.reduce(function (a, b) { return a + b; }, 0)
+      + GAPX * (svgs.length - 1);
+    var H = PAD * 2 + HEAD + PHEAD + height;
+
+    var mono = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+    var sans = 'system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif';
+    var text = function (x, y, str, size, weight, fill, family) {
+      return '<text x="' + x + '" y="' + y + '" font-family="' + (family || sans)
+        + '" font-size="' + size + '" font-weight="' + (weight || 400)
+        + '" fill="' + (fill || ink) + '">' + esc(str) + '</text>';
+    };
+
+    var out = ['<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="' + bg + '"/>'];
+    out.push(text(PAD, PAD + 18, 'Cost of goods by '
+      + (f.graphBy === 'year' ? 'year' : 'season'), 17, 600));
+    out.push(text(PAD, PAD + 38,
+      (filtered() ? 'the lines on screen' : 'every line') + ' · '
+      + new Date().toISOString().slice(0, 10), 11, 400, ink, mono));
+
+    var x = PAD;
+    panels.forEach(function (panel, i) {
+      var svg = svgs[i];
+      if (!svg) return;
+      var title = panel.querySelector('.cg-ptitle');
+      var sub = panel.querySelector('.cg-psub');
+      var swatch = title ? getComputedStyle(title.querySelector('i')).backgroundColor : ink;
+      var top = PAD + HEAD;
+      out.push('<rect x="' + x + '" y="' + (top - 10) + '" width="11" height="11"'
+        + ' rx="2" fill="' + swatch + '"/>');
+      out.push(text(x + 18, top, title ? title.textContent.trim() : '', 13, 600));
+      out.push(text(x + 18, top + 17, sub ? sub.textContent.trim() : '', 11, 400, ink, mono));
+
+      // Styles first, while the clone still matches the live chart node for
+      // node, and only then strip the interaction layers out of it.
+      var clone = svg.cloneNode(true);
+      inlineStyles(svg, clone, window);
+      LIFT_OUT.forEach(function (cls) {
+        [].slice.call(clone.querySelectorAll('[data-layer="' + cls + '"]'))
+          .forEach(function (n) { n.parentNode.removeChild(n); });
+      });
+      clone.setAttribute('x', x);
+      clone.setAttribute('y', PAD + HEAD + PHEAD);
+      out.push(new XMLSerializer().serializeToString(clone));
+      x += widths[i] + GAPX;
+    });
+
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H
+      + '" viewBox="0 0 ' + W + ' ' + H + '">' + out.join('') + '</svg>';
+  }
+
+  function downloadChart() {
+    var markup = exportSvg();
+    if (!markup) return;
+    var name = 'jetty-cogs-by-' + (f.graphBy === 'year' ? 'year' : 'season')
+      + '-' + new Date().toISOString().slice(0, 10) + '.png';
+    var img = new Image();
+    var url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(markup);
+    img.onload = function () {
+      // Twice the size, so it holds up pasted into a deck at any width.
+      var c = document.createElement('canvas');
+      c.width = img.width * 2;
+      c.height = img.height * 2;
+      var g = c.getContext('2d');
+      g.scale(2, 2);
+      g.drawImage(img, 0, 0);
+      c.toBlob(function (blob) {
+        if (!blob) return say('The chart could not be turned into a picture.');
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+      }, 'image/png');
+    };
+    img.onerror = function () { say('The chart could not be turned into a picture.'); };
+    img.src = url;
+  }
+
   function renderChart(list) {
     var box = $('#chart');
     if (!box) return;
@@ -514,7 +680,9 @@
       + '<span class="cg-cby" role="group" aria-label="What the columns are">'
       + '<button type="button" data-by="season" aria-pressed="' + (!byYear) + '">Season</button>'
       + '<button type="button" data-by="year" aria-pressed="' + byYear + '">Year</button>'
-      + '</span></div>';
+      + '</span>'
+      + '<button class="lb-add cg-dl" id="cgDown" type="button">Download PNG</button>'
+      + '</div>';
 
     if (!cols.length) {
       box.innerHTML = head + '<p class="cg-empty">Nothing on screen has a figure on '
@@ -936,6 +1104,7 @@
 
     var box = $('#chart');
     box.addEventListener('click', function (e) {
+      if (e.target.closest && e.target.closest('#cgDown')) return downloadChart();
       var b = e.target.closest ? e.target.closest('[data-by]') : null;
       if (!b) return;
       f.graphBy = b.dataset.by;

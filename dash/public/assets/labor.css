@@ -233,6 +233,7 @@
   border:1px solid var(--surface-alt);background:transparent;color:var(--ink);
 }
 .cg-cby button[aria-pressed="true"]{background:var(--primary);color:#fff;border-color:var(--primary)}
+.cg-dl{margin-left:10px;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;padding:4px 9px}
 
 /* Two charts, not two series: samples run at a few per cent of the
    production run and stacked into one column they were a sliver nobody

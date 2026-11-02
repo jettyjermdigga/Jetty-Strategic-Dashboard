@@ -310,6 +310,16 @@ const COGS_SAVED = (() => {
     'f27:bulk': { season: 'f27', years: { 2027: 1180000, 2028: 200000 } },
     'f27:sms': { season: 'f27', years: { 2027: 52000 } },
     'starboard:bulk': { season: 'starboard', years: { 2027: 165000 } },
+    // A Fall and a Holiday in the same year, so the ladder has every rung
+    // on it: swapping two of them has to be visible somewhere.
+    'f26:bulk': { added: true, season: 'f26', kind: 'bulk',
+                  seasonLabel: 'F26', years: { 2026: 700000 } },
+    'h26:bulk': { added: true, season: 'h26', kind: 'bulk',
+                  seasonLabel: 'H26', years: { 2026: 520000 } },
+    // A second off-calendar season, and one whose place in the sheet's own
+    // order is EARLY -- so an ordering that falls back to that order puts
+    // it somewhere a date-ordered axis never would.
+    'collab:bulk': { season: 'collab', years: { 2027: 240000 } },
     // A prior season, now inside the window: 2025 is on screen against a
     // 2027 budget, which is what the wider reach is for.
     'sp26:bulk': { added: true, season: 'sp26', kind: 'bulk',
@@ -832,6 +842,30 @@ for (const c of CASES) {
     await page.selectOption('#fKind', '');
     await page.waitForTimeout(120);
 
+    // Oldest on the left, and within a year Spring, Summer, Fall, Holiday.
+    // SS is the older naming where Spring and Summer were bought as one, so
+    // it sits between them. Asserted as a property -- the sequence never
+    // goes backwards -- rather than against a written-out list, which would
+    // have to be rewritten every time the fixture changes.
+    const RANK = { sp: 1, ss: 2, su: 3, f: 4, h: 5 };
+    const when = (label) => {
+      const m = /^([a-z]+)(\d{2})$/.exec(String(label).toLowerCase());
+      return m && RANK[m[1]] ? (2000 + Number(m[2])) * 10 + RANK[m[1]] : null;
+    };
+    const panelCats = await page.locator('.cg-panel').first()
+      .locator('.cat').allTextContents();
+    const seq = panelCats.map(when).filter((x) => x != null);
+    const ordered = seq.length > 1 && seq.every((v, i) => i === 0 || v >= seq[i - 1]);
+    // And anything with no season in its name sits after the calendar
+    // rather than being given a date it does not have.
+    const dated = panelCats.map(when);
+    // EVERY undated column after EVERY dated one. Checking only the last
+    // position, or only that the nulls run together, let one land in the
+    // middle whenever the comparator stopped being a total order.
+    const firstUndated = dated.findIndex((x) => x == null);
+    const lastDated = dated.reduce((at, x, i) => (x == null ? at : i), -1);
+    const undatedLast = firstUndated < 0 || firstUndated > lastDated;
+
     // By year is a different question off the same rows.
     await page.click('[data-by="year"]');
     await page.waitForTimeout(120);
@@ -859,8 +893,67 @@ for (const c of CASES) {
     const years = yearCats.length > 0 && yearCats.every((y) => /^\d{4}$/.test(y));
     const keptHue = hues.length > 0 && hues.every(Boolean);
     const split = /Bulk|SMS/.test(tip) && /for the season/.test(tip);
+    // It downloads, and what comes down is a real picture with the series
+    // colours in it. The pixels are checked rather than the markup: the
+    // first version of the export read styles off a DETACHED clone, where
+    // getComputedStyle resolves nothing, and produced a chart of black bars
+    // that any markup-level check would have passed.
+    let png = { ok: false, coloured: false };
+    try {
+      const [down] = await Promise.all([
+        page.waitForEvent('download', { timeout: 15000 }),
+        page.click('#cgDown'),
+      ]);
+      const file = path.join(OUT, down.suggestedFilename());
+      await down.saveAs(file);
+      const bytes = fs.readFileSync(file);
+      png.ok = bytes.subarray(0, 8).toString('hex') === '89504e470d0a1a0a'
+        && /\.png$/.test(down.suggestedFilename());
+      png.coloured = await page.evaluate(async (b64) => {
+        const cs = getComputedStyle(document.querySelector('.cg-chart'));
+        const rgb = (v) => {
+          const d = document.createElement('div');
+          d.style.color = v;
+          document.body.appendChild(d);
+          const m = /(\d+), (\d+), (\d+)/.exec(getComputedStyle(d).color);
+          d.remove();
+          return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+        };
+        const want = [rgb(cs.getPropertyValue('--s-bulk').trim()),
+                      rgb(cs.getPropertyValue('--s-sms').trim())];
+        const img = new Image();
+        await new Promise((ok, no) => {
+          img.onload = ok; img.onerror = no;
+          img.src = 'data:image/png;base64,' + b64;
+        });
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        c.getContext('2d').drawImage(img, 0, 0);
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        const near = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1])
+          + Math.abs(a[2] - b[2]) < 30;
+        // Counted, not merely found. The two legend swatches are about 500
+        // pixels each at this scale and are painted from resolved colours
+        // either way, so "is this hue present" passed on an export whose
+        // BARS had all come out black. A bar is thousands of pixels.
+        return want.every((w) => {
+          if (!w) return false;
+          let n = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            if (near([d[i], d[i + 1], d[i + 2]], w)) n += 1;
+            if (n > 3000) return true;
+          }
+          return false;
+        });
+      }, fs.readFileSync(file).toString('base64'));
+      fs.unlinkSync(file);
+    } catch (err) {
+      png = { ok: false, coloured: false, why: err.message };
+    }
+
     const okChart = inside && oneUnit && filters && years && keptHue && split
-      && owned && noLegend && ownScale && onePanel && seriesNotTotal;
+      && owned && noLegend && ownScale && onePanel && seriesNotTotal
+      && ordered && undatedLast && png.ok && png.coloured;
 
     console.log('  chart: ' + allCaps.length + ' columns'
       + ', ' + (inside ? 'inside the plot' : 'OVERFLOWS THE PLOT')
@@ -874,7 +967,10 @@ for (const c of CASES) {
       + ', ' + (seriesNotTotal ? 'tooltip leads with the series'
         : 'TOOLTIP LEADS WITH THE SEASON TOTAL')
       + ', ' + (noLegend ? 'no legend on a single series' : 'LEGEND ON A SINGLE SERIES')
-      + ', ' + (split ? 'tooltip on focus' : 'NO TOOLTIP ON FOCUS'));
+      + ', ' + (split ? 'tooltip on focus' : 'NO TOOLTIP ON FOCUS')
+      + ', ' + (ordered && undatedLast ? 'oldest first' : 'OUT OF TIME ORDER')
+      + ', ' + (png.ok ? (png.coloured ? 'downloads a coloured PNG'
+        : 'PNG LOST ITS COLOUR') : 'NO PNG' + (png.why ? ': ' + png.why : '')));
     if (!okChart) process.exitCode = 1;
   }
 
