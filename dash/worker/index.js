@@ -35,6 +35,7 @@ import {
 import {
   rows as cogsRows, summary as cogsSummary, duplicates as cogsDuplicates,
   seasonOptions as cogsSeasons, csv as cogsCsv, lineId as cogsLineId,
+  yearsAround as cogsYearsAround,
   cleanSeasonKey, SEASONS as COGS_SEASONS, KINDS as COGS_KINDS,
   SHOWS as COGS_SHOWS,
 } from './cogs.js';
@@ -323,29 +324,38 @@ async function cogs(request, env, url, who) {
   if (!canBudget(env, who)) return json({ error: 'No such endpoint.' }, 404);
 
   const what = url.pathname.slice('/api/cogs'.length);
+  // Which year the three columns sit around. The sheet is mostly next
+  // year's buy, but a prior season being backfilled was paid for in years
+  // this one cannot reach, so the window moves.
+  const year = cleanYear(url.searchParams.get('year')) || FIRST_YEAR;
 
-  const sheet = async () => {
-    const rs = cogsRows(await readCogs(env.DB));
+  const sheet = async (on) => {
+    const rs = cogsRows(await readCogs(env.DB), on);
     return {
       lines: rs,
       seasons: cogsSeasons(rs),
       summary: cogsSummary(rs),
       duplicates: cogsDuplicates(rs),
+      year: on,
+      years: cogsYearsAround(on),
     };
   };
 
   if (what === '' && request.method === 'GET') {
-    const out = await sheet();
+    const out = await sheet(year);
     return json({
       you: who.email,
       kinds: COGS_KINDS, shows: COGS_SHOWS,
       planned: COGS_SEASONS.map((s) => s.key),
+      firstYear: FIRST_YEAR, baselineYear: BASELINE_YEAR,
       ...out,
     });
   }
 
   if (what === '.csv' && request.method === 'GET') {
-    const rs = cogsRows(await readCogs(env.DB));
+    const rs = cogsRows(await readCogs(env.DB), year);
+    // Every year on the sheet, not the three on screen: a download short of
+    // a column is a download that does not foot.
     return new Response(cogsCsv(rs), {
       headers: {
         'content-type': 'text/csv; charset=utf-8',
@@ -363,16 +373,17 @@ async function cogs(request, env, url, who) {
       if (!id) return json({ errors: ['That is not a line.'] }, 400);
       const out = await removeCogsLine(env.DB, id, Boolean(body.added), who.email);
       if (out.errors) return json(out, 400);
-      return json({ ok: true, ...(await sheet()) });
+      return json({ ok: true, ...(await sheet(year)) });
     }
 
     // A line added by hand keeps the id it was given, so editing one does
     // not leave a second copy behind under the old season.
     const id = String(body.id || '')
       || cogsLineId(cleanSeasonKey(body.season), String(body.kind || ''));
-    const out = await saveCogsLine(env.DB, id, body, who.email);
+    const out = await saveCogsLine(
+      env.DB, id, { budgetYear: year, ...body }, who.email);
     if (out.errors) return json(out, 400);
-    return json({ ok: true, id: out.id, ...(await sheet()) });
+    return json({ ok: true, id: out.id, ...(await sheet(year)) });
   }
 
   return json({ error: 'No such endpoint.' }, 404);

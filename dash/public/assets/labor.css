@@ -150,11 +150,30 @@
 
    Deliberately not .lb-t -- that one sets min-width:100% so seventeen
    columns can run off the side, which would undo the cap here. */
-.cg-wrap{max-width:880px}
+/* Three year columns and a total wider than the one figure it replaced. */
+.cg-wrap{max-width:1180px}
 .cg-t th,.cg-t td{padding:6px 10px}
 .cg-t th:first-child,.cg-t td:first-child{text-align:left;width:150px}
 .cg-t th:nth-child(2),.cg-t td:nth-child(2){width:120px}
 .cg-t .lb-sel{width:100%;max-width:none}
-.cg-t .cg-amt{width:118px;text-align:right}
+.cg-t .cg-amt{width:96px;text-align:right}
 .cg-t .bd-note{width:100%;min-width:150px}
 .cg-t .lb-foot td{background:var(--bd-row)}
+
+/* ── COGS: the year columns ──────────────────────────────────────────────
+   A season is mostly paid for in the year it drops, but a deposit goes down
+   the year before and an early shipment drags part of it into the year
+   after. The budget year is the one the budget reads, so it is the one the
+   eye should land on. */
+.cg-y{text-align:right}
+.cg-t td.cg-y.is-budget{background:color-mix(in srgb,var(--primary) 7%,transparent)}
+.cg-t th.cg-y.is-budget{background:color-mix(in srgb,var(--primary) 12%,transparent)}
+
+/* Money filed in a year these three columns cannot show. The total still
+   counts it -- the window narrows what is typed, never what is added up --
+   so the row says so rather than looking as though it does not foot. */
+.cg-out{position:relative}
+.cg-flag{
+  font-family:var(--mono);font-size:11px;vertical-align:super;margin-left:1px;
+  color:inherit;opacity:.85;
+}

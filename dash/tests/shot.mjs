@@ -16,6 +16,7 @@ import {
 import {
   rows as cogsRows, summary as cogsSummary, duplicates as cogsDuplicates,
   seasonOptions as cogsSeasons, KINDS as COGS_KINDS, SHOWS as COGS_SHOWS,
+  yearsAround as cogsYearsAround,
 } from '../worker/cogs.js';
 import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
@@ -299,18 +300,27 @@ const LABOR = (() => {
 // backfilled so the trend has something to be a trend against.
 const COGS = (() => {
   const saved = {
-    'sp27:bulk': { amount: 1240000 }, 'sp27:sms': { amount: 48500 },
-    'su27:bulk': { amount: 910000 },
-    'f27:bulk': { amount: 1380000 }, 'f27:sms': { amount: 52000 },
-    'starboard:bulk': { amount: 165000 },
+    // SP27 is bought across two years: the deposit went down in 2026 and
+    // the balance falls in the year it drops. SMS goes out ahead of the
+    // bulk, so it is paid for earlier still.
+    'sp27:bulk': { season: 'sp27', years: { 2026: 310000, 2027: 930000 } },
+    'sp27:sms': { season: 'sp27', years: { 2026: 48500 } },
+    'su27:bulk': { season: 'su27', years: { 2027: 910000 } },
+    'f27:bulk': { season: 'f27', years: { 2027: 1180000, 2028: 200000 } },
+    'f27:sms': { season: 'f27', years: { 2027: 52000 } },
+    'starboard:bulk': { season: 'starboard', years: { 2027: 165000 } },
+    // A prior season, paid for before the three columns on screen can
+    // reach -- so its total carries the mark that says so.
     'sp26:bulk': { added: true, season: 'sp26', kind: 'bulk',
-                   seasonLabel: 'SP26', amount: 1192000 },
+                   seasonLabel: 'SP26', years: { 2025: 240000, 2026: 952000 } },
     'sp26:sms': { added: true, season: 'sp26', kind: 'sms',
-                  seasonLabel: 'SP26', amount: 44800 },
+                  seasonLabel: 'SP26', years: { 2025: 44800 } },
   };
-  const rs = cogsRows(saved);
+  const rs = cogsRows(saved, FIRST_YEAR);
   return {
     you: 'jeremy@jettylife.com', kinds: COGS_KINDS, shows: COGS_SHOWS,
+    year: FIRST_YEAR, years: cogsYearsAround(FIRST_YEAR),
+    firstYear: FIRST_YEAR, baselineYear: FIRST_YEAR - 1,
     lines: rs, seasons: cogsSeasons(rs),
     summary: cogsSummary(rs), duplicates: cogsDuplicates(rs),
   };
@@ -333,7 +343,7 @@ for (const c of CASES) {
         ? route.fulfill({ status: 404, json: { error: 'No such endpoint.' } })
         : route.fulfill({ json: BUDGET });
     }
-    if (p === '/api/cogs') {
+    if (p === '/api/cogs' || p.startsWith('/api/cogs?')) {
       return c.noBudget
         ? route.fulfill({ status: 404, json: { error: 'No such endpoint.' } })
         : route.fulfill({ json: COGS });

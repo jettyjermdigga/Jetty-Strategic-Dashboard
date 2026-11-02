@@ -194,6 +194,15 @@ CREATE TABLE IF NOT EXISTS cogs (
   season        TEXT NOT NULL DEFAULT '',
   kind          TEXT NOT NULL DEFAULT '',
   season_label  TEXT NOT NULL DEFAULT '',
+  -- What the line costs, split by the year the money lands in, as JSON:
+  -- {"2026": 150000, "2027": 850000}. A season is mostly paid for in the
+  -- year it drops, but a deposit goes down the year before and an early
+  -- shipment drags part of it into the year after, so one figure could
+  -- never be filed anywhere honest.
+  years         TEXT NOT NULL DEFAULT '',
+  -- The sum of `years`, written on every save. Derived, and stored anyway:
+  -- the totals, the CSV and the budget all ask a line what it costs, and
+  -- none of them should have to parse JSON to find out.
   amount        REAL,
   note          TEXT NOT NULL DEFAULT '',
   added         INTEGER NOT NULL DEFAULT 0,

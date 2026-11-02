@@ -15,9 +15,11 @@ import { sqlStatements } from './sql.js';
 import { PICKS } from './music-seed.js';
 import { TILES, CATEGORIES, GROUPS, EVERYONE, CAT_MOVES, GROUP_MOVES, linkCats } from './tiles.js';
 import { cleanKey, cleanUrl, cleanTile, cleanPerson, cleanLink } from './clean.js';
-import { cleanLine } from './budget.js';
+import { cleanLine, FIRST_YEAR } from './budget.js';
 import { cleanPerson as cleanLaborPerson, cleanKey as cleanLaborKey } from './labor.js';
-import { cleanLine as cleanCogsLine, lineId as cogsLineId } from './cogs.js';
+import {
+  cleanLine as cleanCogsLine, lineId as cogsLineId, dropYear as cogsDropYear,
+} from './cogs.js';
 import { PEOPLE } from './people.js';
 
 // Re-exported so callers have one import for "the store", while the rules
@@ -56,6 +58,9 @@ const ADDED_COLUMNS = [
   // And before the department, hours and division could be set here rather
   // than only read off the roster.
   ['labor', 'ft TEXT NOT NULL DEFAULT \'\''],
+  // And the COGS table shipped with one figure per line, before anybody
+  // said that a season is paid for across more than one year.
+  ['cogs', 'years TEXT NOT NULL DEFAULT \'\''],
 ];
 
 export async function ensureSchema(db) {
@@ -77,6 +82,7 @@ export async function ensureSchema(db) {
   await backfillIcons(db);
   await seedMusic(db);
   await setPhotoKeys(db);
+  await splitCogsYears(db);
   await offerNewTiles(db);
   ready = true;
 }
@@ -91,6 +97,41 @@ export async function ensureSchema(db) {
 // seedMusic is a one-shot and already ran, so the keys need setting here
 // rather than there. Rows that have since been edited by hand keep whatever
 // key they hold; only empty ones are filled.
+const COGSYEARS_KEY = 'cogs-years-split';
+
+/**
+ * File every COGS figure typed before this sheet had year columns.
+ *
+ * There was one Total COGS per line, which in practice meant the year the
+ * season drops -- so that is where it goes. SP27 to 2027, F25 to 2025, read
+ * off the season's own name. Collab, Special Drops and Starboard carry no
+ * year and never will, so they take the first budget year.
+ *
+ * Done once, at boot, rather than guessed on every read: a fallback that
+ * moves with whichever year is on screen would quietly refile somebody's
+ * money every time they changed the picker.
+ */
+async function splitCogsYears(db) {
+  const done = await db.prepare('SELECT value FROM meta WHERE key = ?')
+    .bind(COGSYEARS_KEY).first();
+  if (done) return;
+
+  const res = await db.prepare(
+    "SELECT id, season, amount FROM cogs WHERE amount IS NOT NULL AND years = ''").all();
+  const rows = res.results || [];
+
+  if (rows.length) {
+    const put = db.prepare('UPDATE cogs SET years = ? WHERE id = ?');
+    await db.batch(rows.map((r) => {
+      const y = cogsDropYear(r.season, FIRST_YEAR);
+      return put.bind(JSON.stringify({ [String(y)]: r.amount }), r.id);
+    }));
+  }
+
+  await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+    .bind(COGSYEARS_KEY, String(rows.length), new Date().toISOString()).run();
+}
+
 async function setPhotoKeys(db) {
   const done = await db.prepare('SELECT value FROM meta WHERE key = ?')
     .bind(PHOTOKEY_KEY).first();
@@ -834,13 +875,20 @@ export async function removeLaborPerson(db, year, key, added, who) {
 /** Every decision made about a season, keyed by line id. */
 export async function readCogs(db) {
   const res = await db.prepare(
-    'SELECT id, season, kind, season_label, amount, note, added, removed, '
+    'SELECT id, season, kind, season_label, years, amount, note, added, removed, '
     + 'updated_at, updated_by FROM cogs').all();
   const out = {};
   for (const r of res.results || []) {
+    let years = {};
+    // Stored rather than typed, so a row that is not JSON is a bug here and
+    // not something somebody did. It must not take the whole sheet down
+    // with it: the amount is still on the row and the migration will file
+    // it again.
+    try { years = r.years ? JSON.parse(r.years) : {}; } catch (err) { years = {}; }
     out[r.id] = {
       season: r.season || '', kind: r.kind || '',
       seasonLabel: r.season_label || '',
+      years: (years && typeof years === 'object') ? years : {},
       amount: r.amount, note: r.note || '',
       added: Boolean(r.added), removed: Boolean(r.removed),
       at: r.updated_at, by: r.updated_by,
@@ -865,13 +913,15 @@ export async function saveCogsLine(db, id, input, who) {
   }
 
   await db.prepare(
-    'INSERT INTO cogs (id, season, kind, season_label, amount, note, added, removed, '
-    + 'updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?) '
+    'INSERT INTO cogs (id, season, kind, season_label, years, amount, note, added, removed, '
+    + 'updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) '
     + 'ON CONFLICT(id) DO UPDATE SET season = excluded.season, kind = excluded.kind, '
-    + 'season_label = excluded.season_label, amount = excluded.amount, '
+    + 'season_label = excluded.season_label, years = excluded.years, '
+    + 'amount = excluded.amount, '
     + 'note = excluded.note, added = excluded.added, '
     + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
-    .bind(at, r.season, r.kind, r.seasonLabel, r.amount, r.note, r.added ? 1 : 0,
+    .bind(at, r.season, r.kind, r.seasonLabel, JSON.stringify(r.years || {}),
+          r.amount, r.note, r.added ? 1 : 0,
           new Date().toISOString(), who || '').run();
   return { ok: true, id: at };
 }

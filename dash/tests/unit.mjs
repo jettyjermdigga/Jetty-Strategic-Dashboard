@@ -29,7 +29,8 @@ import {
   seasonOptions as cogsSeasons, matches as cogsMatches, cleanLine as cogsClean,
   csv as cogsCsv, lineId as cogsLineId, cleanSeasonKey,
   SEASONS as COGS_SEASONS, KINDS as COGS_KINDS, SEED as COGS_SEED,
-  SHOWS as COGS_SHOWS,
+  SHOWS as COGS_SHOWS, yearsAround as cogsYearsAround, dropYear as cogsDropYear,
+  yearTotal as cogsYearTotal, cleanYears as cogsCleanYears, yearsOf as cogsYearsOf,
 } from '../worker/cogs.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1896,7 +1897,7 @@ describe('the COGS sheet', () => {
   // blank rather than a zero somebody might read as a decision.
   it('opens with no money in it at all', () => {
     for (const r of cogsRows({})) eq(r.amount, null, r.id + ' arrived costed');
-    ok(!/\b\d{4,}\b/.test(rd('worker/cogs.js').replace(/20\d\d/g, '')),
+    ok(!/\b\d{4,}\b/.test(rd('worker/cogs.js').replace(/\b2\d{3}\b/g, '')),
        'there is a figure in the module');
   });
 
@@ -2036,6 +2037,143 @@ describe('the COGS sheet', () => {
     ok(/DELETE FROM cogs WHERE id = \? AND added = 1/.test(fn),
        'a backfilled line is not deleted outright');
     ok(/removed = 1/.test(fn), 'a seeded line is deleted and will come back');
+  });
+});
+
+// ── what a season costs, and when it is paid for ───────────────────────
+//
+// A season is mostly paid for in the year it drops. Mostly: a deposit goes
+// down the year before and an early shipment drags part of it into the year
+// after, which one figure per line could never say.
+
+describe('the COGS years', () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const rd = (f) => fs.readFileSync(path.join(here, '..', f), 'utf8');
+
+  it('opens three columns around the year being budgeted', () => {
+    eq(cogsYearsAround(2027), ['2026', '2027', '2028']);
+    eq(cogsYearsAround(2025), ['2024', '2025', '2026']);
+  });
+
+  it('reads the drop year off the season name', () => {
+    eq(cogsDropYear('sp27'), 2027);
+    eq(cogsDropYear('f25'), 2025);
+    eq(cogsDropYear('holiday-2027'), 2027);
+  });
+
+  it('falls back for the three seasons that carry no year and never will', () => {
+    for (const k of ['collab', 'special-drops', 'starboard']) {
+      eq(cogsDropYear(k, 2027), 2027, k + ' invented a year');
+    }
+    eq(cogsDropYear('collab'), null);
+  });
+
+  it('adds a line up across every year it is filed under', () => {
+    eq(cogsYearTotal({ 2026: 150000, 2027: 850000 }), 1000000);
+    eq(cogsYearTotal({}), 0);
+    eq(cogsYearTotal(null), 0);
+  });
+
+  it('takes the years as typed, commas and all', () => {
+    const errs = [];
+    eq(cogsCleanYears({ 2026: '150,000', 2027: 850000 }, errs), { 2026: 150000, 2027: 850000 });
+    eq(errs, []);
+  });
+
+  // The rule the whole sheet is built on: nobody has said yet is not the
+  // same as nothing.
+  it('drops a blank year rather than storing it as a zero', () => {
+    const errs = [];
+    eq(cogsCleanYears({ 2026: '', 2027: 100 }, errs), { 2027: 100 });
+    eq(errs, []);
+  });
+
+  it('refuses a year that is not one, and a cost that is not one', () => {
+    const a = [];
+    cogsCleanYears({ nope: 100 }, a);
+    ok(a.length, 'a key that is not a year got through');
+    const b = [];
+    cogsCleanYears({ 2027: 'lots' }, b);
+    ok(b.length, 'a cost that is not a number got through');
+    const c = [];
+    cogsCleanYears({ 1999: 100 }, c);
+    ok(c.length, '1999 got through');
+    const d = [];
+    cogsCleanYears({ 2027: -5 }, d);
+    ok(d.length, 'a negative cost got through');
+  });
+
+  // The sheet shipped with one Total COGS per line. A figure typed then
+  // belongs to the year the season dropped, and must not be lost or
+  // double counted now that there are columns.
+  it('files a figure typed before there were year columns', () => {
+    eq(cogsYearsOf({ season: 'sp27', amount: 1240000 }, 2027), { 2027: 1240000 });
+    eq(cogsYearsOf({ season: 'f25', amount: 500 }, 2027), { 2025: 500 });
+    eq(cogsYearsOf({ season: 'collab', amount: 900 }, 2027), { 2027: 900 });
+  });
+
+  it('prefers the years to the old figure wherever both are there', () => {
+    eq(cogsYearsOf({ season: 'sp27', amount: 999, years: { 2026: 10 } }, 2027), { 2026: 10 });
+  });
+
+  it('carries the years onto the sheet and totals them', () => {
+    const rs = cogsRows({
+      'sp27:bulk': { season: 'sp27', kind: 'bulk', years: { 2026: 150000, 2027: 850000 } },
+      'f27:sms': { season: 'f27', kind: 'sms', amount: 42000 },
+    }, 2027);
+    const bulk = rs.find((r) => r.id === 'sp27:bulk');
+    eq(bulk.years, { 2026: 150000, 2027: 850000 });
+    eq(bulk.amount, 1000000);
+    eq(rs.find((r) => r.id === 'f27:sms').years, { 2027: 42000 });
+    ok(rs.filter((r) => r.amount == null).length > 10, 'lines arrived costed');
+  });
+
+  it('counts every year anything is filed under, not the three on screen', () => {
+    const rs = cogsRows({
+      'sp27:bulk': { season: 'sp27', kind: 'bulk', years: { 2024: 1000, 2027: 9000 } },
+    }, 2027);
+    const sum = cogsSummary(rs);
+    // 2024 is three columns away from the window and is still in the total.
+    eq(sum.byYear, { 2024: 1000, 2027: 9000 });
+    eq(sum.total, 10000);
+  });
+
+  it('saves the years and works the total out rather than taking one', () => {
+    const { row } = cogsClean({ season: 'sp27', kind: 'bulk',
+                                years: { 2026: '150,000', 2027: 850000 } });
+    eq(row.years, { 2026: 150000, 2027: 850000 });
+    eq(row.amount, 1000000);
+    ok(!row.clear, 'a costed line said it was empty');
+  });
+
+  it('still understands a line sent the old single figure', () => {
+    const { row } = cogsClean({ season: 'f27', kind: 'bulk', amount: '42000' });
+    eq(row.years, { 2027: 42000 });
+    eq(row.amount, 42000);
+  });
+
+  it('clears a seeded line whose last year was emptied', () => {
+    const { row } = cogsClean({ season: 'sp27', kind: 'bulk', years: {} });
+    eq(row.amount, null);
+    ok(row.clear, 'an emptied line would have been left behind');
+  });
+
+  it('puts every year it holds on the download', () => {
+    const rs = cogsRows({
+      'sp27:bulk': { season: 'sp27', kind: 'bulk', years: { 2026: 150000, 2027: 850000 } },
+    }, 2027);
+    const lines = cogsCsv(rs).split('\n');
+    eq(lines[0], 'Season,Bulk or SMS,2026,2027,Total COGS,Note');
+    eq(lines[1], 'SP27,Bulk,150000,850000,1000000,');
+  });
+
+  it('files a figure typed before the columns, once, at boot', () => {
+    const fn = rd('worker/store.js');
+    ok(/splitCogsYears/.test(fn), 'the migration is gone');
+    ok(/cogs-years-split/.test(fn), 'it has no key, so it would run every boot');
+    ok(/years = ''/.test(fn), 'it would refile a line that already has years');
+    ok(/\['cogs', 'years TEXT/.test(fn),
+       'the live table would never get the column');
   });
 });
 

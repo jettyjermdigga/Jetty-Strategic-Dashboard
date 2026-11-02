@@ -12,6 +12,14 @@
 // out ahead of it. Fourteen lines for 2027, and whatever prior seasons get
 // added behind them.
 //
+// A row's cost is split by the YEAR THE MONEY LANDS IN, not by the year the
+// season drops. Mostly those are the same year; a deposit goes down the one
+// before and an early shipment drags part of it into the one after, and the
+// budget needs what falls in its own year rather than what a season cost in
+// total. Three columns around the year being budgeted, and a total that
+// counts every year stored -- so narrowing the window never hides money,
+// and a line with some outside it says so.
+//
 // Pure, and in its own file, because index.js imports schema.sql through a
 // wrangler rule and cannot be loaded in Node.
 
@@ -56,6 +64,47 @@ export const SEED = SEASONS.flatMap(
   (s) => KINDS.map((k) => ({ season: s.key, kind: k.key })),
 );
 
+/**
+ * The years a season's money can land in, around the year being budgeted.
+ *
+ * A season is mostly paid for in the year it drops. Mostly: a deposit goes
+ * down the year before, and an early shipment or a late settlement drags
+ * part of it into the year after. So three columns, not one -- and a season
+ * paid across more than three years is not a season, it is a problem, and
+ * it still adds up correctly because the total counts every year stored
+ * rather than only the three on screen.
+ */
+export const YEAR_REACH = 1;
+
+export function yearsAround(budgetYear) {
+  const y = Number(budgetYear);
+  const out = [];
+  for (let i = -YEAR_REACH; i <= YEAR_REACH; i += 1) out.push(String(y + i));
+  return out;
+}
+
+/**
+ * The year a season drops, read off its own name.
+ *
+ * SP27 drops in 2027 and F25 dropped in 2025, which is enough to file a
+ * figure typed before this sheet had year columns. Collab, Special Drops
+ * and Starboard carry no year in their names and never will, so they take
+ * the fallback.
+ */
+export function dropYear(season, fallback) {
+  const m = /(\d{2})$/.exec(String(season || ''));
+  return m ? 2000 + Number(m[1]) : (fallback == null ? null : Number(fallback));
+}
+
+export function yearTotal(years) {
+  let n = 0;
+  for (const k of Object.keys(years || {})) {
+    const v = Number(years[k]);
+    if (Number.isFinite(v)) n += v;
+  }
+  return Math.round(n * 100) / 100;
+}
+
 const seasonOf = (k) => SEASONS.find((s) => s.key === k) || null;
 const kindOf = (k) => KINDS.find((x) => x.key === k) || null;
 
@@ -94,6 +143,49 @@ export function num(v) {
 }
 
 /**
+ * The per-year figures as somebody types them.
+ *
+ * A blank year is dropped rather than stored as zero, the same rule the
+ * single figure always had: nobody has said yet is not the same as nothing.
+ */
+export function cleanYears(input, errors) {
+  const out = {};
+  const src = (input && typeof input === 'object') ? input : {};
+  for (const k of Object.keys(src)) {
+    if (!/^\d{4}$/.test(k)) { errors.push('"' + String(k).slice(0, 10) + '" is not a year.'); continue; }
+    const y = Number(k);
+    if (y < 2015 || y > 2100) { errors.push(k + ' is not a year this plans for.'); continue; }
+    const v = num(src[k]);
+    if (v === undefined) {
+      errors.push('"' + String(src[k]).slice(0, 20) + '" is not a number.');
+      continue;
+    }
+    if (v == null) continue;
+    if (v < 0) { errors.push('A cost cannot be negative.'); continue; }
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * What a stored line's years are, including one stored before there were
+ * any.
+ *
+ * A figure typed when the sheet had a single Total COGS column belongs to
+ * the year the season dropped. Migrated once at boot rather than guessed
+ * here on every read -- this is the safety net for a row the migration has
+ * not reached.
+ */
+export function yearsOf(d, fallbackYear) {
+  if (d && d.years && Object.keys(d.years).length) return { ...d.years };
+  if (d && d.amount != null) {
+    const y = dropYear(d.season, fallbackYear);
+    if (y != null) return { [String(y)]: d.amount };
+  }
+  return {};
+}
+
+/**
  * The sheet: the seeded lines plus anything added, minus anything struck
  * off.
  *
@@ -101,10 +193,19 @@ export function num(v) {
  * would otherwise put it back, which is the bug this codebase has now had
  * six times.
  */
-export function rows(saved) {
+export function rows(saved, budgetYear) {
   const s = saved || {};
   const out = [];
   const seen = new Set();
+
+  // `amount` is no longer typed anywhere. It is the sum of the years, kept
+  // because the totals, the CSV and the budget all ask a line what it costs
+  // and none of them should have to add it up themselves.
+  const shape = (d, season) => {
+    const years = yearsOf(d && { ...d, season }, budgetYear);
+    const any = Object.keys(years).length > 0;
+    return { years, amount: any ? yearTotal(years) : null };
+  };
 
   for (const line of SEED) {
     const id = lineId(line.season, line.kind);
@@ -117,7 +218,7 @@ export function rows(saved) {
       kind: line.kind,
       seasonLabel: (seasonOf(line.season) || {}).label || line.season,
       added: false,
-      amount: d && d.amount != null ? d.amount : null,
+      ...shape(d, line.season),
       note: (d && d.note) || '',
     });
   }
@@ -132,7 +233,7 @@ export function rows(saved) {
       kind: d.kind || '',
       seasonLabel: (seasonOf(d.season) || {}).label || d.seasonLabel || d.season || '',
       added: true,
-      amount: d.amount == null ? null : d.amount,
+      ...shape(d, d.season || ''),
       note: d.note || '',
     });
   }
@@ -169,10 +270,16 @@ export function summary(rs) {
   const byKind = {};
   for (const k of KINDS) byKind[k.key] = { cost: 0, lines: 0, decided: 0 };
   const bySeason = {};
+  // Every year anything has been filed under, not only the three on screen.
+  // A column somebody scrolled away from is still money.
+  const byYear = {};
   let total = 0;
   let decided = 0;
 
   for (const r of rs || []) {
+    for (const y of Object.keys(r.years || {})) {
+      byYear[y] = Math.round((((byYear[y] || 0) + Number(r.years[y] || 0))) * 100) / 100;
+    }
     const k = byKind[r.kind] || (byKind[r.kind] = { cost: 0, lines: 0, decided: 0 });
     k.lines += 1;
     if (!bySeason[r.season]) {
@@ -188,7 +295,7 @@ export function summary(rs) {
       decided += 1;
     }
   }
-  return { byKind, bySeason, total, decided, lines: (rs || []).length };
+  return { byKind, bySeason, byYear, total, decided, lines: (rs || []).length };
 }
 
 /**
@@ -264,12 +371,24 @@ export function cleanLine(input, existing) {
   if (!kind) errors.push('Bulk or SMS?');
   else if (!kindOf(kind)) errors.push('No such kind of buy: ' + kind);
 
-  const amount = num(input ? input.amount : null);
-  if (amount === undefined) {
-    errors.push('"' + String(input.amount).slice(0, 20) + '" is not a number.');
-  } else if (amount != null && amount < 0) {
-    errors.push('A cost cannot be negative.');
+  // The figures, one per year. A line sent the old single `amount` -- an
+  // old tab still open, a script written against the first version -- is
+  // still understood, and files it under the year the season drops.
+  const years = cleanYears(
+    input && input.years != null ? input.years : null, errors);
+  if (!(input && input.years != null)) {
+    const one = num(input ? input.amount : null);
+    if (one === undefined) {
+      errors.push('"' + String(input.amount).slice(0, 20) + '" is not a number.');
+    } else if (one != null && one < 0) {
+      errors.push('A cost cannot be negative.');
+    } else if (one != null) {
+      const y = dropYear(season, input && input.budgetYear);
+      if (y != null) years[String(y)] = one;
+    }
   }
+  const any = Object.keys(years).length > 0;
+  const amount = any ? yearTotal(years) : null;
 
   // Only on an added line, and only to show in a dropdown: a season's own
   // list entry is what names it everywhere else.
@@ -282,9 +401,10 @@ export function cleanLine(input, existing) {
       season,
       kind,
       seasonLabel: added ? (seasonLabel || season.toUpperCase()) : '',
+      years,
       amount,
       note: text(input && input.note, 300),
-      clear: !added && amount == null && !text(input && input.note, 300),
+      clear: !added && !any && !text(input && input.note, 300),
     },
   };
 }
@@ -296,13 +416,22 @@ const cell = (v) => {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
 
-export function csv(rs) {
-  const head = ['Season', 'Bulk or SMS', 'Total COGS', 'Note'];
+export function csv(rs, years) {
+  // Every year anything is filed under, so a download cannot be short of a
+  // column that somebody's money is sitting in.
+  const cols = years && years.length ? years.slice() : (() => {
+    const have = new Set();
+    for (const r of rs || []) for (const y of Object.keys(r.years || {})) have.add(y);
+    return [...have].sort();
+  })();
+
+  const head = ['Season', 'Bulk or SMS', ...cols, 'Total COGS', 'Note'];
   const out = [head.map(cell).join(',')];
   for (const r of rs || []) {
     out.push([
       r.seasonLabel || r.season,
       (kindOf(r.kind) || { label: '' }).label,
+      ...cols.map((y) => ((r.years || {})[y] == null ? '' : r.years[y])),
       r.amount == null ? '' : r.amount,
       r.note,
     ].map(cell).join(','));

@@ -18,7 +18,7 @@
   var D = null;
   // Every way the sheet is narrowed, in one place. Empty means that field
   // asks nothing, which is why an untouched bar shows everything.
-  var f = { q: '', season: '', kind: '', show: 'all' };
+  var f = { q: '', season: '', kind: '', show: 'all', year: 0 };
   var saving = 0;
   var timers = {};
 
@@ -82,16 +82,35 @@
     });
   }
 
+  // What a line holds in years the three columns cannot show. Nothing is
+  // ever hidden by the window: the total counts every year, and a line with
+  // money off-screen says so rather than looking like it does not add up.
+  function outside(r) {
+    var on = {};
+    (D.years || []).forEach(function (y) { on[y] = true; });
+    var n = 0;
+    Object.keys(r.years || {}).forEach(function (y) {
+      if (!on[y]) n += Number(r.years[y]) || 0;
+    });
+    return n;
+  }
+
   var filtered = function () {
     return Boolean(f.q || f.season || f.kind || (f.show && f.show !== 'all'));
   };
 
   // ── Drawing ───────────────────────────────────────────────────────────
 
-  var COLS = 5;
+  // Season, kind, three years, the total, the note and the ×.
+  function cols() { return 5 + ((D && D.years) || []).length; }
 
   function head() {
-    return '<tr><th>Season</th><th>Bulk or SMS</th><th class="lb-tot">Total COGS</th>'
+    return '<tr><th>Season</th><th>Bulk or SMS</th>'
+      + (D.years || []).map(function (y) {
+        return '<th class="cg-y' + (Number(y) === D.year ? ' is-budget' : '') + '">'
+          + esc(y) + '</th>';
+      }).join('')
+      + '<th class="lb-tot">Total COGS</th>'
       + '<th>Note</th><th></th></tr>';
   }
 
@@ -119,12 +138,23 @@
     return '<tr data-id="' + esc(r.id) + '"' + (r.added ? ' class="lb-new"' : '') + '>'
       + seasonCell(r)
       + kindCell(r)
-      + '<td><input class="bd-in lb-in cg-amt' + (r.amount != null ? ' set' : '')
-        + '" data-f="amount" inputmode="numeric"'
-        + ' aria-label="Total COGS for ' + esc(r.seasonLabel || r.season) + ' '
-        + esc(r.kind) + '"'
-        + ' value="' + (r.amount == null ? '' : comma(r.amount)) + '"'
-        + ' placeholder="—"></td>'
+      + (D.years || []).map(function (y) {
+        var v = (r.years || {})[y];
+        return '<td class="cg-y' + (Number(y) === D.year ? ' is-budget' : '') + '">'
+          + '<input class="bd-in lb-in cg-amt' + (v != null ? ' set' : '')
+          + '" data-f="year" data-y="' + esc(y) + '" inputmode="numeric"'
+          + ' aria-label="' + esc(y) + ' cost for ' + esc(r.seasonLabel || r.season) + ' '
+          + esc(r.kind) + '"'
+          + ' value="' + (v == null ? '' : comma(v)) + '"'
+          + ' placeholder="—"></td>';
+      }).join('')
+      // Derived, so it is read rather than typed. Typing into a total whose
+      // parts are beside it is how two of them end up disagreeing.
+      + '<td class="bd-n lb-tot' + (outside(r) ? ' cg-out' : '') + '"'
+      + (outside(r) ? ' title="' + esc(money(outside(r))) + ' of this sits in a year'
+         + ' outside these three columns. Change the year above to see it."' : '')
+      + '>' + (r.amount == null ? '<span class="lb-none">—</span>' : money(r.amount))
+      + (outside(r) ? '<span class="cg-flag">+</span>' : '') + '</td>'
       + '<td><input class="bd-note" data-f="note" value="' + esc(r.note) + '"'
         + ' aria-label="Note" placeholder="what is in it / who is making it"></td>'
       + '<td><button class="lb-x" type="button" title="Take off the sheet"'
@@ -137,9 +167,21 @@
   // for.
   function footRow(list) {
     var total = list.reduce(function (a, r) { return a + (r.amount || 0); }, 0);
+    var off = list.reduce(function (a, r) { return a + outside(r); }, 0);
     return '<tr class="lb-foot"><td colspan="2">' + list.length
       + (list.length === 1 ? ' line' : ' lines') + (filtered() ? ' shown' : '')
-      + '</td><td class="bd-n lb-tot">' + money(total) + '</td>'
+      + '</td>'
+      + (D.years || []).map(function (y) {
+        var n = list.reduce(function (a, r) {
+          return a + (Number((r.years || {})[y]) || 0);
+        }, 0);
+        return '<td class="bd-n cg-y' + (Number(y) === D.year ? ' is-budget' : '') + '">'
+          + (n ? money(n) : '') + '</td>';
+      }).join('')
+      + '<td class="bd-n lb-tot' + (off ? ' cg-out' : '') + '"'
+      + (off ? ' title="' + esc(money(off)) + ' of this sits in years outside'
+         + ' these three columns."' : '')
+      + '>' + money(total) + (off ? '<span class="cg-flag">+</span>' : '') + '</td>'
       + '<td colspan="2"></td></tr>';
   }
 
@@ -147,7 +189,7 @@
     var list = shown();
     var body = list.length
       ? list.map(row).join('') + footRow(list)
-      : '<tr><td colspan="' + COLS + '" class="pane-empty">Nothing matches that.</td></tr>';
+      : '<tr><td colspan="' + cols() + '" class="pane-empty">Nothing matches that.</td></tr>';
     $('#t').innerHTML = '<thead>' + head() + '</thead><tbody>' + body + '</tbody>';
     $('#wrap').hidden = false;
     renderBar();
@@ -164,6 +206,18 @@
   }
 
   function renderBar() {
+    var yr = $('#fYear');
+    if (yr) {
+      // Wide enough to backfill a season from a few years ago and to carry
+      // a deposit for one a few years out. The columns are whichever three
+      // sit around the pick.
+      var opts = [];
+      for (var y = (D.baselineYear || 2026) - 4; y <= (D.firstYear || 2027) + 4; y++) {
+        opts.push('<option value="' + y + '"' + (y === D.year ? ' selected' : '')
+          + '>' + y + '</option>');
+      }
+      yr.innerHTML = opts.join('');
+    }
     fill($('#fSeason'), D.seasons || [], f.season, 'Any season');
     fill($('#fKind'), D.kinds || [], f.kind, 'Bulk and SMS');
     fill($('#filter'), (D.shows || []).filter(function (x) { return x.key !== 'all'; }),
@@ -209,6 +263,17 @@
 
   // ── Saving ────────────────────────────────────────────────────────────
 
+  // The row's own total, redrawn without redrawing the row -- which would
+  // take the cursor out of the cell being typed in.
+  function paint(tr, r) {
+    var cell = tr.querySelector('.lb-tot');
+    if (!cell) return;
+    var off = outside(r);
+    cell.innerHTML = (r.amount == null ? '<span class="lb-none">—</span>' : money(r.amount))
+      + (off ? '<span class="cg-flag">+</span>' : '');
+    cell.classList.toggle('cg-out', Boolean(off));
+  }
+
   function line(id) {
     return D.lines.filter(function (r) { return r.id === id; })[0];
   }
@@ -250,20 +315,35 @@
   }
 
   function save(r, redraw) {
-    send('/api/cogs/line', {
+    send('/api/cogs/line?year=' + encodeURIComponent(f.year), {
       id: r.id, added: r.added, season: r.season, kind: r.kind,
-      seasonLabel: r.seasonLabel, amount: r.amount, note: r.note,
+      seasonLabel: r.seasonLabel, years: r.years || {}, note: r.note,
     }, redraw ? function () { render(); } : null);
   }
 
   // ── Wiring ────────────────────────────────────────────────────────────
 
-  function readNum(input, r) {
+  function total(r) {
+    var n = 0;
+    var any = false;
+    Object.keys(r.years || {}).forEach(function (y) {
+      var v = Number(r.years[y]);
+      if (isFinite(v)) { n += v; any = true; }
+    });
+    return any ? Math.round(n * 100) / 100 : null;
+  }
+
+  // One year's cell. A cleared box deletes that year rather than storing a
+  // zero -- nobody has said yet is not the same as nothing, which is the
+  // rule the whole sheet is built on.
+  function readYear(input, r, y) {
     var raw = input.value.replace(/[,$\s]/g, '');
-    if (raw === '') r.amount = null;
-    else if (/^-?\d+(\.\d+)?$/.test(raw)) r.amount = Number(raw);
+    r.years = r.years || {};
+    if (raw === '') delete r.years[y];
+    else if (/^-?\d+(\.\d+)?$/.test(raw)) r.years[y] = Number(raw);
     else return false;
-    input.classList.toggle('set', r.amount != null);
+    r.amount = total(r);
+    input.classList.toggle('set', r.years[y] != null);
     return true;
   }
 
@@ -276,7 +356,11 @@
       var r = line(tr.dataset.id);
       if (!r) return;
       var fld = e.target.dataset.f;
-      if (fld === 'amount') { readNum(e.target, r); }
+      if (fld === 'year') {
+        // The total is beside the cell being typed in, so it has to keep up
+        // with the keystrokes rather than wait for the save to come back.
+        if (readYear(e.target, r, e.target.dataset.y)) paint(tr, r);
+      }
       if (fld === 'note') {
         r.note = e.target.value;
         clearTimeout(timers[r.id]);
@@ -304,9 +388,11 @@
         save(r, true);
         return;
       }
-      if (fld === 'amount') {
-        if (!readNum(e.target, r)) return;
-        e.target.value = r.amount == null ? '' : comma(r.amount);
+      if (fld === 'year') {
+        if (!readYear(e.target, r, e.target.dataset.y)) return;
+        var v = (r.years || {})[e.target.dataset.y];
+        e.target.value = v == null ? '' : comma(v);
+        paint(tr, r);
         save(r);
       }
     });
@@ -336,8 +422,14 @@
       narrow('show', e.target.value || 'all');
     });
     $('#q').addEventListener('input', function (e) { narrow('q', e.target.value); });
+    $('#fYear').addEventListener('change', function (e) {
+      f.year = Number(e.target.value) || f.year;
+      try { localStorage.setItem('jetty-cogs-year', String(f.year)); }
+      catch (err) { /* private mode */ }
+      load();
+    });
     $('#clr').addEventListener('click', function () {
-      f = { q: '', season: '', kind: '', show: 'all' };
+      f = { q: '', season: '', kind: '', show: 'all', year: f.year };
       $('#q').value = '';
       render();
       $('#q').focus();
@@ -366,14 +458,26 @@
     });
   }
 
-  api('/api/cogs')
-    .then(function (data) {
-      D = data;
-      D.lines = data.lines || [];
-      $('#bar').hidden = false;
-      bind();
-      render();
-    })
+  function load() {
+    return api('/api/cogs' + (f.year ? '?year=' + encodeURIComponent(f.year) : ''))
+      .then(function (data) {
+        D = data;
+        D.lines = data.lines || [];
+        f.year = D.year;
+        $('#dl').href = '/api/cogs.csv?year=' + encodeURIComponent(f.year);
+        $('#bar').hidden = false;
+        $('#notice').innerHTML = '';
+        render();
+      });
+  }
+
+  try {
+    var kept = Number(localStorage.getItem('jetty-cogs-year'));
+    if (kept >= 2015 && kept <= 2100) f.year = kept;
+  } catch (err) { /* private mode */ }
+
+  load()
+    .then(function () { bind(); })
     .catch(function (err) {
       $('#sub').textContent = 'Not open to you';
       say(/Unknown endpoint|No such endpoint|404/.test(err.message)
