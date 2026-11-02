@@ -772,13 +772,12 @@ for (const c of CASES) {
       .map((t) => t.replace(/[\d.,$]/g, '')));
     const oneUnit = units.size <= 1;
 
-    // Colour follows the kind, never the column's position. Checked by
-    // reading every two-part stack against the tokens themselves: an
-    // earlier version compared one column's fill before and after a
-    // filter, which column 0 satisfies whichever way the hue is picked.
+    // Colour follows the kind, never the chart's position. Every column in
+    // the Bulk panel is the bulk hue and every column in the SMS panel is
+    // the sms hue -- read off the tokens themselves rather than compared
+    // across a filter, which column 0 satisfies whichever way it is picked.
     const hues = await page.evaluate(() => {
-      const root = document.querySelector('.cg-chart');
-      const cs = getComputedStyle(root);
+      const cs = getComputedStyle(document.querySelector('.cg-chart'));
       const paint = (v) => {
         const d = document.createElement('div');
         d.style.color = v;
@@ -787,24 +786,49 @@ for (const c of CASES) {
         d.remove();
         return out;
       };
-      const bulk = paint(cs.getPropertyValue('--s-bulk').trim());
-      const sms = paint(cs.getPropertyValue('--s-sms').trim());
-      const segs = [...document.querySelectorAll('.cg-svg .seg')]
-        .map((p) => ({ fill: paint(getComputedStyle(p).fill),
-                       y: p.getBoundingClientRect().top,
-                       x: Math.round(p.getBoundingClientRect().left) }));
-      const by = {};
-      segs.forEach((g) => { (by[g.x] = by[g.x] || []).push(g); });
-      // Bulk sits at the bottom of every stack, samples on top.
-      return Object.keys(by).filter((x) => by[x].length === 2).map((x) => {
-        const pair = by[x].slice().sort((a, b) => a.y - b.y);
-        return pair[1].fill === bulk && pair[0].fill === sms;
+      const want = { Bulk: paint(cs.getPropertyValue('--s-bulk').trim()),
+                     SMS: paint(cs.getPropertyValue('--s-sms').trim()) };
+      return [...document.querySelectorAll('.cg-panel')].map((panel) => {
+        const name = panel.querySelector('.cg-ptitle').textContent.trim();
+        const segs = [...panel.querySelectorAll('.seg')];
+        return Boolean(want[name]) && segs.length > 0
+          && segs.every((p) => paint(getComputedStyle(p).fill) === want[name]);
       });
     });
+
+    // Two charts, two scales -- so each has to say so, or somebody reads a
+    // $100K column against a $1.5M one and thinks they are the same size.
+    const owned = await page.evaluate(() =>
+      [...document.querySelectorAll('.cg-panel')].length === 2
+      && [...document.querySelectorAll('.cg-psub')]
+        .every((el) => /own scale/.test(el.textContent)));
+
+    // Each chart scaled to ITS OWN data, which is the whole reason the two
+    // were split apart. Sharing the season total as the scale puts the SMS
+    // bars back to the sliver they were -- a change that leaves every other
+    // check here passing, so it is measured: the tallest bar in each panel
+    // has to use a real share of its plot.
+    const filled = await page.evaluate(() =>
+      [...document.querySelectorAll('.cg-panel')].map((panel) => {
+        const svg = panel.querySelector('.cg-svg');
+        if (!svg) return true;
+        const segs = [...panel.querySelectorAll('.seg')];
+        if (!segs.length) return false;
+        const plot = svg.getBoundingClientRect().height;
+        const tall = Math.max(...segs.map((p) => p.getBoundingClientRect().height));
+        return tall / plot > 0.4;
+      }));
+    const ownScale = filled.length === 2 && filled.every(Boolean);
+
+    // One series per chart, so neither carries a legend box.
+    const noLegend = (await page.locator('.cg-leg').count()) === 0;
 
     await page.selectOption('#fKind', 'sms');
     await page.waitForTimeout(120);
     const smsCaps = await caps();
+    // Narrowing to one kind leaves one chart, taking the width -- not a
+    // half-empty card beside an empty one.
+    const onePanel = (await page.locator('.cg-panel').count()) === 1;
     await page.selectOption('#fKind', '');
     await page.waitForTimeout(120);
 
@@ -819,12 +843,24 @@ for (const c of CASES) {
     await page.locator('.cg-svg .hit').first().focus();
     await page.waitForSelector('#cgTip:not([hidden])');
     const tip = await page.locator('#cgTip').textContent();
+    // The headline is THIS chart's series, not the season's whole cost --
+    // which sits underneath it, and on a column carrying both kinds the
+    // two must not be the same number.
+    const tipParts = await page.evaluate(() => {
+      const el = document.querySelector('#cgTip');
+      const lead = el.querySelector('b');
+      const under = /of (\$[\d,]+) for the season/.exec(el.textContent);
+      return { lead: lead ? lead.textContent : '', season: under ? under[1] : '' };
+    });
+    const seriesNotTotal = Boolean(tipParts.lead) && Boolean(tipParts.season)
+      && tipParts.lead !== tipParts.season;
 
     const filters = smsCaps.length > 0 && smsCaps.join() !== allCaps.join();
     const years = yearCats.length > 0 && yearCats.every((y) => /^\d{4}$/.test(y));
     const keptHue = hues.length > 0 && hues.every(Boolean);
-    const split = /Bulk|SMS/.test(tip);
-    const okChart = inside && oneUnit && filters && years && keptHue && split;
+    const split = /Bulk|SMS/.test(tip) && /for the season/.test(tip);
+    const okChart = inside && oneUnit && filters && years && keptHue && split
+      && owned && noLegend && ownScale && onePanel && seriesNotTotal;
 
     console.log('  chart: ' + allCaps.length + ' columns'
       + ', ' + (inside ? 'inside the plot' : 'OVERFLOWS THE PLOT')
@@ -832,6 +868,12 @@ for (const c of CASES) {
       + ', ' + (filters ? 'follows the filter' : 'IGNORES THE FILTER')
       + ', ' + (years ? 'by year works' : 'BY YEAR BROKEN')
       + ', ' + (keptHue ? 'hue follows the kind' : 'HUE NOT KEYED TO THE KIND')
+      + ', ' + (owned ? 'two charts, scales declared' : 'SCALES NOT DECLARED')
+      + ', ' + (ownScale ? 'each scaled to its own data' : 'A CHART IS ON THE WRONG SCALE')
+      + ', ' + (onePanel ? 'one kind, one chart' : 'EMPTY CHART LEFT BESIDE IT')
+      + ', ' + (seriesNotTotal ? 'tooltip leads with the series'
+        : 'TOOLTIP LEADS WITH THE SEASON TOTAL')
+      + ', ' + (noLegend ? 'no legend on a single series' : 'LEGEND ON A SINGLE SERIES')
       + ', ' + (split ? 'tooltip on focus' : 'NO TOOLTIP ON FOCUS'));
     if (!okChart) process.exitCode = 1;
   }

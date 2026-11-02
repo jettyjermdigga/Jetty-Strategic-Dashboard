@@ -2199,7 +2199,7 @@ describe('the COGS years', () => {
        'the chart is drawn from something other than the filtered list');
     // Colour follows the kind, never the column's position: narrowing the
     // sheet must not repaint what survives.
-    ok(/var\(--s-' \+ k \+ '\)/.test(page),
+    ok(/var\(--s-' \+ \(kind \|\| 'bulk'\) \+ '\)/.test(page),
        'the segment colour is not keyed to the kind');
     // The brand's own two neutrals failed the validator outright -- normal
     // vision deltaE 7.7 against a floor of 15 -- so the chart does not use
@@ -2210,9 +2210,15 @@ describe('the COGS years', () => {
        'the dark mode steps are gone');
     ok(!/--s-(bulk|sms):\s*var\(--(good|watch)\)/.test(css),
        'a status colour is being used for a series');
-    // Two series, so a legend is always there -- identity is never left to
-    // colour alone.
-    ok(/cg-leg/.test(page), 'the legend is gone');
+    // One chart per kind rather than two series stacked in one: samples run
+    // at a few per cent of the production run and were a sliver nobody
+    // could read. Each chart has one series, so neither carries a legend
+    // box -- its title names it.
+    ok(/chartPanel/.test(page), 'the per-kind charts are gone');
+    ok(!/cg-leg/.test(page), 'a legend box is back on a single-series chart');
+    // Two scales, so each has to say so: a column on one is not comparable
+    // by height to a column on the other.
+    ok(/own scale/.test(page), 'the separate scales are not declared');
   });
 
   it('files a figure typed before the columns, once, at boot', () => {

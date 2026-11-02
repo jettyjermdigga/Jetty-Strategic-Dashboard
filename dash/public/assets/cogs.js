@@ -377,10 +377,11 @@
   var GAP = 2;         // surface between stacked segments, one width throughout
   var BAND = 72;       // one column's slot; the leftover either side is air
   var BAND_WIDE = 150; // as wide as a slot gets before the chart looks thin
-  var AIM = 900;       // the width the plot reaches for
+  var AIM = 900;       // the width one plot across the card reaches for
+  var AIM_HALF = 420;  // and what each reaches for when there are two
   var MAX_PLOT = 1240; // past this the bands tighten rather than the card growing
 
-  function chartSvg(cols) {
+  function chartSvg(cols, kind, aim) {
     var L = 60;
     var R = 12;
     var T = 22;
@@ -394,12 +395,14 @@
     // tightens as a history grows, between a floor and a ceiling. Fixed at
     // the floor, four seasons sit in the corner of an empty card; fixed at
     // the ceiling, a dozen run off the end of it.
-    var band = Math.max(BAND, Math.min(BAND_WIDE, AIM / Math.max(1, cols.length)));
+    var band = Math.max(BAND, Math.min(BAND_WIDE,
+      (aim || AIM) / Math.max(1, cols.length)));
     var plotW = Math.min(MAX_PLOT, band * cols.length);
     var W = L + R + plotW;
     var plotH = H - T - B;
 
-    var max = cols.reduce(function (a, c) { return Math.max(a, c.total); }, 0);
+    var val = function (c) { return kind ? (c.parts[kind] || 0) : c.total; };
+    var max = cols.reduce(function (a, c) { return Math.max(a, val(c)); }, 0);
     var tk = ticks(max);
     var top = tk[tk.length - 1] || 1;
     var fmt = axisFmt(top);
@@ -421,45 +424,36 @@
       var cx = L + band * i + band / 2;
       var x = cx - w / 2;
       var base = y(0);
-      // Bulk at the bottom, samples on top: the samples go out ahead of the
-      // run but cost a fraction of it, and a sliver is easier to find
-      // against the top of the column than buried under one.
-      var stack = ['bulk', 'sms'].filter(function (k) { return c.parts[k]; });
-      var cursor = base;
-      stack.forEach(function (k, n) {
-        var h = (c.parts[k] / top) * plotH;
-        var isTop = n === stack.length - 1;
-        var cut = n === 0 ? 0 : GAP;          // the 2px lives in the segment above
-        var hh = Math.max(1, h - cut);
-        var yy = cursor - h;
+      var v = val(c);
+      if (v) {
+        var h = (v / top) * plotH;
         // Rounded at the data end, square at the baseline. One path rather
         // than a rect, because only the top two corners are round.
-        out.push('<path class="seg" fill="var(--s-' + k + ')" d="'
-          + roundedTop(x, yy, w, hh, isTop ? 4 : 0) + '"/>');
-        cursor = yy;
-      });
-
-      // One label per column, on the cap -- not a number on every segment.
-      out.push('<text class="cap" x="' + cx.toFixed(1) + '" y="'
-        + (y(c.total) - 6).toFixed(1) + '" text-anchor="middle">'
-        + esc(brief(c.total)) + '</text>');
+        out.push('<path class="seg" fill="var(--s-' + (kind || 'bulk') + ')" d="'
+          + roundedTop(x, base - h, w, h, 4) + '"/>');
+        // One label per column, on the cap.
+        out.push('<text class="cap" x="' + cx.toFixed(1) + '" y="'
+          + (y(v) - 6).toFixed(1) + '" text-anchor="middle">'
+          + esc(brief(v)) + '</text>');
+      }
       out.push('<text class="cat" x="' + cx.toFixed(1) + '" y="' + (base + 16).toFixed(1)
         + '" text-anchor="middle">' + esc(c.label) + '</text>');
 
       // The hit target is the whole band, not the painted pixels, so the
-      // pointer never has to find a 24px column or a one-pixel sliver.
+      // pointer never has to find a 24px column.
       out.push('<rect class="hit" x="' + (L + band * i).toFixed(1) + '" y="' + T
         + '" width="' + band.toFixed(1) + '" height="' + plotH + '" fill="transparent"'
         + ' tabindex="0" role="button" data-col="' + esc(c.key) + '"'
-        + ' aria-label="' + esc(c.label + ', ' + money(c.total)) + '"/>');
+        + ' data-kind="' + esc(kind || '') + '"'
+        + ' aria-label="' + esc(c.label + ', ' + money(v)) + '"/>');
       out.push('<rect class="lift" x="' + (L + band * i).toFixed(1) + '" y="' + T
         + '" width="' + band.toFixed(1) + '" height="' + plotH + '" rx="4"/>');
     });
 
     return '<svg class="cg-svg" width="' + W + '" height="' + H + '"'
       + ' viewBox="0 0 ' + W + ' ' + H + '" role="img"'
-      + ' aria-label="Cost of goods by ' + (f.graphBy === 'year' ? 'year' : 'season')
-      + '">' + out.join('') + '</svg>';
+      + ' aria-label="' + esc(kindLabel(kind)) + ' cost of goods by '
+      + (f.graphBy === 'year' ? 'year' : 'season') + '">' + out.join('') + '</svg>';
   }
 
   function roundedTop(x, y2, w, h, r) {
@@ -470,6 +464,38 @@
       + 'h' + (w - rr * 2).toFixed(1)
       + (rr ? 'a' + rr + ' ' + rr + ' 0 0 1 ' + rr + ' ' + rr : '')
       + 'V' + (y2 + h).toFixed(1) + 'Z';
+  }
+
+  function kindLabel(k) {
+    var hit = (D.kinds || []).filter(function (x) { return x.key === k; })[0];
+    return hit ? hit.label : (k || 'Everything');
+  }
+
+  /**
+   * One chart per kind, side by side.
+   *
+   * Samples run at a few per cent of the production run, so stacked into
+   * one column they were a sliver nobody could read. Apart, each gets its
+   * own scale -- and the two share their columns, in the same order, so a
+   * season sits in the same place on both.
+   *
+   * SEPARATE SCALES, which is the thing to be careful about: a column on
+   * the SMS chart is NOT comparable by height to one on the Bulk chart.
+   * Each says its own total under its title, carries its own labelled axis
+   * and is marked "own scale", so the magnitudes are on screen in words
+   * and figures rather than left to the bar heights.
+   */
+  function chartPanel(kind, cols, aim) {
+    var sum = cols.reduce(function (a, c) { return a + (c.parts[kind] || 0); }, 0);
+    var any = cols.some(function (c) { return c.parts[kind]; });
+    return '<div class="cg-panel">'
+      // One series, so no legend box: the title is what names it.
+      + '<h3 class="cg-ptitle"><i class="' + esc(KIND_CLASS[kind] || '') + '"></i>'
+      + esc(kindLabel(kind)) + '</h3>'
+      + '<p class="cg-psub">' + esc(money(sum)) + ' \u00b7 own scale</p>'
+      + (any ? chartSvg(cols, kind, aim)
+        : '<p class="cg-empty">Nothing costed here yet.</p>')
+      + '</div>';
   }
 
   function renderChart(list) {
@@ -484,7 +510,7 @@
       + '<h2 class="cg-ctitle" id="chartTitle">Cost of goods by '
       + (byYear ? 'year' : 'season') + '</h2>'
       + '<span class="cg-csub">' + (filtered() ? 'the lines on screen' : 'every line')
-      + (byYear ? ' · by the year the money lands in' : '') + '</span>'
+      + (byYear ? ' \u00b7 by the year the money lands in' : '') + '</span>'
       + '<span class="cg-cby" role="group" aria-label="What the columns are">'
       + '<button type="button" data-by="season" aria-pressed="' + (!byYear) + '">Season</button>'
       + '<button type="button" data-by="year" aria-pressed="' + byYear + '">Year</button>'
@@ -493,13 +519,20 @@
     if (!cols.length) {
       box.innerHTML = head + '<p class="cg-empty">Nothing on screen has a figure on '
         + 'it yet, so there is nothing to draw.</p>';
+      chartCols = [];
       return;
     }
 
+    // Filtering to one kind leaves one chart, and it takes the width --
+    // rather than a half-empty card sitting beside an empty one.
+    var kinds = (D.kinds || []).map(function (k) { return k.key; })
+      .filter(function (k) { return !f.kind || f.kind === k; });
+    var aim = kinds.length > 1 ? AIM_HALF : AIM;
+
     box.innerHTML = head
-      + '<div class="cg-leg">'
-      + '<span><i class="bulk"></i>Bulk</span><span><i class="sms"></i>SMS</span></div>'
-      + chartSvg(cols)
+      + '<div class="cg-panels">'
+      + kinds.map(function (k) { return chartPanel(k, cols, aim); }).join('')
+      + '</div>'
       + '<div class="cg-tip" id="cgTip" hidden></div>';
     chartCols = cols;
   }
@@ -507,7 +540,12 @@
   var chartCols = [];
 
   // Labels come off the sheet, so they go in as text rather than as markup.
-  function showTip(key, host) {
+  //
+  // The value leads and the label follows -- the reader already has the
+  // series from the chart they are pointing at and wants the number. The
+  // season's whole cost rides underneath, because the chart beside this one
+  // is on a different scale and cannot be read across to.
+  function showTip(key, host, kind) {
     var tip = $('#cgTip');
     var col = chartCols.filter(function (c) { return c.key === key; })[0];
     if (!tip || !col) return;
@@ -515,19 +553,30 @@
     var head = document.createElement('div');
     head.appendChild(document.createTextNode(col.label + ' '));
     var b = document.createElement('b');
-    b.textContent = money(col.total);
+    b.textContent = money(kind ? (col.parts[kind] || 0) : col.total);
     head.appendChild(b);
     tip.appendChild(head);
-    (D.kinds || []).forEach(function (k) {
-      if (!col.parts[k.key]) return;
-      var row = document.createElement('div');
-      row.className = 'r';
-      var i = document.createElement('i');
-      i.className = KIND_CLASS[k.key] || '';
-      row.appendChild(i);
-      row.appendChild(document.createTextNode(k.label + ' ' + money(col.parts[k.key])));
-      tip.appendChild(row);
-    });
+    if (kind) {
+      var one = document.createElement('div');
+      one.className = 'r';
+      var dot = document.createElement('i');
+      dot.className = KIND_CLASS[kind] || '';
+      one.appendChild(dot);
+      one.appendChild(document.createTextNode(kindLabel(kind)
+        + ' \u00b7 of ' + money(col.total) + ' for the season'));
+      tip.appendChild(one);
+    } else {
+      (D.kinds || []).forEach(function (k) {
+        if (!col.parts[k.key]) return;
+        var row = document.createElement('div');
+        row.className = 'r';
+        var i = document.createElement('i');
+        i.className = KIND_CLASS[k.key] || '';
+        row.appendChild(i);
+        row.appendChild(document.createTextNode(k.label + ' ' + money(col.parts[k.key])));
+        tip.appendChild(row);
+      });
+    }
     var box = $('#chart').getBoundingClientRect();
     var at = host.getBoundingClientRect();
     tip.hidden = false;
@@ -899,7 +948,7 @@
     ['pointerover', 'focusin'].forEach(function (ev) {
       box.addEventListener(ev, function (e) {
         var hit = e.target.closest ? e.target.closest('.hit') : null;
-        if (hit) showTip(hit.dataset.col, hit);
+        if (hit) showTip(hit.dataset.col, hit, hit.dataset.kind);
       });
     });
     ['pointerleave', 'focusout'].forEach(function (ev) {
