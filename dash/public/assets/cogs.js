@@ -19,6 +19,10 @@
   // Every way the sheet is narrowed, in one place. Empty means that field
   // asks nothing, which is why an untouched bar shows everything.
   var f = { q: '', season: '', kind: '', show: 'all', year: 0 };
+  // The row at the bottom of the sheet that is not a row yet. Kept out here
+  // because the table is redrawn under it on every keystroke, and half a
+  // typed season disappearing is the whole reason the prompt was tolerable.
+  var nu = { label: '', kind: 'bulk', years: {}, note: '' };
   var saving = 0;
   var timers = {};
 
@@ -185,12 +189,98 @@
       + '<td colspan="2"></td></tr>';
   }
 
+  // A season somebody is typing, matched to one already on the sheet so
+  // "ss25" does not become a second SS25 sitting beside the first.
+  function knownSeason(label) {
+    var want = String(label || '').trim().toLowerCase();
+    if (!want) return null;
+    var hit = (D.seasons || []).filter(function (x) {
+      return String(x.label).toLowerCase() === want || x.key === slug(label);
+    })[0];
+    return hit || null;
+  }
+
+  function slug(label) {
+    return String(label || '').trim().toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 39);
+  }
+
+  /**
+   * The entry row.
+   *
+   * Always at the bottom, never filtered out, and it keeps its place after
+   * a line lands so a run of seasons can be typed without reaching for
+   * anything. Season is a text box rather than a dropdown because a season
+   * being backfilled is by definition one the sheet has not heard of --
+   * with a datalist behind it, so one already here is a keystroke.
+   */
+  function addRow() {
+    var known = knownSeason(nu.label);
+    return '<tr class="cg-add">'
+      + '<td><input id="nuSeason" class="bd-in lb-in" list="cgSeasons"'
+      + ' autocomplete="off" placeholder="SS27, F26\u2026"'
+      + ' aria-label="Which season to add"'
+      + ' value="' + esc(nu.label) + '"></td>'
+      + '<td><select id="nuKind" class="lb-sel set" aria-label="Bulk, SMS or both">'
+      + '<option value="bulk"' + (nu.kind === 'bulk' ? ' selected' : '') + '>Bulk</option>'
+      + '<option value="sms"' + (nu.kind === 'sms' ? ' selected' : '') + '>SMS</option>'
+      + '<option value="both"' + (nu.kind === 'both' ? ' selected' : '') + '>Both</option>'
+      + '</select></td>'
+      // Both makes two lines, and a figure typed once cannot belong to two
+      // of them -- splitting it across bulk and samples would be inventing
+      // a number nobody said. So the figures are not offered rather than
+      // taken and quietly dropped.
+      + (D.years || []).map(function (y) {
+        return '<td class="cg-y' + (Number(y) === D.year ? ' is-budget' : '') + '">'
+          + '<input class="bd-in lb-in cg-amt" data-nu="' + esc(y) + '"'
+          + (two() ? ' disabled title="' + esc(TWO_WHY) + '"' : '')
+          + ' inputmode="numeric" aria-label="' + esc(y) + ' cost for the new line"'
+          + ' value="' + (nu.years[y] == null ? '' : comma(nu.years[y])) + '"'
+          + ' placeholder="\u2014"></td>';
+      }).join('')
+      + '<td class="bd-n lb-tot">' + (nuTotal() == null
+        ? '<span class="lb-none">\u2014</span>' : money(nuTotal())) + '</td>'
+      + '<td><input id="nuNote" class="bd-note" value="' + esc(nu.note) + '"'
+      + (two() ? ' disabled title="' + esc(TWO_WHY) + '"' : '')
+      + ' aria-label="Note for the new line"'
+      + ' placeholder="what is in it / who is making it"></td>'
+      // Never disabled. A dead button is one more thing to read at 2.66:1,
+      // and pressing it with nothing typed should put the cursor where the
+      // typing goes, which is what addLine does with an empty season.
+      + '<td><button class="lb-add cg-go" id="nuAdd" type="button"'
+      + ' title="' + (nu.label.trim()
+        ? (known ? 'Adds to ' + esc(known.label) : 'Adds a new season')
+        : 'Type a season first') + '">Add</button></td>'
+      + '</tr>';
+  }
+
+  function two() { return nu.kind === 'both'; }
+
+  var TWO_WHY = 'Both makes two lines. Add them one at a time to cost them.';
+
+  function nuTotal() {
+    var n = 0;
+    var any = false;
+    Object.keys(nu.years).forEach(function (y) {
+      var v = Number(nu.years[y]);
+      if (isFinite(v)) { n += v; any = true; }
+    });
+    return any ? Math.round(n * 100) / 100 : null;
+  }
+
   function render() {
     var list = shown();
-    var body = list.length
-      ? list.map(row).join('') + footRow(list)
-      : '<tr><td colspan="' + cols() + '" class="pane-empty">Nothing matches that.</td></tr>';
-    $('#t').innerHTML = '<thead>' + head() + '</thead><tbody>' + body + '</tbody>';
+    var body = (list.length
+      ? list.map(row).join('')
+      : '<tr><td colspan="' + cols() + '" class="pane-empty">Nothing on the sheet'
+        + (filtered() ? ' matches that' : ' yet') + '.</td></tr>')
+      + addRow()
+      + (list.length ? footRow(list) : '');
+    $('#t').innerHTML = '<thead>' + head() + '</thead><tbody>' + body + '</tbody>'
+      + '<datalist id="cgSeasons">'
+      + (D.seasons || []).map(function (x) {
+        return '<option value="' + esc(x.label) + '"></option>';
+      }).join('') + '</datalist>';
     $('#wrap').hidden = false;
     renderBar();
     chrome();
@@ -347,10 +437,93 @@
     return true;
   }
 
+  // What has been typed into the entry row so far. Read rather than
+  // redrawn: redrawing the row would take the cursor out of the box being
+  // typed in, which on an entry row is every keystroke.
+  function nuInput(el) {
+    if (el.id === 'nuSeason') { nu.label = el.value; return nuPaint(); }
+    if (el.id === 'nuKind') {
+      nu.kind = el.value;
+      // Cleared rather than kept and ignored: a figure sitting in a box
+      // that the add is about to throw away is worse than no figure.
+      if (two()) { nu.years = {}; nu.note = ''; }
+      return render();
+    }
+    if (el.id === 'nuNote') { nu.note = el.value; return; }
+    var y = el.dataset.nu;
+    if (!y) return;
+    var raw = el.value.replace(/[,$\s]/g, '');
+    if (raw === '') delete nu.years[y];
+    else if (/^-?\d+(\.\d+)?$/.test(raw)) nu.years[y] = Number(raw);
+    else return;
+    el.classList.toggle('set', nu.years[y] != null);
+    nuPaint();
+  }
+
+  // The running total, and whether Add is live, without redrawing the row.
+  function nuPaint() {
+    var tr = document.querySelector('.cg-add');
+    if (!tr) return;
+    var cell = tr.querySelector('.lb-tot');
+    var n = nuTotal();
+    if (cell) {
+      cell.innerHTML = n == null ? '<span class="lb-none">\u2014</span>' : money(n);
+    }
+    var btn = $('#nuAdd');
+    if (btn) {
+      var known = knownSeason(nu.label);
+      btn.title = !nu.label.trim() ? 'Type a season first'
+        : (known ? 'Adds to ' + known.label : 'Adds a new season');
+    }
+  }
+
+  /**
+   * Turn what is in the entry row into a line, or two if Both.
+   *
+   * A season already on the sheet is reused rather than made again: typing
+   * "ss25" when SS25 is already here must not leave two seasons a
+   * character apart in every dropdown.
+   */
+  function addLine() {
+    var label = nu.label.trim();
+    if (!label) { var box = $('#nuSeason'); if (box) box.focus(); return; }
+    var known = knownSeason(label);
+    var key = known ? known.key : slug(label);
+    if (!key) return say('"' + label + '" is not a season name this can use.');
+    var name = known ? known.label : label;
+
+    var kinds = nu.kind === 'both'
+      ? (D.kinds || []).map(function (k) { return k.key; })
+      : [nu.kind];
+    // Figures only go on when there is one line to put them on. Splitting a
+    // typed total across bulk and samples would be inventing a number
+    // nobody said.
+    var years = two() ? {} : nu.years;
+    var note = two() ? '' : nu.note;
+
+    var left = kinds.length;
+    nu = { label: '', kind: nu.kind, years: {}, note: '' };
+
+    kinds.forEach(function (k) {
+      send('/api/cogs/line?year=' + encodeURIComponent(f.year),
+        { added: true, season: key, seasonLabel: name, kind: k,
+          years: years, note: note },
+        function () {
+          if (--left > 0) return;
+          render();
+          // Straight back to the season box: building a history is one
+          // season after another, not one trip to the mouse after another.
+          var box = $('#nuSeason');
+          if (box) box.focus();
+        });
+    });
+  }
+
   function bind() {
     var t = $('#t');
 
     t.addEventListener('input', function (e) {
+      if (e.target.closest('.cg-add')) return nuInput(e.target);
       var tr = e.target.closest('tr[data-id]');
       if (!tr) return;
       var r = line(tr.dataset.id);
@@ -369,6 +542,7 @@
     });
 
     t.addEventListener('change', function (e) {
+      if (e.target.closest('.cg-add')) return nuInput(e.target);
       var tr = e.target.closest('tr[data-id]');
       if (!tr) return;
       var r = line(tr.dataset.id);
@@ -398,10 +572,16 @@
     });
 
     t.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && e.target.classList.contains('lb-in')) e.target.blur();
+      if (e.key !== 'Enter') return;
+      // Enter anywhere in the entry row adds it. Typing a season and a
+      // figure and then reaching for the mouse is the thing this row
+      // exists to stop.
+      if (e.target.closest('.cg-add')) { e.preventDefault(); return addLine(); }
+      if (e.target.classList.contains('lb-in')) e.target.blur();
     });
 
     t.addEventListener('click', function (e) {
+      if (e.target.closest('#nuAdd')) return addLine();
       var x = e.target.closest('.lb-x');
       if (!x) return;
       var r = line(x.closest('tr').dataset.id);
@@ -435,27 +615,16 @@
       $('#q').focus();
     });
 
-    // A prior season, almost always. Both kinds at once, because a season
-    // backfilled with only its bulk is a season whose samples look like
-    // they cost nothing rather than like nobody has said yet.
-    $('#add').addEventListener('click', function () {
-      var name = window.prompt('Which season?\n\n'
-        + 'SP26, F25 — whatever you call it. Both Bulk and SMS lines are added.');
-      if (!name || !name.trim()) return;
-      var label = name.trim();
-      var key = label.toLowerCase().replace(/[^a-z0-9-]+/g, '-')
-        .replace(/^-+|-+$/g, '').slice(0, 39);
-      if (!key) return say('"' + label + '" is not a season name this can use.');
-      if ((D.seasons || []).some(function (s) { return s.key === key; })) {
-        return say(label + ' is already on the sheet.');
-      }
-      var left = (D.kinds || []).length;
-      (D.kinds || []).forEach(function (k) {
-        send('/api/cogs/line', { added: true, season: key, seasonLabel: label,
-                                 kind: k.key, amount: null },
-          function () { if (--left <= 0) render(); });
+    // The button in the bar used to open a prompt that always made two
+    // lines. The entry row at the bottom of the sheet does the same job
+    // without a dialog, so the button only puts the cursor in it.
+    var jump = $('#add');
+    if (jump) {
+      jump.addEventListener('click', function () {
+        var el = $('#nuSeason');
+        if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
       });
-    });
+    }
   }
 
   function load() {

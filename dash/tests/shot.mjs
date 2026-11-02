@@ -16,7 +16,7 @@ import {
 import {
   rows as cogsRows, summary as cogsSummary, duplicates as cogsDuplicates,
   seasonOptions as cogsSeasons, KINDS as COGS_KINDS, SHOWS as COGS_SHOWS,
-  yearsAround as cogsYearsAround,
+  yearsAround as cogsYearsAround, cleanLine as cogsClean, lineId as cogsLineId,
 } from '../worker/cogs.js';
 import {
   rows as laborRows, summary as laborSummary, against as laborAgainst,
@@ -178,7 +178,7 @@ const CASES = [
   { file: 'labor-dept', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'labor.html', wait: '.lb-sel',
     select: ['#fDept', 'Flagship Store'], after: '.lb-foot' },
-  { file: 'cogs-light', scheme: 'light', who: full('jeremy@jettylife.com'),
+  { file: 'cogs-light', scheme: 'light', adds: true, who: full('jeremy@jettylife.com'),
     path: 'cogs.html', wait: '.lb-sel' },
   { file: 'cogs-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
     path: 'cogs.html', wait: '.lb-sel' },
@@ -298,7 +298,7 @@ const LABOR = (() => {
 
 // A COGS sheet part way through: next year half costed, one prior season
 // backfilled so the trend has something to be a trend against.
-const COGS = (() => {
+const COGS_SAVED = (() => {
   const saved = {
     // SP27 is bought across two years: the deposit went down in 2026 and
     // the balance falls in the year it drops. SMS goes out ahead of the
@@ -316,7 +316,14 @@ const COGS = (() => {
     'sp26:sms': { added: true, season: 'sp26', kind: 'sms',
                   seasonLabel: 'SP26', years: { 2025: 44800 } },
   };
-  const rs = cogsRows(saved, FIRST_YEAR);
+  return saved;
+})();
+
+// Built fresh on every request, so a line added through the entry row is
+// on the sheet that comes back -- which is the half of adding a line that
+// a screenshot cannot see.
+const cogsSheet = () => {
+  const rs = cogsRows(COGS_SAVED, FIRST_YEAR);
   return {
     you: 'jeremy@jettylife.com', kinds: COGS_KINDS, shows: COGS_SHOWS,
     year: FIRST_YEAR, years: cogsYearsAround(FIRST_YEAR),
@@ -324,7 +331,12 @@ const COGS = (() => {
     lines: rs, seasons: cogsSeasons(rs),
     summary: cogsSummary(rs), duplicates: cogsDuplicates(rs),
   };
-})();
+};
+
+// What the entry row actually sent. The sheet that comes back cannot
+// answer this one: two lines under the same season key look identical on
+// screen whichever label was typed.
+const cogsPosts = [];
 
 const browser = await chromium.launch();
 for (const c of CASES) {
@@ -343,10 +355,18 @@ for (const c of CASES) {
         ? route.fulfill({ status: 404, json: { error: 'No such endpoint.' } })
         : route.fulfill({ json: BUDGET });
     }
+    if (p === '/api/cogs/line') {
+      const body = route.request().postDataJSON();
+      cogsPosts.push(body);
+      const { row, errors } = cogsClean(body, null);
+      if (errors) return route.fulfill({ status: 400, json: { errors } });
+      COGS_SAVED[cogsLineId(row.season, row.kind)] = { ...row };
+      return route.fulfill({ json: { ok: true, ...cogsSheet() } });
+    }
     if (p === '/api/cogs' || p.startsWith('/api/cogs?')) {
       return c.noBudget
         ? route.fulfill({ status: 404, json: { error: 'No such endpoint.' } })
-        : route.fulfill({ json: COGS });
+        : route.fulfill({ json: cogsSheet() });
     }
     if (p === '/api/labor') {
       return c.noBudget
@@ -626,6 +646,96 @@ for (const c of CASES) {
       console.log('    RATE LOST ITS CENTS: expected "19.10"');
       process.exitCode = 1;
     }
+  }
+
+
+  // ── adding a line ─────────────────────────────────────────────────────
+  //
+  // The sheet is a history being built one season at a time, so the entry
+  // row at the bottom is the control that matters most. A screenshot shows
+  // it is there; only driving it shows it works.
+  if (c.adds) {
+    const rows = () => page.locator('tr[data-id]').count();
+    const before = await rows();
+
+    // Season, a figure, Enter. No mouse, because a run of seasons typed
+    // one after another is the whole point of the row.
+    await page.fill('#nuSeason', 'SS24');
+    await page.locator('[data-nu="2024"]').last().fill('880000');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction((n) =>
+      document.querySelectorAll('tr[data-id]').length === n + 1, before);
+
+    const landed = await page.evaluate(() => {
+      const tr = [...document.querySelectorAll('tr[data-id]')]
+        .find((x) => x.querySelector('select[data-f="season"]')
+          && x.querySelector('select[data-f="season"]').selectedOptions[0]
+          && x.querySelector('select[data-f="season"]')
+            .selectedOptions[0].textContent === 'SS24');
+      return tr ? {
+        y2024: tr.querySelector('[data-y="2024"]').value,
+        total: tr.querySelector('.lb-tot').textContent,
+      } : null;
+    });
+
+    // The row clears and the cursor goes back where the next season is
+    // typed. Leaving it full is how a season gets entered twice.
+    const after = await page.evaluate(() => ({
+      season: document.querySelector('#nuSeason').value,
+      focus: document.activeElement ? document.activeElement.id : '',
+    }));
+
+    // A season already on the sheet, typed in the wrong case. It has to
+    // join that season under the name already in use -- checked on what was
+    // sent, because two lines under one season key look identical on screen
+    // whichever of the two spellings was stored against them.
+    const seasonsBefore = await page.locator('#cgSeasons option').count();
+    cogsPosts.length = 0;
+    await page.fill('#nuSeason', 'ss24');
+    await page.selectOption('#nuKind', 'sms');
+    await page.click('#nuAdd');
+    await page.waitForFunction((n) =>
+      document.querySelectorAll('tr[data-id]').length === n + 2, before);
+    const seasonsAfter = await page.locator('#cgSeasons option').count();
+    const reused = cogsPosts.length === 1
+      && cogsPosts[0].season === 'ss24' && cogsPosts[0].seasonLabel === 'SS24';
+
+    // Both, which is what the prompt this replaced always did. A figure
+    // typed once cannot belong to two lines, so the figure boxes are not
+    // offered -- rather than taken and quietly dropped on the way in.
+    await page.fill('#nuSeason', 'F24');
+    await page.locator('[data-nu="2024"]').last().fill('123456');
+    await page.selectOption('#nuKind', 'both');
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.cg-add [data-nu]');
+      return el && el.disabled;
+    });
+    const bothShut = await page.evaluate(() => {
+      const cells = [...document.querySelectorAll('.cg-add [data-nu]')];
+      const note = document.querySelector('#nuNote');
+      return cells.every((el) => el.disabled && el.value === '')
+        && note.disabled && note.value === '';
+    });
+    await page.click('#nuAdd');
+    await page.waitForFunction((n) =>
+      document.querySelectorAll('tr[data-id]').length === n + 4, before);
+
+    const ok = landed && landed.y2024 === '880,000'
+      && /880,000/.test(landed.total)
+      && after.season === '' && after.focus === 'nuSeason'
+      && seasonsAfter === seasonsBefore && reused && bothShut;
+    console.log('  entry row: ' + (landed ? 'line lands' : 'LINE DID NOT LAND')
+      + ', ' + (after.season === '' ? 'clears' : 'LEFT FULL')
+      + ', ' + (after.focus === 'nuSeason' ? 'keeps focus' : 'LOST FOCUS')
+      + ', ' + (seasonsAfter === seasonsBefore && reused
+        ? 'reuses a known season' : 'DUPLICATED A SEASON')
+      + ', ' + (bothShut ? 'Both drops no figures' : 'BOTH ATE A TYPED FIGURE')
+      + ', ' + (await rows()) + ' rows from ' + before);
+    if (!ok) process.exitCode = 1;
+    // Drawn again from scratch so the screenshot is the sheet, not the
+    // sheet mid-edit.
+    await page.reload();
+    await page.waitForSelector('.cg-add');
   }
 
   // The row is meant to be one line. Eleven chips fit only because the chip

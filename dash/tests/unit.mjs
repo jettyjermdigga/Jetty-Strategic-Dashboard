@@ -2170,6 +2170,25 @@ describe('the COGS years', () => {
     eq(lines[1], 'SP27,Bulk,150000,850000,1000000,');
   });
 
+  // The sheet is a history being built one season at a time, so the entry
+  // row is the control that matters most. The page is an IIFE and cannot be
+  // imported, so what the gate can check is that the shape is still there;
+  // tests/shot.mjs drives it for real.
+  it('adds a line from the sheet rather than from a dialog', () => {
+    const page = rd('public/assets/cogs.js');
+    ok(!/window\.prompt/.test(page),
+       'a season is still added through a browser dialog');
+    ok(/function addRow\(/.test(page), 'the entry row is gone');
+    // Outside the filter and outside the sort, or narrowing the sheet would
+    // take away the only way to add to it.
+    ok(/\+ addRow\(\)/.test(page) && !/list\.map\(addRow/.test(page),
+       'the entry row is drawn from the filtered list');
+    ok(/knownSeason/.test(page),
+       'a season typed in the wrong case would start a second one');
+    ok(/box\.focus\(\)/.test(page),
+       'the cursor does not go back to the season box');
+  });
+
   it('files a figure typed before the columns, once, at boot', () => {
     const fn = rd('worker/store.js');
     ok(/splitCogsYears/.test(fn), 'the migration is gone');

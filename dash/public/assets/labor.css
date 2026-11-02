@@ -178,3 +178,17 @@
   font-family:var(--mono);font-size:11px;vertical-align:super;margin-left:1px;
   color:inherit;opacity:.85;
 }
+
+/* ── COGS: the entry row ─────────────────────────────────────────────────
+   Always the last row of the sheet, never filtered away, and it keeps its
+   place after a line lands so a run of seasons can be typed straight
+   through. Marked off from the lines above it because it is not one yet. */
+.cg-add td{
+  background:var(--bd-row);
+  border-top:1px solid var(--surface-alt);
+}
+.cg-add td:first-child{box-shadow:inset 3px 0 0 var(--bd-pick)}
+.cg-t .cg-add .lb-in{width:100%}
+.cg-t .cg-add .cg-season{width:100%;text-align:left}
+.cg-t .cg-add .cg-amt{width:84px}
+.cg-go{padding:4px 10px;white-space:nowrap}
