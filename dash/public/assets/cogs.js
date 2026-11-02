@@ -18,7 +18,8 @@
   var D = null;
   // Every way the sheet is narrowed, in one place. Empty means that field
   // asks nothing, which is why an untouched bar shows everything.
-  var f = { q: '', season: '', kind: '', show: 'all', year: 0 };
+  var f = { q: '', season: '', kind: '', show: 'all', year: 0,
+            graph: false, graphBy: 'season' };
   // The row at the bottom of the sheet that is not a row yet. Kept out here
   // because the table is redrawn under it on every keystroke, and half a
   // typed season disappearing is the whole reason the prompt was tolerable.
@@ -268,6 +269,278 @@
     return any ? Math.round(n * 100) / 100 : null;
   }
 
+  // ── the chart ─────────────────────────────────────────────────────────
+  //
+  // Whatever the filters leave behind, as stacked columns: one column per
+  // season (or per year), split into the bulk run and the samples. Stacked
+  // rather than side by side because the question the sheet is being
+  // built to answer is what a season COST -- the split is the second
+  // question, and it is on the column and in the tooltip.
+  //
+  // The sheet underneath is the table view. Every figure on the chart is in
+  // a cell you can read without hovering over anything.
+
+  var KIND_CLASS = { bulk: 'bulk', sms: 'sms' };
+
+  /** Compact money for a column's cap. Full figures live in the tooltip
+   *  and in the sheet; a chart in full is a chart of nine-digit strings. */
+  function brief(n) {
+    var v = Math.abs(Number(n) || 0);
+    if (v >= 1000000) return '$' + round1(v / 1000000) + 'M';
+    if (v >= 1000) return '$' + round1(v / 1000) + 'K';
+    return '$' + Math.round(v);
+  }
+
+  /**
+   * One unit for the whole axis, chosen by its top tick.
+   *
+   * Letting each tick pick its own gives an axis reading $500K, $1M, $1.5M
+   * -- two styles on one scale, which is a thing the reader has to convert
+   * in their head before they can compare two of them.
+   */
+  function axisFmt(top) {
+    if (top >= 1000000) {
+      return function (v) { return v ? '$' + (v / 1000000).toFixed(1) + 'M' : '$0'; };
+    }
+    if (top >= 1000) {
+      return function (v) { return v ? '$' + Math.round(v / 1000) + 'K' : '$0'; };
+    }
+    return function (v) { return '$' + Math.round(v); };
+  }
+  function round1(v) {
+    return (Math.round(v * 10) / 10).toFixed(1);
+  }
+
+  /**
+   * Clean tick values: 1, 2 or 5 times a power of ten, four steps or so.
+   *
+   * The last one is at or ABOVE the tallest column. Stopping at the last
+   * clean step under the max leaves the scale shorter than the data and the
+   * column draws straight out of the top of the plot -- which is exactly
+   * what the first version of this did at $1.46M against a $1M top tick.
+   */
+  function ticks(max) {
+    if (!(max > 0)) return [0];
+    var raw = max / 4;
+    var mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
+    var step = [1, 2, 2.5, 5, 10].map(function (m) { return m * mag; })
+      .filter(function (x) { return x >= raw; })[0] || 10 * mag;
+    var top = Math.ceil(max / step) * step;
+    var out = [];
+    for (var v = 0; v <= top + step * 0.001; v += step) out.push(v);
+    return out;
+  }
+
+  /**
+   * The columns, from the rows on screen.
+   *
+   * By season keeps the sheet's own order, so a backfilled season stays
+   * behind next year rather than sorting itself into the middle of it. By
+   * year is chronological and covers every year anything is filed under,
+   * not the five columns on screen -- the chart is where a history is read,
+   * and a history cut off at the window is not one.
+   */
+  function columns(list) {
+    var at = {};
+    (D.seasons || []).forEach(function (x, i) { at[x.key] = i; });
+    var by = {};
+    var order = [];
+
+    var put = function (key, label, kind, amount) {
+      if (!by[key]) { by[key] = { key: key, label: label, parts: {}, total: 0 }; order.push(key); }
+      by[key].parts[kind] = (by[key].parts[kind] || 0) + amount;
+      by[key].total += amount;
+    };
+
+    list.forEach(function (r) {
+      if (f.graphBy === 'year') {
+        Object.keys(r.years || {}).forEach(function (y) {
+          var v = Number(r.years[y]);
+          if (isFinite(v) && v) put(y, y, r.kind, v);
+        });
+      } else if (r.amount != null) {
+        put(r.season, r.seasonLabel || r.season, r.kind, r.amount);
+      }
+    });
+
+    var cols = order.map(function (k) { return by[k]; });
+    cols.sort(function (a, b) {
+      if (f.graphBy === 'year') return Number(a.key) - Number(b.key);
+      var ia = at[a.key] == null ? 999 : at[a.key];
+      var ib = at[b.key] == null ? 999 : at[b.key];
+      return ia - ib;
+    });
+    return cols;
+  }
+
+  var BAR = 24;        // the cap: a column never fills its slot
+  var GAP = 2;         // surface between stacked segments, one width throughout
+  var BAND = 72;       // one column's slot; the leftover either side is air
+  var BAND_WIDE = 150; // as wide as a slot gets before the chart looks thin
+  var AIM = 900;       // the width the plot reaches for
+  var MAX_PLOT = 1240; // past this the bands tighten rather than the card growing
+
+  function chartSvg(cols) {
+    var L = 60;
+    var R = 12;
+    var T = 22;
+    var B = 34;
+    var H = 250;
+    // Sized to its columns rather than stretched across the card, and drawn
+    // at 1:1 -- a 760-unit viewBox on a 1900px card scales every spec in
+    // here by two and a half, so a 24px bar arrives 60px wide and a 9.5px
+    // tick arrives at 24.
+    // The band widens to fill the card when there are few columns and
+    // tightens as a history grows, between a floor and a ceiling. Fixed at
+    // the floor, four seasons sit in the corner of an empty card; fixed at
+    // the ceiling, a dozen run off the end of it.
+    var band = Math.max(BAND, Math.min(BAND_WIDE, AIM / Math.max(1, cols.length)));
+    var plotW = Math.min(MAX_PLOT, band * cols.length);
+    var W = L + R + plotW;
+    var plotH = H - T - B;
+
+    var max = cols.reduce(function (a, c) { return Math.max(a, c.total); }, 0);
+    var tk = ticks(max);
+    var top = tk[tk.length - 1] || 1;
+    var fmt = axisFmt(top);
+    var y = function (v) { return T + plotH - (v / top) * plotH; };
+
+    var band = plotW / cols.length;
+    var w = Math.min(BAR, band * 0.7);
+
+    var out = [];
+    // Gridlines first, so every mark sits on top of them.
+    tk.forEach(function (v) {
+      out.push('<line class="grid" x1="' + L + '" x2="' + (W - R) + '" y1="'
+        + y(v).toFixed(1) + '" y2="' + y(v).toFixed(1) + '"/>');
+      out.push('<text class="tick" x="' + (L - 8) + '" y="' + (y(v) + 3.5).toFixed(1)
+        + '" text-anchor="end">' + esc(fmt(v)) + '</text>');
+    });
+
+    cols.forEach(function (c, i) {
+      var cx = L + band * i + band / 2;
+      var x = cx - w / 2;
+      var base = y(0);
+      // Bulk at the bottom, samples on top: the samples go out ahead of the
+      // run but cost a fraction of it, and a sliver is easier to find
+      // against the top of the column than buried under one.
+      var stack = ['bulk', 'sms'].filter(function (k) { return c.parts[k]; });
+      var cursor = base;
+      stack.forEach(function (k, n) {
+        var h = (c.parts[k] / top) * plotH;
+        var isTop = n === stack.length - 1;
+        var cut = n === 0 ? 0 : GAP;          // the 2px lives in the segment above
+        var hh = Math.max(1, h - cut);
+        var yy = cursor - h;
+        // Rounded at the data end, square at the baseline. One path rather
+        // than a rect, because only the top two corners are round.
+        out.push('<path class="seg" fill="var(--s-' + k + ')" d="'
+          + roundedTop(x, yy, w, hh, isTop ? 4 : 0) + '"/>');
+        cursor = yy;
+      });
+
+      // One label per column, on the cap -- not a number on every segment.
+      out.push('<text class="cap" x="' + cx.toFixed(1) + '" y="'
+        + (y(c.total) - 6).toFixed(1) + '" text-anchor="middle">'
+        + esc(brief(c.total)) + '</text>');
+      out.push('<text class="cat" x="' + cx.toFixed(1) + '" y="' + (base + 16).toFixed(1)
+        + '" text-anchor="middle">' + esc(c.label) + '</text>');
+
+      // The hit target is the whole band, not the painted pixels, so the
+      // pointer never has to find a 24px column or a one-pixel sliver.
+      out.push('<rect class="hit" x="' + (L + band * i).toFixed(1) + '" y="' + T
+        + '" width="' + band.toFixed(1) + '" height="' + plotH + '" fill="transparent"'
+        + ' tabindex="0" role="button" data-col="' + esc(c.key) + '"'
+        + ' aria-label="' + esc(c.label + ', ' + money(c.total)) + '"/>');
+      out.push('<rect class="lift" x="' + (L + band * i).toFixed(1) + '" y="' + T
+        + '" width="' + band.toFixed(1) + '" height="' + plotH + '" rx="4"/>');
+    });
+
+    return '<svg class="cg-svg" width="' + W + '" height="' + H + '"'
+      + ' viewBox="0 0 ' + W + ' ' + H + '" role="img"'
+      + ' aria-label="Cost of goods by ' + (f.graphBy === 'year' ? 'year' : 'season')
+      + '">' + out.join('') + '</svg>';
+  }
+
+  function roundedTop(x, y2, w, h, r) {
+    var rr = Math.min(r, w / 2, h);
+    return 'M' + x + ' ' + (y2 + h).toFixed(1)
+      + 'V' + (y2 + rr).toFixed(1)
+      + (rr ? 'a' + rr + ' ' + rr + ' 0 0 1 ' + rr + ' -' + rr : '')
+      + 'h' + (w - rr * 2).toFixed(1)
+      + (rr ? 'a' + rr + ' ' + rr + ' 0 0 1 ' + rr + ' ' + rr : '')
+      + 'V' + (y2 + h).toFixed(1) + 'Z';
+  }
+
+  function renderChart(list) {
+    var box = $('#chart');
+    if (!box) return;
+    box.hidden = !f.graph;
+    if (!f.graph) { box.innerHTML = ''; return; }
+
+    var cols = columns(list);
+    var byYear = f.graphBy === 'year';
+    var head = '<div class="cg-ctop">'
+      + '<h2 class="cg-ctitle" id="chartTitle">Cost of goods by '
+      + (byYear ? 'year' : 'season') + '</h2>'
+      + '<span class="cg-csub">' + (filtered() ? 'the lines on screen' : 'every line')
+      + (byYear ? ' · by the year the money lands in' : '') + '</span>'
+      + '<span class="cg-cby" role="group" aria-label="What the columns are">'
+      + '<button type="button" data-by="season" aria-pressed="' + (!byYear) + '">Season</button>'
+      + '<button type="button" data-by="year" aria-pressed="' + byYear + '">Year</button>'
+      + '</span></div>';
+
+    if (!cols.length) {
+      box.innerHTML = head + '<p class="cg-empty">Nothing on screen has a figure on '
+        + 'it yet, so there is nothing to draw.</p>';
+      return;
+    }
+
+    box.innerHTML = head
+      + '<div class="cg-leg">'
+      + '<span><i class="bulk"></i>Bulk</span><span><i class="sms"></i>SMS</span></div>'
+      + chartSvg(cols)
+      + '<div class="cg-tip" id="cgTip" hidden></div>';
+    chartCols = cols;
+  }
+
+  var chartCols = [];
+
+  // Labels come off the sheet, so they go in as text rather than as markup.
+  function showTip(key, host) {
+    var tip = $('#cgTip');
+    var col = chartCols.filter(function (c) { return c.key === key; })[0];
+    if (!tip || !col) return;
+    tip.textContent = '';
+    var head = document.createElement('div');
+    head.appendChild(document.createTextNode(col.label + ' '));
+    var b = document.createElement('b');
+    b.textContent = money(col.total);
+    head.appendChild(b);
+    tip.appendChild(head);
+    (D.kinds || []).forEach(function (k) {
+      if (!col.parts[k.key]) return;
+      var row = document.createElement('div');
+      row.className = 'r';
+      var i = document.createElement('i');
+      i.className = KIND_CLASS[k.key] || '';
+      row.appendChild(i);
+      row.appendChild(document.createTextNode(k.label + ' ' + money(col.parts[k.key])));
+      tip.appendChild(row);
+    });
+    var box = $('#chart').getBoundingClientRect();
+    var at = host.getBoundingClientRect();
+    tip.hidden = false;
+    var left = at.left - box.left + at.width / 2 - tip.offsetWidth / 2;
+    tip.style.left = Math.max(4, Math.min(left, box.width - tip.offsetWidth - 4)) + 'px';
+    tip.style.top = Math.max(4, at.top - box.top - tip.offsetHeight - 6) + 'px';
+  }
+
+  function hideTip() {
+    var tip = $('#cgTip');
+    if (tip) tip.hidden = true;
+  }
+
   function render() {
     var list = shown();
     var body = (list.length
@@ -276,6 +549,7 @@
         + (filtered() ? ' matches that' : ' yet') + '.</td></tr>')
       + addRow()
       + (list.length ? footRow(list) : '');
+    renderChart(list);
     $('#t').innerHTML = '<thead>' + head() + '</thead><tbody>' + body + '</tbody>'
       + '<datalist id="cgSeasons">'
       + (D.seasons || []).map(function (x) {
@@ -602,6 +876,35 @@
       narrow('show', e.target.value || 'all');
     });
     $('#q').addEventListener('input', function (e) { narrow('q', e.target.value); });
+
+    $('#graph').addEventListener('click', function (e) {
+      f.graph = !f.graph;
+      e.currentTarget.setAttribute('aria-pressed', f.graph ? 'true' : 'false');
+      try { localStorage.setItem('jetty-cogs-graph', f.graph ? '1' : ''); }
+      catch (err) { /* private mode */ }
+      render();
+    });
+
+    var box = $('#chart');
+    box.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-by]') : null;
+      if (!b) return;
+      f.graphBy = b.dataset.by;
+      try { localStorage.setItem('jetty-cogs-graph-by', f.graphBy); }
+      catch (err) { /* private mode */ }
+      render();
+    });
+    // Same details on focus as on hover, so the chart is reachable from the
+    // keyboard rather than only from a pointer.
+    ['pointerover', 'focusin'].forEach(function (ev) {
+      box.addEventListener(ev, function (e) {
+        var hit = e.target.closest ? e.target.closest('.hit') : null;
+        if (hit) showTip(hit.dataset.col, hit);
+      });
+    });
+    ['pointerleave', 'focusout'].forEach(function (ev) {
+      box.addEventListener(ev, hideTip, true);
+    });
     $('#fYear').addEventListener('change', function (e) {
       f.year = Number(e.target.value) || f.year;
       try { localStorage.setItem('jetty-cogs-year', String(f.year)); }
@@ -609,7 +912,8 @@
       load();
     });
     $('#clr').addEventListener('click', function () {
-      f = { q: '', season: '', kind: '', show: 'all', year: f.year };
+      f = { q: '', season: '', kind: '', show: 'all', year: f.year,
+            graph: f.graph, graphBy: f.graphBy };
       $('#q').value = '';
       render();
       $('#q').focus();
@@ -635,6 +939,7 @@
         f.year = D.year;
         $('#dl').href = '/api/cogs.csv?year=' + encodeURIComponent(f.year);
         $('#bar').hidden = false;
+        $('#graph').setAttribute('aria-pressed', f.graph ? 'true' : 'false');
         $('#notice').innerHTML = '';
         render();
       });
@@ -643,6 +948,9 @@
   try {
     var kept = Number(localStorage.getItem('jetty-cogs-year'));
     if (kept >= 2015 && kept <= 2100) f.year = kept;
+    f.graph = Boolean(localStorage.getItem('jetty-cogs-graph'));
+    var by = localStorage.getItem('jetty-cogs-graph-by');
+    if (by === 'year' || by === 'season') f.graphBy = by;
   } catch (err) { /* private mode */ }
 
   load()

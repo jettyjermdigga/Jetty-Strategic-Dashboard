@@ -178,10 +178,11 @@ const CASES = [
   { file: 'labor-dept', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'labor.html', wait: '.lb-sel',
     select: ['#fDept', 'Flagship Store'], after: '.lb-foot' },
-  { file: 'cogs-light', scheme: 'light', adds: true, who: full('jeremy@jettylife.com'),
+  { file: 'cogs-light', scheme: 'light', adds: true, graph: true,
+    who: full('jeremy@jettylife.com'),
     path: 'cogs.html', wait: '.lb-sel' },
-  { file: 'cogs-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
-    path: 'cogs.html', wait: '.lb-sel' },
+  { file: 'cogs-dark', scheme: 'dark', graph: true, who: full('jeremy@jettylife.com'),
+    path: 'cogs.html', wait: '.cg-svg' },
   // One season, which is the shape it gets read in: bulk against samples.
   { file: 'cogs-season', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'cogs.html', wait: '.lb-sel',
@@ -387,6 +388,13 @@ for (const c of CASES) {
       body: fs.readFileSync(file), contentType: MIME[path.extname(file)] || 'text/plain',
     });
   });
+  // The chart is off until somebody presses Graph, so a case that wants it
+  // in the shot -- and in the contrast sweep -- says so here.
+  if (c.graph) {
+    await page.addInitScript(() => {
+      try { localStorage.setItem('jetty-cogs-graph', '1'); } catch (err) { /* private */ }
+    });
+  }
   await page.goto('http://local.test/' + (c.path || ''));
   await page.waitForSelector(c.wait || '.catbar, .pane-empty');
   if (c.type) {
@@ -736,6 +744,96 @@ for (const c of CASES) {
     // sheet mid-edit.
     await page.reload();
     await page.waitForSelector('.cg-add');
+  }
+
+  // ── the chart ─────────────────────────────────────────────────────────
+  //
+  // It reads whatever the filters leave behind, which is the whole request.
+  // The things worth driving: that filtering changes it, that the scale
+  // covers the tallest column, and that one axis never mixes its units.
+  if (c.graph) {
+    const caps = () => page.locator('.cg-svg .cap').allTextContents();
+    const cats = () => page.locator('.cg-svg .cat').allTextContents();
+
+    const allCaps = await caps();
+    const tickText = await page.locator('.cg-svg .tick').allTextContents();
+
+    // A scale that stops below the tallest column draws it out of the top
+    // of the plot. Measured: every segment's box inside the plot's box.
+    const inside = await page.evaluate(() => {
+      const svg = document.querySelector('.cg-svg');
+      const top = svg.getBoundingClientRect().top;
+      return [...svg.querySelectorAll('.seg')]
+        .every((p) => p.getBoundingClientRect().top >= top - 0.5);
+    });
+
+    // One unit per axis. $500K beside $1.5M is two styles on one scale.
+    const units = new Set(tickText.filter((t) => t !== '$0')
+      .map((t) => t.replace(/[\d.,$]/g, '')));
+    const oneUnit = units.size <= 1;
+
+    // Colour follows the kind, never the column's position. Checked by
+    // reading every two-part stack against the tokens themselves: an
+    // earlier version compared one column's fill before and after a
+    // filter, which column 0 satisfies whichever way the hue is picked.
+    const hues = await page.evaluate(() => {
+      const root = document.querySelector('.cg-chart');
+      const cs = getComputedStyle(root);
+      const paint = (v) => {
+        const d = document.createElement('div');
+        d.style.color = v;
+        document.body.appendChild(d);
+        const out = getComputedStyle(d).color;
+        d.remove();
+        return out;
+      };
+      const bulk = paint(cs.getPropertyValue('--s-bulk').trim());
+      const sms = paint(cs.getPropertyValue('--s-sms').trim());
+      const segs = [...document.querySelectorAll('.cg-svg .seg')]
+        .map((p) => ({ fill: paint(getComputedStyle(p).fill),
+                       y: p.getBoundingClientRect().top,
+                       x: Math.round(p.getBoundingClientRect().left) }));
+      const by = {};
+      segs.forEach((g) => { (by[g.x] = by[g.x] || []).push(g); });
+      // Bulk sits at the bottom of every stack, samples on top.
+      return Object.keys(by).filter((x) => by[x].length === 2).map((x) => {
+        const pair = by[x].slice().sort((a, b) => a.y - b.y);
+        return pair[1].fill === bulk && pair[0].fill === sms;
+      });
+    });
+
+    await page.selectOption('#fKind', 'sms');
+    await page.waitForTimeout(120);
+    const smsCaps = await caps();
+    await page.selectOption('#fKind', '');
+    await page.waitForTimeout(120);
+
+    // By year is a different question off the same rows.
+    await page.click('[data-by="year"]');
+    await page.waitForTimeout(120);
+    const yearCats = await cats();
+    await page.click('[data-by="season"]');
+    await page.waitForTimeout(120);
+
+    // The tooltip is the overflow home for the split, on focus as on hover.
+    await page.locator('.cg-svg .hit').first().focus();
+    await page.waitForSelector('#cgTip:not([hidden])');
+    const tip = await page.locator('#cgTip').textContent();
+
+    const filters = smsCaps.length > 0 && smsCaps.join() !== allCaps.join();
+    const years = yearCats.length > 0 && yearCats.every((y) => /^\d{4}$/.test(y));
+    const keptHue = hues.length > 0 && hues.every(Boolean);
+    const split = /Bulk|SMS/.test(tip);
+    const okChart = inside && oneUnit && filters && years && keptHue && split;
+
+    console.log('  chart: ' + allCaps.length + ' columns'
+      + ', ' + (inside ? 'inside the plot' : 'OVERFLOWS THE PLOT')
+      + ', ' + (oneUnit ? 'one axis unit' : 'MIXED AXIS UNITS: ' + [...units].join('/'))
+      + ', ' + (filters ? 'follows the filter' : 'IGNORES THE FILTER')
+      + ', ' + (years ? 'by year works' : 'BY YEAR BROKEN')
+      + ', ' + (keptHue ? 'hue follows the kind' : 'HUE NOT KEYED TO THE KIND')
+      + ', ' + (split ? 'tooltip on focus' : 'NO TOOLTIP ON FOCUS'));
+    if (!okChart) process.exitCode = 1;
   }
 
   // The row is meant to be one line. Eleven chips fit only because the chip

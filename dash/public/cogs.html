@@ -41,6 +41,7 @@
     <button class="lb-clr" id="clr" type="button" hidden>Clear</button>
 
     <button class="lb-add" id="add" type="button">+ Add a line</button>
+    <button class="lb-add" id="graph" type="button" aria-pressed="false">Graph</button>
 
     <span class="bd-grow"></span>
 
@@ -49,6 +50,11 @@
   </div>
 
   <div class="lb-vs" id="vs" hidden></div>
+
+  <!-- The chart reads whatever the filters leave behind, and the sheet below
+       it is the table view: every figure on the chart is in a cell you can
+       read without hovering over anything. -->
+  <section class="cg-chart" id="chart" hidden aria-labelledby="chartTitle"></section>
 
   <div class="bd-wrap cg-wrap" id="wrap" hidden><table class="bd-t cg-t" id="t"></table></div>
 </main>

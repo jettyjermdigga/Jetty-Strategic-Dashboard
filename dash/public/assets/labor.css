@@ -192,3 +192,80 @@
 .cg-t .cg-add .cg-season{width:100%;text-align:left}
 .cg-t .cg-add .cg-amt{width:84px}
 .cg-go{padding:4px 10px;white-space:nowrap}
+
+/* ── COGS: the chart ─────────────────────────────────────────────────────
+   Two series, so two categorical hues -- and not the brand's. Deep Sea and
+   Atlantic are a hue apart and failed the validator outright: normal-vision
+   ΔE 7.7 against a floor of 15, which is to say nobody could tell the two
+   halves of a stack apart, colour vision or no. These two clear every check
+   in both modes (worst adjacent CVD ΔE 24.7 light / 26.8 dark). */
+.cg-chart{
+  --s-bulk:#2a78d6;
+  --s-sms:#eb6834;
+  --s-grid:var(--surface-alt);
+  --s-gap:#fff;                      /* the 2px that separates the segments */
+  background:var(--cm-cell,#fff);
+  border:1px solid var(--surface-alt);border-radius:10px;
+  padding:14px 16px 10px;margin:0 0 14px;position:relative;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .cg-chart{
+    --s-bulk:#3987e5; --s-sms:#d95926; --s-gap:#22262e; background:#22262e;
+  }
+}
+:root[data-theme="dark"] .cg-chart{
+  --s-bulk:#3987e5; --s-sms:#d95926; --s-gap:#22262e; background:#22262e;
+}
+:root[data-theme="light"] .cg-chart{
+  --s-bulk:#2a78d6; --s-sms:#eb6834; --s-gap:#fff; background:#fff;
+}
+.cg-chart[hidden]{display:none}
+
+.cg-ctop{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.cg-ctitle{
+  font-family:var(--display);font-weight:600;font-size:14px;color:var(--ink);margin:0;
+}
+.cg-csub{font-family:var(--mono);font-size:10.5px;opacity:.72}
+.cg-cby{margin-left:auto;display:flex;gap:4px}
+.cg-cby button{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  padding:4px 9px;border-radius:6px;cursor:pointer;
+  border:1px solid var(--surface-alt);background:transparent;color:var(--ink);
+}
+.cg-cby button[aria-pressed="true"]{background:var(--primary);color:#fff;border-color:var(--primary)}
+
+/* Rect for bars, as the legend mirrors the mark. Text stays in the ink
+   token: a label wearing the series colour is the thing that stops being
+   legible first. */
+.cg-leg{display:flex;gap:16px;flex-wrap:wrap;margin:2px 0 8px}
+.cg-leg span{font-family:var(--mono);font-size:10.5px;color:var(--ink);opacity:.85;
+  display:inline-flex;align-items:center;gap:6px}
+.cg-leg i{width:11px;height:11px;border-radius:2px;display:inline-block}
+.cg-leg i.bulk{background:var(--s-bulk)}
+.cg-leg i.sms{background:var(--s-sms)}
+
+.cg-svg{display:block;max-width:100%;height:auto;overflow:visible}
+.cg-svg .grid{stroke:var(--s-grid);stroke-width:1}
+.cg-svg .tick{font-family:var(--mono);font-size:9.5px;fill:var(--ink);opacity:.72}
+.cg-svg .cat{font-family:var(--mono);font-size:10.5px;fill:var(--ink);opacity:.82}
+.cg-svg .cap{font-family:var(--mono);font-size:10.5px;fill:var(--ink)}
+.cg-svg .seg{cursor:default}
+.cg-svg .seg:focus{outline:none}
+.cg-svg .hit:hover + .lift,.cg-svg .hit:focus + .lift{opacity:.18}
+.cg-svg .lift{opacity:0;pointer-events:none;fill:var(--ink)}
+
+.cg-tip{
+  position:absolute;pointer-events:none;z-index:4;
+  background:var(--cm-cell,#fff);border:1px solid var(--surface-alt);border-radius:8px;
+  padding:7px 10px;box-shadow:0 6px 18px rgba(0,0,0,.12);
+  font-family:var(--mono);font-size:11px;color:var(--ink);white-space:nowrap;
+}
+:root[data-theme="dark"] .cg-tip{background:#22262e}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .cg-tip{background:#22262e} }
+.cg-tip[hidden]{display:none}
+.cg-tip b{font-size:13px}
+.cg-tip .r{display:flex;align-items:center;gap:6px;margin-top:3px;opacity:.9}
+.cg-tip .r i{width:10px;height:2px;border-radius:1px;display:inline-block}
+.cg-tip .r i.bulk{background:var(--s-bulk)}
+.cg-tip .r i.sms{background:var(--s-sms)}
+.cg-empty{font-family:var(--body);font-size:13.5px;opacity:.75;padding:16px 2px}

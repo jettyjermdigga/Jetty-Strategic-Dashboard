@@ -2189,6 +2189,32 @@ describe('the COGS years', () => {
        'the cursor does not go back to the season box');
   });
 
+  // The chart reads whatever the filters leave behind. The page is an IIFE
+  // and cannot be imported, so the gate checks the shape; tests/shot.mjs
+  // drives the real thing, including the colour and the axis.
+  it('graphs what the filters leave behind, in two validated hues', () => {
+    const page = rd('public/assets/cogs.js');
+    const css = rd('public/assets/labor.css');
+    ok(/renderChart\(list\)/.test(page),
+       'the chart is drawn from something other than the filtered list');
+    // Colour follows the kind, never the column's position: narrowing the
+    // sheet must not repaint what survives.
+    ok(/var\(--s-' \+ k \+ '\)/.test(page),
+       'the segment colour is not keyed to the kind');
+    // The brand's own two neutrals failed the validator outright -- normal
+    // vision deltaE 7.7 against a floor of 15 -- so the chart does not use
+    // them, and must not quietly go back to them.
+    ok(/--s-bulk:#2a78d6/.test(css) && /--s-sms:#eb6834/.test(css),
+       'the validated light hues are gone');
+    ok(/--s-bulk:#3987e5/.test(css) && /--s-sms:#d95926/.test(css),
+       'the dark mode steps are gone');
+    ok(!/--s-(bulk|sms):\s*var\(--(good|watch)\)/.test(css),
+       'a status colour is being used for a series');
+    // Two series, so a legend is always there -- identity is never left to
+    // colour alone.
+    ok(/cg-leg/.test(page), 'the legend is gone');
+  });
+
   it('files a figure typed before the columns, once, at boot', () => {
     const fn = rd('worker/store.js');
     ok(/splitCogsYears/.test(fn), 'the migration is gone');
