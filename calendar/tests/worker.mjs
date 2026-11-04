@@ -611,7 +611,8 @@ console.log('the reminder run');
 
 const SEND_ENV = { ...ENV, RESEND_KEY: 're_test_key',
                    REMINDER_FROM: 'Jetty Calendar <jeremy@jettylife.com>',
-                   REMINDER_REPLY_TO: 'jeremy@jettylife.com' };
+                   REMINDER_REPLY_TO: 'jeremy@jettylife.com',
+                   REMINDER_BCC: 'jeremy@jettylife.com' };
 
 const sendCall = async (p, body, env) => {
   const res = await worker.fetch(new Request('https://cal.test' + p, {
@@ -643,6 +644,26 @@ await t('sends one email to everybody on the deadline', async () => {
     && /Line sheet to Sunnyside/.test(one.subject)
     && /two colourways/.test(one.text)
     && one.auth === 'Bearer re_test_key';
+});
+
+// Blind, so whoever is watching sees every reminder without appearing on a
+// To line that already carries an agency.
+await t('blind-copies the watcher, off the recipients\' To line', async () => {
+  const one = mail.sent[0];
+  return one.bcc.join(',') === 'jeremy@jettylife.com'
+    && !one.to.some((x) => /jeremy@/.test(x));
+});
+
+await t('does not copy somebody twice who is already on the deadline', async () => {
+  mail.sent.length = 0;
+  await call('POST', '/api/items', {
+    title: 'Tax filing', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'Jeremy@jettylife.com, joe@jettylife.com',
+  });
+  await sendCall('/api/reminders/send', { on: ymd(2) });
+  const one = mail.sent.filter((m) => /Tax filing/.test(m.subject))[0];
+  return one && one.to.indexOf('jeremy@jettylife.com') >= 0 && one.bcc === undefined;
 });
 
 await t('marks it sent, so the next run leaves it alone', async () => {

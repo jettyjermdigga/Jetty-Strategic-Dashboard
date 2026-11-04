@@ -177,6 +177,13 @@ file and one secret.
 From `jeremy@jettylife.com`, with replies going to the same address, both set
 in `wrangler.toml`.
 
+**Jeremy is blind-copied on every reminder** (`REMINDER_BCC`), so there is no
+need to tag himself on each deadline to know what went out. Blind rather than
+a visible CC: the mail already comes *from* that address, so copying it to
+the same person reads as a mistake — and a To line carrying an agency and an
+internal list is one somebody replies-all to. Anybody already tagged on the
+deadline is not copied twice. Empty the var to turn it off.
+
 **Nothing goes out until it is set up**, and until then the run records why
 and sends nothing rather than failing quietly:
 

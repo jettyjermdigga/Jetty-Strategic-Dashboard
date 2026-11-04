@@ -810,6 +810,7 @@ async function runReminders(db, env, today, by) {
         key: env.RESEND_KEY,
         from: env.REMINDER_FROM,
         replyTo: env.REMINDER_REPLY_TO || '',
+        bcc: env.REMINDER_BCC || '',
         to: recipientsOf(item),
         subject,
         body,

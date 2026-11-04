@@ -51,10 +51,18 @@ export function whyNotSending(env) {
  * one is a From address on a domain nobody has verified yet -- which is a
  * DNS job, not a code one, so the message has to survive to the page.
  */
-export async function sendMail({ key, from, replyTo, to, subject, body, post }) {
+export async function sendMail({ key, from, replyTo, to, bcc, subject, body, post }) {
   const list = (Array.isArray(to) ? to : [to]).filter(Boolean);
   if (!list.length) throw new Error('No one to send it to.');
   if (!from) throw new Error('No From address is set.');
+
+  // A blind copy, so whoever is watching sees every reminder that goes out
+  // without appearing on the recipients' To line -- and without being
+  // copied twice when they are already on the deadline themselves.
+  const have = new Set(list.map((x) => String(x).toLowerCase()));
+  const blind = (Array.isArray(bcc) ? bcc : String(bcc || '').split(','))
+    .map((x) => String(x).trim()).filter(Boolean)
+    .filter((x) => !have.has(x.toLowerCase()));
 
   const res = await post(RESEND_URL, {
     method: 'POST',
@@ -67,6 +75,7 @@ export async function sendMail({ key, from, replyTo, to, subject, body, post }) 
       to: list,
       subject,
       text: body,
+      ...(blind.length ? { bcc: blind } : {}),
       // Replies go to a person, not to the Worker. Without this a reply to
       // a reminder goes to whatever mailbox the From address is, which may
       // be one nobody reads.

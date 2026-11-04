@@ -56,6 +56,18 @@ crons = ["10 11 * * *"]
 REMINDER_FROM = "Jetty Calendar <jeremy@jettylife.com>"
 REMINDER_REPLY_TO = "jeremy@jettylife.com"
 
+# Blind-copied on every reminder, so somebody sees what went out without
+# having to be tagged on each deadline.
+#
+# Blind rather than a visible CC: the mail already comes FROM this address,
+# so copying it to the same person reads as a mistake -- and a To line
+# carrying an agency and an internal list is one somebody replies-all to.
+# Replies reach this address anyway, through REMINDER_REPLY_TO.
+#
+# Anybody already tagged on the deadline is not copied twice. Empty it to
+# turn the copy off.
+REMINDER_BCC = "jeremy@jettylife.com"
+
 # Who may add or edit calendar items. Everyone else Cloudflare Access lets in
 # sees the calendar read-only. Comma-separated, matched case-insensitively.
 #
