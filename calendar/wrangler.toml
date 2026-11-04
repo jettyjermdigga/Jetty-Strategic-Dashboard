@@ -37,7 +37,25 @@ database_id = "__D1_DATABASE_ID__"
 binding = "FILES"
 bucket_name = "jetty-calendar-files"
 
+# The morning reminder run: everybody tagged on a deadline that falls
+# tomorrow gets told. 11:10 UTC is a little after 6am Eastern, so it lands
+# before the day starts -- and on the :10 rather than the hour, where every
+# cron on the platform fires at once.
+#
+# Nothing goes out until RESEND_KEY is set as a secret. Until then the run
+# records why it could not send and sends nothing. See worker/mail.js.
+[triggers]
+crons = ["10 11 * * *"]
+
 [vars]
+# Who the reminders come from, and where a reply to one lands.
+#
+# The address has to be on a domain verified with the mail service or the
+# send is refused -- which is a DNS job and not a code one, so the refusal
+# is carried through to the page word for word. See the README.
+REMINDER_FROM = "Jetty Calendar <jeremy@jettylife.com>"
+REMINDER_REPLY_TO = "jeremy@jettylife.com"
+
 # Who may add or edit calendar items. Everyone else Cloudflare Access lets in
 # sees the calendar read-only. Comma-separated, matched case-insensitively.
 #

@@ -32,6 +32,7 @@ import {
 } from './listing.js';
 import { deadlineFor, deadlineAction, PREFIX as DEADLINE_PREFIX } from './deadlines.js';
 import { cleanEmails, dueReminders, reminderText, recipientsOf } from './reminders.js';
+import { sendMail, canSend, whyNotSending, MAX_PER_RUN } from './mail.js';
 import {
   ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, cleanKey as boxyKey,
   pickable, leaderboard, standings, csv as boxyCsv, personSummary, staffMember,
@@ -331,6 +332,9 @@ async function migrateSocialKind(db) {
 // rows are duplicated and which carry both keys. Guarded by meta, and safe to
 // re-run -- a row that has moved no longer carries the merged key.
 const EMAIL_SPLIT_KEY = 'email-sms-split-2026-10';
+// Not a migration: the last reminder run, kept so the page can say what
+// happened rather than leaving somebody to guess from an inbox.
+const REMINDER_RUN_KEY = 'reminders-last-run';
 
 async function migrateEmailSmsSplit(db) {
   if (!(await claim(db, EMAIL_SPLIT_KEY))) return;
@@ -766,6 +770,77 @@ function normalise(input, existing) {
   applyBlanks(out, subs);
 
   return { row: out, errors };
+}
+
+// ── the reminder run ──────────────────────────────────────────────────
+//
+// Reads what is owed, sends it, and writes reminded_at on each one that
+// went. Called from the cron every morning and from /api/reminders/send
+// when somebody wants to see it work rather than wait until seven.
+//
+// reminded_at is written AFTER the send, not before: a crash in between
+// sends one person a second reminder, where the other order would leave
+// somebody with none and nothing to show it. Of the two, the duplicate is
+// the one that does not cost anybody a deadline.
+async function runReminders(db, env, today, by) {
+  const when = /^\d{4}-\d{2}-\d{2}$/.test(String(today || ''))
+    ? today : new Date().toISOString().slice(0, 10);
+
+  const rows = ((await db.prepare(
+    "SELECT id, title, event_type, status, start_date, notes, remind_emails, reminded_at "
+    + "FROM items WHERE event_type = 'deadline' AND remind_emails IS NOT NULL "
+    + "AND remind_emails != '' AND reminded_at IS NULL").all()).results) || [];
+
+  const all = dueReminders(rows, when);
+  const owed = all.slice(0, MAX_PER_RUN);
+  const out = { on: when, owed: all.length, sent: 0, failed: 0,
+                more: all.length > owed.length, errors: [], by: by || 'schedule' };
+
+  if (!owed.length) return out;
+  if (!canSend(env)) {
+    out.failed = owed.length;
+    out.errors.push(whyNotSending(env));
+    return out;
+  }
+
+  for (const item of owed) {
+    const { subject, body } = reminderText(item, when);
+    try {
+      await sendMail({
+        key: env.RESEND_KEY,
+        from: env.REMINDER_FROM,
+        replyTo: env.REMINDER_REPLY_TO || '',
+        to: recipientsOf(item),
+        subject,
+        body,
+        post: fetch,
+      });
+      await db.prepare('UPDATE items SET reminded_at = ? WHERE id = ?')
+        .bind(new Date().toISOString(), item.id).run();
+      out.sent += 1;
+    } catch (err) {
+      // One bad address does not stop the rest of the morning. The
+      // deadline keeps a null reminded_at, so the next run tries again.
+      out.failed += 1;
+      if (out.errors.length < 5) {
+        out.errors.push(String(item.title || item.id) + ': '
+          + String((err && err.message) || err));
+      }
+    }
+  }
+
+  // So the page can say when it last ran and what happened, rather than
+  // leaving somebody to guess from an inbox.
+  try {
+    await db.prepare(
+      'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+      .bind(REMINDER_RUN_KEY, JSON.stringify(out), new Date().toISOString()).run();
+  } catch (err) {
+    // A note for a human, and it must never be able to fail a run that has
+    // already sent the mail. try/catch rather than .catch(): whether run()
+    // hands back a promise is a fact about the driver, not about this code.
+  }
+  return out;
 }
 
 const COLS = [
@@ -1430,6 +1505,7 @@ async function handleApi(request, env, url, who, ctx) {
         ? 'Your account is not on the calendar editor list.'
         : 'Sign in to add calendar items.' }, 403));
 
+
   // What the reminder run would send today, without sending it.
   //
   // Nothing here sends mail -- no provider is bound to this Worker. This is
@@ -1454,7 +1530,28 @@ async function handleApi(request, env, url, who, ctx) {
       to: recipientsOf(r),
       ...reminderText(r, today),
     }));
-    return json({ on: today, due, sending: false });
+    const last = await db.prepare('SELECT value, applied_at FROM meta WHERE key = ?')
+      .bind(REMINDER_RUN_KEY).first();
+    let lastRun = null;
+    try { lastRun = last && last.value ? JSON.parse(last.value) : null; } catch (err) { lastRun = null; }
+    return json({
+      on: today, due,
+      // Whether pressing send would actually send, and why not if it would
+      // not -- rather than leaving a listing to be read as a thing that went.
+      sending: canSend(env),
+      why: canSend(env) ? '' : whyNotSending(env),
+      lastRun, lastRunAt: (last && last.applied_at) || null,
+    });
+  }
+
+  // The same run, on purpose, now. How somebody checks it works without
+  // waiting until the morning -- and it really does send, which is why it
+  // is a POST by an editor rather than something a page load can do.
+  if (path === '/api/reminders/send' && method === 'POST') {
+    const denied = requireEditor(); if (denied) return denied;
+    const body = await request.json().catch(() => ({}));
+    const out = await runReminders(db, env, body && body.on, who.email);
+    return json(out);
   }
 
 
@@ -2078,5 +2175,35 @@ export default {
 
     // Everything else is a built page.
     return env.ASSETS.fetch(request);
+  },
+
+  /**
+   * The morning run: tell everybody tagged on a deadline that falls
+   * tomorrow.
+   *
+   * Failures are swallowed on purpose. A thrown scheduled handler is retried
+   * and retried, and every retry is another chance to send somebody a second
+   * copy of the same reminder -- while the reason is already written into
+   * meta, where the page shows it.
+   */
+  async scheduled(event, env, ctx) {
+    const run = (async () => {
+      const db = env.DB;
+      if (!db) return;
+      await ensureSchema(db);
+      try {
+        await runReminders(db, env, null, 'schedule');
+      } catch (err) {
+        try {
+          await db.prepare(
+            'INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+            .bind(REMINDER_RUN_KEY,
+                  JSON.stringify({ error: String((err && err.message) || err) }),
+                  new Date().toISOString()).run();
+        } catch (e2) { /* nothing left to tell anybody with */ }
+      }
+    })();
+    if (ctx && ctx.waitUntil) ctx.waitUntil(run);
+    return run;
   },
 };

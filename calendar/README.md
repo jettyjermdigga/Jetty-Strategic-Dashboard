@@ -165,14 +165,50 @@ A list typed on one of the Worker's own Sunnyside deadlines survives its
 source item being saved again — `deadlineFor()` knows nothing about the list,
 so the update that keeps the deadline in step deliberately carries it across.
 
-**Nothing sends it yet.** No mail provider is bound to this Worker, and
-picking one is a decision rather than a default. What exists is the half that
-can be built and checked without one: who is owed a reminder, and what it
-says. `GET /api/reminders/due` answers both for any day —
-`?on=2026-11-09` to look ahead — and reports `sending: false` so nobody reads
-a listing as a thing that went out. Whatever ends up doing the sending calls
-`dueReminders()` and `reminderText()` in `worker/reminders.js`, then writes
-`reminded_at`.
+### Sending them
+
+A cron at **11:10 UTC** — a little after 6am Eastern, so it is in an inbox
+before the day starts — sends everything owed. Mail goes through **Resend**,
+an HTTPS call: a Worker has no socket to speak SMTP over, and the alternative
+was an OAuth token against somebody's mailbox that quietly expires.
+`worker/mail.js` is the whole of what knows the provider; swapping it is that
+file and one secret.
+
+From `jeremy@jettylife.com`, with replies going to the same address, both set
+in `wrangler.toml`.
+
+**Nothing goes out until it is set up**, and until then the run records why
+and sends nothing rather than failing quietly:
+
+1. **Verify jettylife.com with Resend.** It gives you two or three DNS
+   records — a DKIM `TXT` on `resend._domainkey`, and an `include:` to add to
+   the domain's existing SPF record. *Add to* the SPF record; a second
+   `v=spf1` record on the same name breaks both, and this domain already
+   sends through Google Workspace.
+2. **Put the API key where secrets go**, not in `[vars]` — a deploy
+   overwrites every var in that file and leaves secrets alone:
+
+       cd calendar && npx wrangler secret put RESEND_KEY
+
+3. **Check it** without waiting for the morning. `GET /api/reminders/due`
+   says who is owed one, what it would say, whether a send would actually go
+   (`sending`) and why not if it would not (`why`), plus what the last run
+   did. `?on=2026-11-09` looks at another day.
+
+   `POST /api/reminders/send` runs it now, for real. Editors only, and
+   deliberately not a button on the page.
+
+Two limits worth knowing, both of them about blast radius rather than about
+the provider. One deadline takes at most **25 addresses**: a reminder going
+to thirty people is a mailing list somebody has built by accident. One run
+sends at most **50 reminders**; a run that hits that says `more: true` and
+the next one picks up the rest.
+
+`reminded_at` is written **after** the send, not before. A crash in between
+sends somebody a second copy; the other order would leave somebody with none
+and nothing to show for it, and of the two only one costs a person their
+deadline. A send the service refuses leaves `reminded_at` null on purpose, so
+the next morning tries again.
 
 ## Reading the calendar
 

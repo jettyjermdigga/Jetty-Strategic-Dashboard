@@ -79,6 +79,23 @@ const ENV = {
   // the header alone identifies an editor. Never how production runs.
 };
 
+// The mail service, stubbed at the network -- globalThis.fetch is what the
+// Worker reaches for. Nothing here talks to Resend, and no test needs a key
+// that would work if it did.
+const mail = { sent: [], fail: '' };
+globalThis.fetch = async (url, opts) => {
+  if (String(url).startsWith('https://api.resend.com/')) {
+    const body = JSON.parse(opts.body);
+    if (mail.fail) {
+      return { ok: false, status: 403,
+               json: async () => ({ message: mail.fail }) };
+    }
+    mail.sent.push({ ...body, auth: opts.headers.authorization });
+    return { ok: true, status: 200, json: async () => ({ id: 'id-' + mail.sent.length }) };
+  }
+  throw new Error('Unexpected fetch to ' + url);
+};
+
 const call = async (method, p, body) => {
   const res = await worker.fetch(new Request('https://cal.test' + p, {
     method,
@@ -585,6 +602,158 @@ await t('keeps the list on a Worker-made deadline when its source moves', async 
   const after = rows('SELECT * FROM items WHERE deadline_for = ?', srcId)[0];
   return after.remind_emails === 'amy@jettylife.com'
     && after.start_date === ymd(70 - 21);
+});
+
+// ── actually sending them ──────────────────────────────────────────────
+
+console.log('');
+console.log('the reminder run');
+
+const SEND_ENV = { ...ENV, RESEND_KEY: 're_test_key',
+                   REMINDER_FROM: 'Jetty Calendar <jeremy@jettylife.com>',
+                   REMINDER_REPLY_TO: 'jeremy@jettylife.com' };
+
+const sendCall = async (p, body, env) => {
+  const res = await worker.fetch(new Request('https://cal.test' + p, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json',
+               'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' },
+    body: JSON.stringify(body || {}),
+  }), env || SEND_ENV, { waitUntil() {} });
+  return { status: res.status, body: await res.json().catch(() => null) };
+};
+
+let sendId = '';
+await t('sends one email to everybody on the deadline', async () => {
+  mail.sent.length = 0;
+  const made = await call('POST', '/api/items', {
+    title: 'Line sheet to Sunnyside', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    notes: 'Autumn, two colourways.',
+    remind_emails: 'katie@jettylife.com, jim@sunnyside.co',
+  });
+  sendId = made.body.item.id;
+  const r = await sendCall('/api/reminders/send', { on: ymd(2) });
+  const one = mail.sent[0];
+  return r.status === 200 && r.body.sent === 1 && r.body.failed === 0
+    && mail.sent.length === 1
+    && one.to.join(',') === 'katie@jettylife.com,jim@sunnyside.co'
+    && one.from === 'Jetty Calendar <jeremy@jettylife.com>'
+    && one.reply_to === 'jeremy@jettylife.com'
+    && /Line sheet to Sunnyside/.test(one.subject)
+    && /two colourways/.test(one.text)
+    && one.auth === 'Bearer re_test_key';
+});
+
+await t('marks it sent, so the next run leaves it alone', async () => {
+  const got = rows('SELECT reminded_at FROM items WHERE id = ?', sendId)[0];
+  mail.sent.length = 0;
+  const again = await sendCall('/api/reminders/send', { on: ymd(2) });
+  return Boolean(got.reminded_at) && again.body.sent === 0 && mail.sent.length === 0;
+});
+
+// A deadline whose reminder failed keeps a null reminded_at, so the next
+// morning tries again rather than writing it off.
+await t('does not mark one sent that the mail service refused', async () => {
+  const made = await call('POST', '/api/items', {
+    title: 'Permit renewal', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'colleen@jettylife.com',
+  });
+  const id = made.body.item.id;
+  mail.fail = 'The jettylife.com domain is not verified.';
+  const r = await sendCall('/api/reminders/send', { on: ymd(2) });
+  mail.fail = '';
+  const got = rows('SELECT reminded_at FROM items WHERE id = ?', id)[0];
+  return r.body.failed >= 1 && got.reminded_at === null
+    && /not verified/.test((r.body.errors || []).join(' '));
+});
+
+// One bad address must not cost everybody else their morning.
+await t('keeps going past one that failed', async () => {
+  const errs = await sendCall('/api/reminders/send', { on: ymd(2) });
+  return errs.status === 200;
+});
+
+// Until the key is set nothing goes out, and the reason is carried through
+// rather than reported as a send that worked.
+await t('sends nothing, and says why, with no key set', async () => {
+  // Something has to be owed, or the run returns before it ever looks for
+  // a key and this passes for the wrong reason.
+  mail.sent.length = 0;
+  const made = await call('POST', '/api/items', {
+    title: 'Insurance renewal', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'joe@jettylife.com',
+  });
+  const r = await sendCall('/api/reminders/send', { on: ymd(2) },
+                           { ...ENV, REMINDER_FROM: 'a@b.com' });
+  const got = rows('SELECT reminded_at FROM items WHERE id = ?', made.body.item.id)[0];
+  return r.body.owed >= 1 && r.body.sent === 0 && mail.sent.length === 0
+    && got.reminded_at === null
+    && /RESEND_KEY/.test((r.body.errors || []).join(' '));
+});
+
+await t('says on the listing whether a send would go at all', async () => {
+  const off = await call('GET', '/api/reminders/due?on=' + ymd(2));
+  const res = await worker.fetch(new Request(
+    'https://cal.test/api/reminders/due?on=' + ymd(2),
+    { headers: { 'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' } }),
+    SEND_ENV, { waitUntil() {} });
+  const on = await res.json();
+  return off.body.sending === false && /RESEND_KEY/.test(off.body.why)
+    && on.sending === true && on.why === '';
+});
+
+// Nobody who is not an editor can make this Worker send mail.
+await t('will not let a reader send anything', async () => {
+  const res = await worker.fetch(new Request('https://cal.test/api/reminders/send', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json',
+               'Cf-Access-Authenticated-User-Email': 'arlynn@jettylife.com' },
+    body: '{}',
+  }), SEND_ENV, { waitUntil() {} });
+  return res.status === 403;
+});
+
+await t('runs on the cron without being asked', async () => {
+  mail.sent.length = 0;
+  sqlite.prepare("UPDATE items SET reminded_at = NULL, start_date = ?, end_date = ? "
+    + 'WHERE id = ?').run(ymd(0), ymd(0), sendId);
+  await worker.scheduled({}, SEND_ENV, { waitUntil() {} });
+  const got = rows('SELECT reminded_at FROM items WHERE id = ?', sendId)[0];
+  return mail.sent.length === 1 && Boolean(got.reminded_at);
+});
+
+// A thrown scheduled handler is retried, and every retry is another chance
+// to send somebody the same reminder twice.
+// Not a provider limit -- the blast radius of a bug. A mistake that made
+// everything look due would otherwise send one email per deadline this
+// calendar has ever held, in one run, before anybody could stop it.
+await t('will not send more than one run should, and says there are more', async () => {
+  mail.sent.length = 0;
+  const put = sqlite.prepare(
+    'INSERT INTO items (id, title, event_type, department, status, start_date, '
+    + 'end_date, all_day, remind_emails) '
+    + "VALUES (?, ?, 'deadline', 'wholesale', 'Booked', ?, ?, 1, 'flood@jettylife.com')");
+  for (let i = 0; i < 60; i += 1) {
+    put.run('flood-' + i, 'Flood ' + i, ymd(3), ymd(3));
+  }
+  const r = await sendCall('/api/reminders/send', { on: ymd(2) });
+  const left = rows("SELECT COUNT(*) AS n FROM items WHERE id LIKE 'flood-%' "
+    + 'AND reminded_at IS NULL')[0].n;
+  const capped = mail.sent.length <= 50 && r.body.more === true && left > 0;
+  sqlite.prepare("DELETE FROM items WHERE id LIKE 'flood-%'").run();
+  return capped;
+});
+
+await t('swallows a failure on the cron rather than being retried into one', async () => {
+  mail.fail = 'nope';
+  sqlite.prepare('UPDATE items SET reminded_at = NULL WHERE id = ?').run(sendId);
+  let threw = false;
+  try { await worker.scheduled({}, SEND_ENV, { waitUntil() {} }); } catch (e) { threw = true; }
+  mail.fail = '';
+  return !threw;
 });
 
 console.log('');
