@@ -134,6 +134,45 @@ of them are editors-only.
 | Start / end time | 24-hour on the way in |
 | Venue, Address, City, State, Zip | events only |
 | Notes, Link | |
+| Who should be reminded | deadlines only — see below |
+
+## Reminders on a deadline
+
+A Deadline carries a list of email addresses, and each of them is sent a
+reminder the day before it falls. The deadline's own **notes are the
+message**: there is no second body field, because a reminder that says
+something different from the calendar entry is a second thing to keep up to
+date.
+
+Typed rather than picked from a list of staff. The people who need telling
+are not always on this calendar — the Sunnyside deadlines are *for* an
+agency, and whoever is drawing the artwork may be anywhere. Addresses are
+lower-cased and de-duplicated on the way in, so `Katie@` and `katie@` are one
+person and get one email; anything that is not an address is refused at the
+point it is typed rather than discovered by a reminder that never arrives.
+
+Two things it has to get right, and both have tests:
+
+* **A missed day is caught up, not skipped.** A reminder that arrives on the
+  morning of the deadline is late and still worth having; one that never
+  arrives is the whole failure. So it is owed from the day before *until* the
+  deadline itself, and `reminded_at` is what stops a second one.
+* **Moving the deadline, or adding somebody, clears `reminded_at`.**
+  Otherwise the new date is one nobody is told about and the new recipient
+  never hears at all.
+
+A list typed on one of the Worker's own Sunnyside deadlines survives its
+source item being saved again — `deadlineFor()` knows nothing about the list,
+so the update that keeps the deadline in step deliberately carries it across.
+
+**Nothing sends it yet.** No mail provider is bound to this Worker, and
+picking one is a decision rather than a default. What exists is the half that
+can be built and checked without one: who is owed a reminder, and what it
+says. `GET /api/reminders/due` answers both for any day —
+`?on=2026-11-09` to look ahead — and reports `sending: false` so nobody reads
+a listing as a thing that went out. Whatever ends up doing the sending calls
+`dueReminders()` and `reminderText()` in `worker/reminders.js`, then writes
+`reminded_at`.
 
 ## Reading the calendar
 

@@ -1097,8 +1097,8 @@ await page.locator('button[data-act="close"]').click();
 console.log('a deadline');
 await page.locator('#addBtn').click();
 await page.locator('.f-kind[value="deadline"]').check();
-await t('takes the same short form as a meeting', async () =>
-  (await page.locator('.trail-n').textContent()).includes('of 5'));
+await t('takes the short form, plus the one question a meeting has no use for',
+  async () => (await page.locator('.trail-n').textContent()).includes('of 6'));
 await page.locator('button[data-act="next"]').click();
 await page.locator('#f-title').fill('Line sheet due');
 await page.locator('button[data-act="next"]').click();
@@ -1113,11 +1113,20 @@ await t('keeps the hidden end date in step with the start', async () => {
   return (await page.locator('#f-end').inputValue()) === '2026-11-20';
 });
 await page.locator('button[data-act="next"]').click();
+
+// Typed rather than picked: the people who need telling are not always on
+// this calendar.
+await t('asks who to remind, the day before', async () =>
+  (await page.locator('#f-remind').isVisible()));
+await page.locator('#f-remind').fill('Katie@jettylife.com, jim@sunnyside.co');
+await page.locator('button[data-act="next"]').click();
 await page.locator('button[data-act="save"]').click();
 await page.waitForFunction(() => document.querySelector('#modal').hidden);
 await t('posts as its own kind, one date wide', async () =>
   seen.posted.event_type === 'deadline'
   && seen.posted.start_date === '2026-11-20' && seen.posted.end_date === '2026-11-20');
+await t('sends the addresses with it', async () =>
+  seen.posted.remind_emails === 'Katie@jettylife.com, jim@sunnyside.co');
 await t('has a Deadlines chip beside Meetings and Social', async () =>
   (await page.locator('.fchip[data-axis="kinds"][data-key="deadline"]').count()) === 1
   && (await page.locator('.fchip[data-axis="kinds"][data-key="meeting"]').count()) === 1);

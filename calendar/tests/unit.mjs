@@ -36,6 +36,10 @@ import {
 import { deadlineFor, deadlineAction, leadFor, minusDays, deadlineTitle,
          PREFIX, WATCHED_SUBS } from '../worker/deadlines.js';
 import { planSmsDedupe } from '../worker/repair.js';
+import {
+  cleanEmails, remindOn, isDue, dueReminders, reminderText, recipientsOf,
+  REMIND_LEAD, MAX_RECIPIENTS,
+} from '../worker/reminders.js';
 import { noticeBody, summarise, countUnread, isAutomatic,
          CALENDAR_AUTHOR } from '../worker/notices.js';
 import { aov, netOfFee, hasReport, readyToPost, money, salesMessage, deliver,
@@ -2693,6 +2697,140 @@ describe('the person endpoint is gated like the board', () => {
     const body = idx.slice(at, at + 600);
     ok(/boxyKey\(url\.searchParams\.get\('key'\)\)/.test(body), 'the key is not cleaned');
     ok(/staffMember\(key\)/.test(body), 'any key would be queried for');
+  });
+});
+
+// ── who gets told, the day before ──────────────────────────────────────
+//
+// A deadline carries a list of addresses and the reminder goes out the day
+// before it falls. Nothing here sends anything -- this is the selection and
+// the wording, which is the half that can be tested without a mail
+// provider, a clock or a network.
+
+describe('the reminder list', () => {
+  it('takes what comes out of a mail client', () => {
+    // Commas, semicolons and bare spaces are all what a row of recipients
+    // looks like when it is pasted from somewhere else.
+    eq(cleanEmails('a@b.com, c@d.com; e@f.com g@h.com', []),
+       ['a@b.com', 'c@d.com', 'e@f.com', 'g@h.com']);
+  });
+
+  it('is one person however they capitalise their own address', () => {
+    eq(cleanEmails('Katie@Jettylife.com, katie@jettylife.com', []),
+       ['katie@jettylife.com']);
+  });
+
+  it('refuses what is not an address, and says which', () => {
+    const errs = [];
+    eq(cleanEmails('good@x.com, Katie, nope@', errs), ['good@x.com']);
+    eq(errs.length, 2);
+    ok(/Katie/.test(errs.join(' ')), 'it did not say which one was wrong');
+  });
+
+  it('will not carry a mailing list by accident', () => {
+    const many = [];
+    for (let i = 0; i < MAX_RECIPIENTS + 5; i += 1) many.push('p' + i + '@x.com');
+    const errs = [];
+    const got = cleanEmails(many.join(','), errs);
+    eq(got.length, MAX_RECIPIENTS);
+    ok(errs.length, 'it took more than the cap without saying so');
+  });
+
+  it('reads a stored list back', () => {
+    eq(recipientsOf({ remind_emails: 'a@b.com,c@d.com' }), ['a@b.com', 'c@d.com']);
+    eq(recipientsOf({ remind_emails: '' }), []);
+    eq(recipientsOf({}), []);
+  });
+});
+
+describe('when the reminder is owed', () => {
+  const deadline = (over) => Object.assign({
+    event_type: 'deadline', status: 'Booked', start_date: '2026-11-10',
+    remind_emails: 'a@b.com', reminded_at: null,
+  }, over || {});
+
+  it('is the day before', () => {
+    eq(REMIND_LEAD, 1);
+    eq(remindOn('2026-11-10'), '2026-11-09');
+    // Across a month end, which is where counting back by hand goes wrong.
+    eq(remindOn('2026-12-01'), '2026-11-30');
+    eq(remindOn('2027-01-01'), '2026-12-31');
+  });
+
+  it('is not owed before that day', () => {
+    ok(!isDue(deadline(), '2026-11-08'), 'it went two days early');
+  });
+
+  it('is owed on it', () => {
+    ok(isDue(deadline(), '2026-11-09'), 'it did not go the day before');
+  });
+
+  // A day the run did not happen is caught up rather than skipped: a
+  // reminder on the morning of the deadline is late and still worth having,
+  // where one that never arrives is the whole failure.
+  it('is still owed on the day itself, if it was missed', () => {
+    ok(isDue(deadline(), '2026-11-10'), 'a missed day was skipped');
+  });
+
+  it('is not owed once the date has gone by', () => {
+    ok(!isDue(deadline(), '2026-11-11'), 'it told somebody about yesterday');
+  });
+
+  it('is not owed twice', () => {
+    ok(!isDue(deadline({ reminded_at: '2026-11-09T07:00:00.000Z' }), '2026-11-10'),
+       'it would have sent a second one');
+  });
+
+  it('is not owed on a cancelled deadline, or one with nobody on it', () => {
+    ok(!isDue(deadline({ status: 'Cancelled' }), '2026-11-09'), 'cancelled still reminded');
+    ok(!isDue(deadline({ remind_emails: '' }), '2026-11-09'), 'reminded nobody, loudly');
+  });
+
+  // Only a deadline is reminded about. An event the day after tomorrow is
+  // not a deadline and has no list to remind.
+  it('is not owed on anything that is not a deadline', () => {
+    ok(!isDue(deadline({ event_type: 'event' }), '2026-11-09'), 'an event was reminded');
+    ok(!isDue(deadline({ event_type: 'meeting' }), '2026-11-09'), 'a meeting was reminded');
+  });
+
+  it('picks the owed ones out of a pile', () => {
+    const rows = [
+      deadline({ id: 'a' }),
+      deadline({ id: 'b', start_date: '2027-03-01' }),
+      deadline({ id: 'c', reminded_at: 'done' }),
+      deadline({ id: 'd', event_type: 'event' }),
+    ];
+    eq(dueReminders(rows, '2026-11-09').map((r) => r.id), ['a']);
+  });
+});
+
+describe('what the reminder says', () => {
+  const it0 = { title: 'Artwork to Sunnyside', start_date: '2026-11-10',
+                notes: 'Spring campaign, three sizes.' };
+
+  it('names the deadline and when it falls', () => {
+    const out = reminderText(it0, '2026-11-09');
+    ok(/Artwork to Sunnyside/.test(out.subject), 'the subject does not name it');
+    ok(/tomorrow/.test(out.subject), 'the subject does not say when');
+    ok(/November 10, 2026/.test(out.body), 'the body does not carry the date');
+  });
+
+  // The deadline's own notes are the message. A second field would be a
+  // second place to keep up to date, and a reminder that says something
+  // different from the calendar entry is worse than no reminder.
+  it('carries the notes as the message', () => {
+    ok(/three sizes/.test(reminderText(it0, '2026-11-09').body),
+       'the notes did not make it into the reminder');
+  });
+
+  it('reads right on the day itself, when a day was missed', () => {
+    const out = reminderText(it0, '2026-11-10');
+    ok(/today/.test(out.subject), 'a caught-up reminder still says tomorrow');
+  });
+
+  it('says something sensible with nothing to go on', () => {
+    const out = reminderText({}, '2026-11-09');
+    ok(out.subject.length > 0 && out.body.length > 0, 'it produced an empty mail');
   });
 });
 

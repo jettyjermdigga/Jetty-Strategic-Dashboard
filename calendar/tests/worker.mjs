@@ -481,6 +481,112 @@ await t('hands the backfilled row over to the ordinary rule', async () => {
   return d.length === 1 && d[0].start_date === ymd(60 - 21);
 });
 
+// ── who gets reminded ──────────────────────────────────────────────────
+
+console.log('');
+console.log('reminders on a deadline');
+
+let dlId = '';
+await t('keeps the list, cleaned, on a deadline', async () => {
+  const r = await call('POST', '/api/items', {
+    title: 'Artwork to Sunnyside', event_type: 'deadline', department: 'marketing',
+    status: 'Booked', start_date: ymd(5), end_date: ymd(5), all_day: 1,
+    notes: 'Three sizes.',
+    remind_emails: 'Katie@jettylife.com; katie@jettylife.com, jim@sunnyside.co',
+  });
+  dlId = r.body && r.body.item && r.body.item.id;
+  const got = rows('SELECT remind_emails FROM items WHERE id = ?', dlId)[0];
+  return r.status === 201
+    && got.remind_emails === 'katie@jettylife.com,jim@sunnyside.co';
+});
+
+await t('refuses an address that is not one, and keeps the old list', async () => {
+  const r = await call('PATCH', '/api/items/' + dlId, { remind_emails: 'Katie' });
+  const got = rows('SELECT remind_emails FROM items WHERE id = ?', dlId)[0];
+  return r.status === 400 && /not an email address/.test(r.body.error)
+    && got.remind_emails === 'katie@jettylife.com,jim@sunnyside.co';
+});
+
+// Only a deadline is reminded about, so only a deadline keeps a list. A
+// meeting carrying one would be a list its own form never showed.
+await t('drops the list if the item stops being a deadline', async () => {
+  await call('PATCH', '/api/items/' + dlId, { event_type: 'meeting' });
+  const got = rows('SELECT remind_emails FROM items WHERE id = ?', dlId)[0];
+  const gone = got.remind_emails === null || got.remind_emails === '';
+  await call('PATCH', '/api/items/' + dlId,
+             { event_type: 'deadline', remind_emails: 'katie@jettylife.com' });
+  return gone;
+});
+
+await t('lists what is owed on the day before, and nothing on the day after',
+  async () => {
+    const before = await call('GET', '/api/reminders/due?on=' + ymd(4));
+    const after = await call('GET', '/api/reminders/due?on=' + ymd(6));
+    const mine = (before.body.due || []).filter((x) => x.id === dlId)[0];
+    return before.status === 200 && mine
+      && mine.to.join(',') === 'katie@jettylife.com'
+      && /Artwork to Sunnyside/.test(mine.subject)
+      && !(after.body.due || []).some((x) => x.id === dlId);
+  });
+
+// Nothing in the Worker sends mail. The endpoint says so rather than
+// leaving somebody to assume a reminder went out because it was listed.
+await t('says plainly that it is not sending anything', async () => {
+  const r = await call('GET', '/api/reminders/due?on=' + ymd(4));
+  return r.body.sending === false;
+});
+
+await t('stops listing one that has already been reminded', async () => {
+  sqlite.prepare("UPDATE items SET reminded_at = '2026-01-01T00:00:00.000Z' WHERE id = ?")
+    .run(dlId);
+  const r = await call('GET', '/api/reminders/due?on=' + ymd(4));
+  return !(r.body.due || []).some((x) => x.id === dlId);
+});
+
+// A reminder already sent was about the date it was sent for. Move the
+// deadline and it has to go again, or the new date is one nobody is told
+// about.
+await t('tells people again when the deadline moves', async () => {
+  await call('PATCH', '/api/items/' + dlId, { start_date: ymd(20), end_date: ymd(20) });
+  const got = rows('SELECT reminded_at FROM items WHERE id = ?', dlId)[0];
+  return got.reminded_at === null;
+});
+
+await t('tells a newly added person, rather than leaving them out', async () => {
+  sqlite.prepare("UPDATE items SET reminded_at = '2026-01-01T00:00:00.000Z' WHERE id = ?")
+    .run(dlId);
+  await call('PATCH', '/api/items/' + dlId,
+             { remind_emails: 'katie@jettylife.com, joe@jettylife.com' });
+  const got = rows('SELECT reminded_at FROM items WHERE id = ?', dlId)[0];
+  return got.reminded_at === null;
+});
+
+await t('leaves it alone on a save that changed neither', async () => {
+  sqlite.prepare("UPDATE items SET reminded_at = '2026-01-01T00:00:00.000Z' WHERE id = ?")
+    .run(dlId);
+  await call('PATCH', '/api/items/' + dlId, { notes: 'Still three sizes.' });
+  const got = rows('SELECT reminded_at FROM items WHERE id = ?', dlId)[0];
+  return got.reminded_at === '2026-01-01T00:00:00.000Z';
+});
+
+// The list belongs to the deadline, not to the item the deadline was made
+// from -- deadlineFor() knows nothing about it, so writing every column on
+// an update would wipe whoever was tagged on it.
+await t('keeps the list on a Worker-made deadline when its source moves', async () => {
+  const r = await call('POST', '/api/items', {
+    title: 'Winter Push', event_type: 'marketing', department: 'marketing',
+    status: 'Booked', start_date: ymd(50), end_date: ymd(50), all_day: 1,
+    sub_types: 'paid-advo',
+  });
+  const srcId = r.body.item.id;
+  const made = rows('SELECT * FROM items WHERE deadline_for = ?', srcId)[0];
+  await call('PATCH', '/api/items/' + made.id, { remind_emails: 'amy@jettylife.com' });
+  await call('PATCH', '/api/items/' + srcId, { start_date: ymd(70), end_date: ymd(70) });
+  const after = rows('SELECT * FROM items WHERE deadline_for = ?', srcId)[0];
+  return after.remind_emails === 'amy@jettylife.com'
+    && after.start_date === ymd(70 - 21);
+});
+
 console.log('');
 console.log(ran + ' checks, ' + (failed ? failed + ' FAILED' : 'all passed'));
 process.exit(failed ? 1 : 0);

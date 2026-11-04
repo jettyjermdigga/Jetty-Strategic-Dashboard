@@ -1180,6 +1180,17 @@
     add('Link', it.url ? '<a href="' + esc(it.url) + '" target="_blank" rel="noopener">'
       + esc(it.url) + '</a>' : '');
     add('Description / Notes', it.notes ? '<span class="det-notes">' + esc(it.notes) + '</span>' : '');
+    // On the deadline, and said plainly: a list nobody can see is a list
+    // nobody checks, and the people on it are the ones who get the mail.
+    var to = String(it.remind_emails || '').split(',').map(function (x) {
+      return x.trim();
+    }).filter(Boolean);
+    add('Reminder the day before', to.length
+      ? '<span class="det-to">' + to.map(esc).join('<br>') + '</span>'
+        + (it.reminded_at
+          ? '<span class="det-sent">Sent ' + esc(String(it.reminded_at).slice(0, 10)) + '</span>'
+          : '<span class="det-sent is-wait">Not sent yet</span>')
+      : '');
     var prods = productsOf(it);
     add('Product highlights', prods.length
       ? '<div class="det-prods">' + prods.map(function (p) {
@@ -1658,6 +1669,17 @@
           + '<div class="hint">The export from the till or the platform, however it comes.</div>'
           + '</div>')
 
+      // Typed rather than picked. The people who need telling are not always
+      // on this calendar -- the Sunnyside deadlines are FOR an agency, and
+      // whoever is drawing the artwork may be anywhere.
+      + sect('remind', 'Who should be reminded?', 'the day before \u2014 optional',
+          '<div class="fld fld-wide"><label for="f-remind">Email addresses</label>'
+          + '<input type="text" id="f-remind" autocomplete="off"'
+          + ' placeholder="katie@jettylife.com, jim@sunnyside.co"'
+          + ' value="' + esc(String(it.remind_emails || '').split(',').join(', ')) + '">'
+          + '<p class="fld-note">Commas between them. Each one gets a reminder the day '
+          + 'before this deadline, with whatever is in the notes below.</p></div>')
+
       + sect('final', 'Anything else?', '',
           '<div class="fld"><label for="f-status">Status</label><select id="f-status">'
           + tax('statuses').map(function (st) {
@@ -1732,7 +1754,8 @@
     // a meeting has neither.
     function activeSteps() {
       var k = kind();
-      if (k === 'meeting' || k === 'deadline') return ['kind', 'title', 'dept', 'when', 'final'];
+      if (k === 'deadline') return ['kind', 'title', 'dept', 'when', 'remind', 'final'];
+      if (k === 'meeting') return ['kind', 'title', 'dept', 'when', 'final'];
 
       // Six screens against an Event's ten. Department stays because a shared
       // van calendar is only readable if it says whose booking each one is.
@@ -2332,6 +2355,7 @@
       vehicles: vals('.f-veh:checked'),
       start_date: $('#f-start').value,
       end_date: $('#f-end').value || $('#f-start').value,
+      remind_emails: $('#f-remind') ? $('#f-remind').value : '',
       all_day: allDay ? 1 : 0,
       start_time: allDay ? '' : $('#f-stime').value,
       end_time: allDay ? '' : $('#f-etime').value,

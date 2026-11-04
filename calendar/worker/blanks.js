@@ -28,6 +28,11 @@ export const MARKETING_BLANKS = ['needs', 'staff_count', 'vehicles'];
 // Reported after the fact, and only on something that actually sold.
 export const RESULTS_ONLY = ['event_fee', 'orders', 'net_revenue'];
 
+// Only a Deadline is reminded about, so only a Deadline keeps a list of who
+// to remind. A meeting changed to a deadline and back would otherwise carry
+// a list its own form has stopped showing.
+export const DEADLINE_ONLY = ['remind_emails'];
+
 // The sub-types that clear anything, and only on a Marketing item.
 //
 // Scoped to the kind on purpose. An Event can carry an Email sub-type because
@@ -56,6 +61,7 @@ export function applyBlanks(out, subs) {
   }
   // Only an Event takes money at the door.
   if (kind !== 'event') for (const k of RESULTS_ONLY) out[k] = null;
+  if (kind !== 'deadline') for (const k of DEADLINE_ONLY) out[k] = null;
   // A deadline is a point, not a span: it ends the day it falls on.
   if (kind === 'deadline') out.end_date = out.start_date;
 

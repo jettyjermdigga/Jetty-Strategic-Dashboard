@@ -51,6 +51,16 @@ CREATE TABLE IF NOT EXISTS items (
   -- typed in, which is what keeps those from being moved or deleted under
   -- them when an unrelated Paid Advo item changes.
   deadline_for TEXT,
+  -- Who gets told the day before a deadline falls, as lower-cased addresses
+  -- in a comma-separated list. Typed rather than picked from a list of
+  -- staff: the Sunnyside deadlines are FOR an agency, and whoever is drawing
+  -- the artwork is not always on this calendar. Only a Deadline carries one.
+  remind_emails TEXT,
+  -- When that reminder actually went. It is what stops a second one going
+  -- on the day of the deadline itself, and it is cleared when the date or
+  -- the list changes -- a deadline moved a week later has to tell people
+  -- again. See worker/reminders.js.
+  reminded_at TEXT,
   -- When the event was actually put on the Website Events page, and by
   -- whom. Ticking "Add to Website Events page" is the request; this is the
   -- answer to it, and the two are deliberately separate -- an event can be

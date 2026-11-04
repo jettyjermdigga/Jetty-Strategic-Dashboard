@@ -31,6 +31,7 @@ import {
   listingAction, listingMessage, needed as listingNeeded, WEBSITE_NEED,
 } from './listing.js';
 import { deadlineFor, deadlineAction, PREFIX as DEADLINE_PREFIX } from './deadlines.js';
+import { cleanEmails, dueReminders, reminderText, recipientsOf } from './reminders.js';
 import {
   ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, cleanKey as boxyKey,
   pickable, leaderboard, standings, csv as boxyCsv, personSummary, staffMember,
@@ -106,6 +107,8 @@ const ADDED_COLUMNS = [
   'deadline_for TEXT',
   // And for whether a website listing has actually been done.
   'listed_at TEXT', 'listed_by TEXT',
+  // And for who gets reminded the day before a deadline.
+  'remind_emails TEXT', 'reminded_at TEXT',
 ];
 
 // Same idea, on the attachments table.
@@ -746,6 +749,13 @@ function normalise(input, existing) {
   out.caption = clean(pick('caption'), 4000);
   out.tags = clean(pick('tags'), 500);
 
+  // Who gets told the day before. Cleaned here rather than in the form, so
+  // the API and a backfill get the same list as somebody typing into the
+  // page -- and so a misspelled address is refused at the point it is
+  // entered rather than discovered by a reminder that never arrives.
+  const to = cleanEmails(pick('remind_emails'), errors);
+  out.remind_emails = to.length ? to.join(',') : null;
+
   const prod = normaliseProducts(pick('products'));
   out.products = prod.products;
   for (const e of prod.errors) errors.push(e);
@@ -764,7 +774,11 @@ const COLS = [
   'venue', 'address', 'city', 'state', 'zip', 'notes', 'url', 'products',
   'social_type', 'channels', 'pillar', 'production', 'caption', 'tags',
   'event_fee', 'orders', 'net_revenue',
+  'remind_emails',
 ];
+// Deliberately NOT in COLS. reminded_at is written by whatever sends the
+// reminder, never by somebody saving the item -- a save that cleared it
+// would send the same reminder again.
 
 // Year / Week / Start (Week) / End (Week) / Month / Day are not stored; they are
 // attached here so every reader sees the same values.
@@ -1398,6 +1412,11 @@ async function handleApi(request, env, url, who, ctx) {
       return { deadline: withRetail({ id: did, ...row, deadline_for: after.id }) };
     }
 
+    // The reminder list belongs to the deadline, not to the item the
+    // deadline was made from -- deadlineFor() knows nothing about it, so
+    // writing every column would wipe whoever was tagged on it the moment
+    // the source item was saved again.
+    row.remind_emails = had.remind_emails || null;
     await db.prepare(
       'UPDATE items SET ' + COLS.map((c) => c + ' = ?').join(', ')
       + ', updated_by = ?, updated_at = ? WHERE id = ?',
@@ -1410,6 +1429,34 @@ async function handleApi(request, env, url, who, ctx) {
     : json({ error: who.email
         ? 'Your account is not on the calendar editor list.'
         : 'Sign in to add calendar items.' }, 403));
+
+  // What the reminder run would send today, without sending it.
+  //
+  // Nothing here sends mail -- no provider is bound to this Worker. This is
+  // the half that can exist and be checked without one: the selection and
+  // the wording. Whatever ends up doing the sending calls this same pair of
+  // functions and then writes reminded_at.
+  if (path === '/api/reminders/due' && method === 'GET') {
+    const denied = requireEditor(); if (denied) return denied;
+    // The day can be named, so what goes out tomorrow can be looked at
+    // today rather than waited for.
+    const asked = String(url.searchParams.get('on') || '');
+    const today = /^\d{4}-\d{2}-\d{2}$/.test(asked)
+      ? asked : new Date().toISOString().slice(0, 10);
+    const rows = ((await db.prepare(
+      "SELECT id, title, event_type, status, start_date, notes, remind_emails, reminded_at "
+      + "FROM items WHERE event_type = 'deadline' AND remind_emails IS NOT NULL "
+      + "AND remind_emails != '' AND reminded_at IS NULL").all()).results) || [];
+    const due = dueReminders(rows, today).map((r) => ({
+      id: r.id,
+      title: r.title,
+      start_date: r.start_date,
+      to: recipientsOf(r),
+      ...reminderText(r, today),
+    }));
+    return json({ on: today, due, sending: false });
+  }
+
 
   if (path === '/api/items' && method === 'POST') {
     const denied = requireEditor(); if (denied) return denied;
@@ -1947,6 +1994,15 @@ async function handleApi(request, env, url, who, ctx) {
         'UPDATE items SET ' + COLS.map((c) => c + ' = ?').join(', ')
         + ', updated_by = ?, updated_at = ? WHERE id = ?',
       ).bind(...COLS.map((c) => row[c]), who.email, now, id).run();
+      // A reminder already sent was about the date and the people it was
+      // sent for. Move the deadline a week later, or add somebody to the
+      // list, and it has to go again -- otherwise the new date is one
+      // nobody is told about and the new recipient never hears at all.
+      if (existing.reminded_at
+          && (String(existing.start_date || '') !== String(row.start_date || '')
+              || String(existing.remind_emails || '') !== String(row.remind_emails || ''))) {
+        await db.prepare('UPDATE items SET reminded_at = NULL WHERE id = ?').bind(id).run();
+      }
       tellWatchers('changed', existing, { id, ...row });
       tellWebsite(existing, { id, ...row });
       // Taking the request off withdraws it, so the answer to it goes too.

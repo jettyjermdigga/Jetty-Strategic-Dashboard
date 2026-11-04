@@ -1029,3 +1029,16 @@ body.can-edit .mo-cell:hover::after{opacity:.55}
 .who-add #whoPts{width:72px;font-family:var(--mono);text-align:right}
 .who-hint{flex-basis:100%;margin:0}
 .who-err{color:var(--watch)}
+
+/* ── Who gets reminded ───────────────────────────────────────────────────
+   On the deadline's detail panel. A list nobody can see is a list nobody
+   checks, and the addresses on it are the ones that get the mail. */
+.det-to{font-family:var(--mono);font-size:12px;line-height:1.7}
+.det-sent{
+  display:block;margin-top:4px;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;
+  opacity:.78;
+}
+.fld-note{
+  font-family:var(--body);font-size:12px;opacity:.72;margin:5px 0 0;line-height:1.45;
+}
