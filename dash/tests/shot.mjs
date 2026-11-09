@@ -951,7 +951,82 @@ for (const c of CASES) {
       png = { ok: false, coloured: false, why: err.message };
     }
 
-    const okChart = inside && oneUnit && filters && years && keptHue && split
+    // The three tick-box groups. Each one has to actually take money OUT of
+    // the chart -- a control that redraws the same picture is worse than no
+    // control, because it reads as an answer.
+    const ticks = await page.evaluate(async () => {
+      const wait = () => new Promise((r) => setTimeout(r, 90));
+      const caps = () => [...document.querySelectorAll('.cg-svg')]
+        .map((s) => [...s.querySelectorAll('.hit')].map((h) => h.dataset.col)).flat();
+      const panels = () => document.querySelectorAll('.cg-panel').length;
+      const tick = async (kind, value, on) => {
+        const el = document.querySelector(
+          '[data-off="' + kind + '"][value="' + CSS.escape(value) + '"]');
+        if (!el || el.checked === on) return Boolean(el);
+        el.click();
+        await wait();
+        return true;
+      };
+      const out = {};
+
+      // Seasons: unticking one takes its column away and leaves the rest.
+      const before = [...new Set(caps())];
+      const victim = before[0];
+      out.hadSeasonBox = await tick('season', victim, false);
+      const afterS = [...new Set(caps())];
+      out.seasonGone = !afterS.includes(victim) && afterS.length === before.length - 1;
+      await tick('season', victim, true);
+      out.seasonBack = [...new Set(caps())].length === before.length;
+
+      // Kinds: unticking one leaves one chart, not an empty one beside it.
+      const twoPanels = panels();
+      out.hadKindBox = await tick('kind', 'sms', false);
+      out.kindGone = panels() === twoPanels - 1;
+      await tick('kind', 'sms', true);
+      out.kindBack = panels() === twoPanels;
+
+      // Years: the money a year holds has to leave the SEASON columns too,
+      // not just the year ones -- the column is the season's own total and
+      // rebuilding it from r.amount would redraw the figure just removed.
+      // Each panel prints its own sum. Read that rather than the bars: it
+      // is the number a person actually reads off the chart.
+      const totalOf = () => [...document.querySelectorAll('.cg-psub')]
+        .reduce((a, el) => a + Number(String(el.textContent).replace(/[^0-9.]/g, '') || 0), 0);
+      const yearBoxes = [...document.querySelectorAll('[data-off="year"]')];
+      out.hadYearBoxes = yearBoxes.length > 1;
+      const sumBefore = totalOf();
+      out.yearTicked = await tick('year', yearBoxes[0].value, false);
+      out.yearCutSeasonTotals = totalOf() < sumBefore;
+      await tick('year', yearBoxes[0].value, true);
+      out.yearBack = Math.abs(totalOf() - sumBefore) < 1;
+
+      // A narrowed chart has to SAY it is narrowed, because the PNG goes
+      // into a deck on its own and is otherwise read as the whole year.
+      const subOf = () => String(document.querySelector('.cg-csub').textContent);
+      const plain = subOf();
+      await tick('kind', 'sms', false);
+      out.subSaysKind = /only/i.test(subOf()) && subOf() !== plain;
+      await tick('kind', 'sms', true);
+      await tick('season', before[0], false);
+      out.subSaysSeasons = /\d+ of \d+ seasons/.test(subOf());
+      await tick('season', before[0], true);
+      out.subBackToPlain = subOf() === plain;
+
+      // And the way back when everything is off.
+      await tick('season', before[0], false);
+      const all = document.querySelector('[data-all="season"]');
+      out.allButton = Boolean(all);
+      if (all) { all.click(); await wait(); }
+      out.allRestores = [...new Set(caps())].length === before.length;
+      return out;
+    });
+    const toggles = ticks.hadSeasonBox && ticks.seasonGone && ticks.seasonBack
+      && ticks.hadKindBox && ticks.kindGone && ticks.kindBack
+      && ticks.hadYearBoxes && ticks.yearTicked && ticks.yearCutSeasonTotals
+      && ticks.yearBack && ticks.allButton && ticks.allRestores
+      && ticks.subSaysKind && ticks.subSaysSeasons && ticks.subBackToPlain;
+
+    const okChart = toggles && inside && oneUnit && filters && years && keptHue && split
       && owned && noLegend && ownScale && onePanel && seriesNotTotal
       && ordered && undatedLast && png.ok && png.coloured;
 
@@ -969,6 +1044,8 @@ for (const c of CASES) {
       + ', ' + (noLegend ? 'no legend on a single series' : 'LEGEND ON A SINGLE SERIES')
       + ', ' + (split ? 'tooltip on focus' : 'NO TOOLTIP ON FOCUS')
       + ', ' + (ordered && undatedLast ? 'oldest first' : 'OUT OF TIME ORDER')
+      + ', ' + (toggles ? 'seasons, kinds and years tick on and off'
+        : 'TOGGLES BROKEN: ' + JSON.stringify(ticks))
       + ', ' + (png.ok ? (png.coloured ? 'downloads a coloured PNG'
         : 'PNG LOST ITS COLOUR') : 'NO PNG' + (png.why ? ': ' + png.why : '')));
     if (!okChart) process.exitCode = 1;

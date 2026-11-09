@@ -235,6 +235,43 @@
 .cg-cby button[aria-pressed="true"]{background:var(--primary);color:#fff;border-color:var(--primary)}
 .cg-dl{margin-left:10px;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;padding:4px 9px}
 
+/* Which kinds, which years, which seasons the chart draws.
+   Tick boxes rather than another dropdown, because the question is "these
+   four of the nine" and a one-at-a-time control cannot ask it. They are
+   exclusions, so an unticked box is the thing that says money was left out
+   -- which is why they can be remembered across reloads without anything
+   going quietly missing. */
+.cg-picks{
+  display:flex;gap:10px 22px;flex-wrap:wrap;align-items:flex-start;
+  margin:0 0 16px;padding:11px 13px;
+  border:1px solid var(--surface-alt);border-radius:9px;
+}
+.cg-pick{border:0;margin:0;padding:0;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.cg-pick legend{
+  float:left;padding:0 9px 0 0;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  opacity:.72;
+}
+.cg-tick{
+  display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;
+}
+.cg-tick input{margin:0;cursor:pointer;accent-color:var(--primary)}
+/* An unticked label is dimmed, but the box beside it is the signal --
+   nobody has to tell two greys apart to read this. */
+.cg-tick input:not(:checked) + span{opacity:.5;text-decoration:line-through}
+.cg-all{
+  font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+  padding:3px 8px;border-radius:6px;cursor:pointer;
+  border:1px solid var(--surface-alt);background:transparent;color:var(--ink);
+}
+.cg-all:hover{background:var(--wash)}
+
+@media (max-width:640px){
+  .cg-picks{gap:8px 14px;padding:10px 11px}
+  .cg-pick{gap:7px}
+}
+
 /* Two charts, not two series: samples run at a few per cent of the
    production run and stacked into one column they were a sliver nobody
    could read. Each has ONE series, so neither carries a legend box -- its

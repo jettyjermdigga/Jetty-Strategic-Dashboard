@@ -18,7 +18,14 @@
   var D = null;
   // Every way the sheet is narrowed, in one place. Empty means that field
   // asks nothing, which is why an untouched bar shows everything.
-  var f = { q: '', season: '', kind: '', show: 'all', year: 0,
+  // What the CHART leaves out, as exclusions rather than a list of what to
+  // include. A set of included keys would silently drop a season added
+  // after it was saved -- the chart would quietly stop drawing money that
+  // is on the sheet, which is the one thing it must never do. Nothing
+  // excluded means everything is drawn.
+  var OFF = function () { return { kind: {}, season: {}, year: {} }; };
+
+  var f = { q: '', season: '', kind: '', show: 'all', year: 0, off: OFF(),
             graph: false, graphBy: 'season' };
   // The row at the bottom of the sheet that is not a row yet. Kept out here
   // because the table is redrawn under it on every keystroke, and half a
@@ -103,6 +110,46 @@
   var filtered = function () {
     return Boolean(f.q || f.season || f.kind || (f.show && f.show !== 'all'));
   };
+
+  /**
+   * What the chart's own tick boxes have left out, in words.
+   *
+   * Kept apart from filtered(), which is about the TABLE and is used to
+   * decide whether the sheet says "shown" -- unticking a season on the
+   * chart does not hide a row.
+   *
+   * It exists for the download. A PNG goes into a deck with nothing around
+   * it, so a chart drawn from four of nine seasons has to say so on its own
+   * face; otherwise it is read as the whole year and nobody can tell.
+   */
+  function narrowWords() {
+    var out = [];
+    var offKinds = Object.keys(f.off.kind);
+    if (offKinds.length) {
+      var on = (D.kinds || []).filter(function (k) { return !f.off.kind[k.key]; });
+      out.push(on.length ? on.map(function (k) { return k.label; }).join(' and ')
+        + ' only' : 'nothing');
+    }
+    var offYears = Object.keys(f.off.year);
+    if (offYears.length) {
+      var ys = ((D.years || []).map(String)).filter(function (y) { return !f.off.year[y]; });
+      if (ys.length) out.push(ys.join(', '));
+    }
+    if (Object.keys(f.off.season).length && chartOffered.seasons.length) {
+      // Counted from the boxes that were actually offered, so the number
+      // here is the number of ticks on screen. Counting every season on the
+      // sheet would say "6 of 13" beside eight boxes.
+      var on = chartOffered.seasons.filter(function (x) { return !f.off.season[x.key]; });
+      out.push(on.length + ' of ' + chartOffered.seasons.length + ' seasons');
+    }
+    return out;
+  }
+
+  function chartSub() {
+    var words = narrowWords();
+    return (filtered() ? 'the lines on screen' : 'every line')
+      + (words.length ? ' \u00b7 ' + words.join(' \u00b7 ') : '');
+  }
 
   // ── Drawing ───────────────────────────────────────────────────────────
 
@@ -357,6 +404,56 @@
    * not the five columns on screen -- the chart is where a history is read,
    * and a history cut off at the window is not one.
    */
+  // A line's cost across the years still switched on. Null when it has no
+  // figure left once they are taken out, which is different from zero: a
+  // line costed at nothing is a column, a line with nothing in the years
+  // on screen is not.
+  function includedTotal(r) {
+    var n = 0;
+    var any = false;
+    Object.keys((r && r.years) || {}).forEach(function (y) {
+      if (f.off.year[y]) return;
+      var v = Number(r.years[y]);
+      if (isFinite(v)) { n += v; any = true; }
+    });
+    return any ? n : null;
+  }
+
+  // Everything the chart COULD draw, before the exclusions are applied --
+  // so a box that is unticked is still on screen to tick again. Taken from
+  // the lines the table filters left, because the chart cannot draw what
+  // the sheet is not showing.
+  function offerings(list) {
+    var seasons = [];
+    var seenS = {};
+    var years = {};
+    (list || []).forEach(function (r) {
+      var has = false;
+      Object.keys(r.years || {}).forEach(function (y) {
+        var v = Number(r.years[y]);
+        if (!isFinite(v) || !v) return;
+        has = true;
+        years[y] = true;
+      });
+      if (!has || seenS[r.season]) return;
+      seenS[r.season] = true;
+      seasons.push({ key: r.season, label: r.seasonLabel || r.season });
+    });
+    seasons.sort(function (a, b) {
+      var wa = seasonWhen(a.key);
+      var wb = seasonWhen(b.key);
+      if (wa != null && wb != null) return wa - wb;
+      if (wa != null) return -1;
+      if (wb != null) return 1;
+      return String(a.label).localeCompare(String(b.label));
+    });
+    return {
+      seasons: seasons,
+      years: Object.keys(years).sort(function (a, b) { return Number(a) - Number(b); }),
+      kinds: (D.kinds || []).map(function (k) { return { key: k.key, label: k.label }; }),
+    };
+  }
+
   function columns(list) {
     var at = {};
     (D.seasons || []).forEach(function (x, i) { at[x.key] = i; });
@@ -370,14 +467,21 @@
     };
 
     list.forEach(function (r) {
+      if (f.off.kind[r.kind] || f.off.season[r.season]) return;
       if (f.graphBy === 'year') {
         Object.keys(r.years || {}).forEach(function (y) {
+          if (f.off.year[y]) return;
           var v = Number(r.years[y]);
           if (isFinite(v) && v) put(y, y, r.kind, v);
         });
-      } else if (r.amount != null) {
-        put(r.season, r.seasonLabel || r.season, r.kind, r.amount);
+        return;
       }
+      // By season, the column is the season's own total -- but it has to be
+      // rebuilt from the years still switched on. r.amount is every year
+      // the line holds, so using it here would draw money the reader just
+      // asked to take out and leave the column taller than its own parts.
+      var a = includedTotal(r);
+      if (a != null) put(r.season, r.seasonLabel || r.season, r.kind, a);
     });
 
     var cols = order.map(function (k) { return by[k]; });
@@ -600,8 +704,8 @@
     out.push(text(PAD, PAD + 18, 'Cost of goods by '
       + (f.graphBy === 'year' ? 'year' : 'season'), 17, 600));
     out.push(text(PAD, PAD + 38,
-      (filtered() ? 'the lines on screen' : 'every line') + ' · '
-      + new Date().toISOString().slice(0, 10), 11, 400, ink, mono));
+      chartSub() + ' · ' + new Date().toISOString().slice(0, 10),
+      11, 400, ink, mono));
 
     var x = PAD;
     panels.forEach(function (panel, i) {
@@ -664,37 +768,103 @@
     img.src = url;
   }
 
+  // Three groups of tick boxes: which kinds, which years, which seasons.
+  //
+  // Boxes rather than another dropdown because the question is "these four
+  // of the nine", which a one-at-a-time control cannot ask. Real checkboxes
+  // rather than pressed buttons so they are reachable and announced as what
+  // they are.
+  function group(kind, label, items, idOf, labelOf) {
+    if (!items.length) return '';
+    var anyOff = items.some(function (x) { return f.off[kind][idOf(x)]; });
+    return '<fieldset class="cg-pick">'
+      + '<legend>' + esc(label) + '</legend>'
+      + items.map(function (x) {
+        var id = idOf(x);
+        return '<label class="cg-tick"><input type="checkbox" data-off="' + kind + '"'
+          + ' value="' + esc(id) + '"' + (f.off[kind][id] ? '' : ' checked') + '>'
+          + '<span>' + esc(labelOf(x)) + '</span></label>';
+      }).join('')
+      + (anyOff ? '<button type="button" class="cg-all" data-all="' + kind
+          + '">All</button>' : '')
+      + '</fieldset>';
+  }
+
+  function picker(avail) {
+    var id = function (x) { return x.key; };
+    var lb = function (x) { return x.label; };
+    var same = function (y) { return y; };
+    return '<div class="cg-picks">'
+      + group('kind', 'Show', avail.kinds, id, lb)
+      + group('year', 'Years', avail.years, same, same)
+      + group('season', 'Seasons', avail.seasons, id, lb)
+      + '</div>';
+  }
+
+  // Kept across reloads, because re-ticking nine seasons every morning is
+  // how a control stops being used. Safe to persist BECAUSE they are
+  // exclusions shown as unticked boxes: something left out is visible on
+  // the page as a box to tick, not as money that silently went missing.
+  var OFF_KEY = 'jetty-cogs-graph-off';
+
+  function saveOff() {
+    try { localStorage.setItem(OFF_KEY, JSON.stringify(f.off)); }
+    catch (err) { /* private mode */ }
+  }
+
+  function loadOff() {
+    var got = null;
+    try { got = JSON.parse(localStorage.getItem(OFF_KEY) || 'null'); }
+    catch (err) { got = null; }
+    if (!got || typeof got !== 'object') return OFF();
+    var out = OFF();
+    ['kind', 'season', 'year'].forEach(function (k) {
+      if (got[k] && typeof got[k] === 'object') {
+        Object.keys(got[k]).forEach(function (v) { if (got[k][v]) out[k][v] = true; });
+      }
+    });
+    return out;
+  }
+
   function renderChart(list) {
     var box = $('#chart');
     if (!box) return;
     box.hidden = !f.graph;
     if (!f.graph) { box.innerHTML = ''; return; }
 
+    chartOffered = offerings(list);
     var cols = columns(list);
     var byYear = f.graphBy === 'year';
     var head = '<div class="cg-ctop">'
       + '<h2 class="cg-ctitle" id="chartTitle">Cost of goods by '
       + (byYear ? 'year' : 'season') + '</h2>'
-      + '<span class="cg-csub">' + (filtered() ? 'the lines on screen' : 'every line')
+      + '<span class="cg-csub">' + esc(chartSub())
       + (byYear ? ' \u00b7 by the year the money lands in' : '') + '</span>'
       + '<span class="cg-cby" role="group" aria-label="What the columns are">'
       + '<button type="button" data-by="season" aria-pressed="' + (!byYear) + '">Season</button>'
       + '<button type="button" data-by="year" aria-pressed="' + byYear + '">Year</button>'
       + '</span>'
       + '<button class="lb-add cg-dl" id="cgDown" type="button">Download PNG</button>'
-      + '</div>';
+      + '</div>'
+      + picker(chartOffered);
 
     if (!cols.length) {
-      box.innerHTML = head + '<p class="cg-empty">Nothing on screen has a figure on '
-        + 'it yet, so there is nothing to draw.</p>';
+      var tight = chartOffered.seasons.length || chartOffered.years.length;
+      box.innerHTML = head
+        + '<p class="cg-empty">' + (tight
+          ? 'Nothing is left to draw. Tick something back on above.'
+          : 'Nothing on screen has a figure on it yet, so there is nothing to draw.')
+        + '</p>';
       chartCols = [];
       return;
     }
 
     // Filtering to one kind leaves one chart, and it takes the width --
-    // rather than a half-empty card sitting beside an empty one.
+    // rather than a half-empty card sitting beside an empty one. Unticking
+    // one does the same.
     var kinds = (D.kinds || []).map(function (k) { return k.key; })
-      .filter(function (k) { return !f.kind || f.kind === k; });
+      .filter(function (k) { return !f.kind || f.kind === k; })
+      .filter(function (k) { return !f.off.kind[k]; });
     var aim = kinds.length > 1 ? AIM_HALF : AIM;
 
     box.innerHTML = head
@@ -706,6 +876,10 @@
   }
 
   var chartCols = [];
+  // What the picker last offered. chartSub() is called by the export too,
+  // which has no list to work from, and a count that disagrees with the
+  // boxes on screen is worse than no count.
+  var chartOffered = { seasons: [], years: [], kinds: [] };
 
   // Labels come off the sheet, so they go in as text rather than as markup.
   //
@@ -1126,8 +1300,23 @@
     });
 
     var box = $('#chart');
+    box.addEventListener('change', function (e) {
+      var tick = e.target.closest ? e.target.closest('[data-off]') : null;
+      if (!tick) return;
+      var kind = tick.dataset.off;
+      if (tick.checked) delete f.off[kind][tick.value];
+      else f.off[kind][tick.value] = true;
+      saveOff();
+      render();
+    });
     box.addEventListener('click', function (e) {
       if (e.target.closest && e.target.closest('#cgDown')) return downloadChart();
+      var all = e.target.closest ? e.target.closest('[data-all]') : null;
+      if (all) {
+        f.off[all.dataset.all] = {};
+        saveOff();
+        return render();
+      }
       var b = e.target.closest ? e.target.closest('[data-by]') : null;
       if (!b) return;
       f.graphBy = b.dataset.by;
@@ -1153,8 +1342,9 @@
       load();
     });
     $('#clr').addEventListener('click', function () {
-      f = { q: '', season: '', kind: '', show: 'all', year: f.year,
+      f = { q: '', season: '', kind: '', show: 'all', year: f.year, off: OFF(),
             graph: f.graph, graphBy: f.graphBy };
+      saveOff();
       $('#q').value = '';
       render();
       $('#q').focus();
@@ -1189,6 +1379,7 @@
   try {
     var kept = Number(localStorage.getItem('jetty-cogs-year'));
     if (kept >= 2015 && kept <= 2100) f.year = kept;
+    f.off = loadOff();
     f.graph = Boolean(localStorage.getItem('jetty-cogs-graph'));
     var by = localStorage.getItem('jetty-cogs-graph-by');
     if (by === 'year' || by === 'season') f.graphBy = by;
