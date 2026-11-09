@@ -1914,11 +1914,23 @@ JRF_OPEX_CATEGORY_FIX = {'Donation': 'Program Services', 'Program Service': 'Pro
 def _jrf_as_of_month(raw):
     """The 'As of' cell has been typed as plain text ('As of 7/31/26') and,
     after the user re-entered it, as a real date -- handle both so a future
-    formatting change doesn't silently break the month lookup."""
+    formatting change doesn't silently break the month lookup.
+
+    Returns (None, '') for a cell this cannot read -- blank, cleared, or
+    typed as something new again. The caller skips the JRF tab on that,
+    which is what a missing JRF FILE has always done. It must not raise:
+    this is a secondary workbook somebody else maintains, and a blank cell
+    in it taking the whole dashboard off the air is how one empty cell cost
+    four days of Jetty's own figures."""
     if isinstance(raw, datetime.datetime):
         return raw.month, raw.strftime('%m/%d/%y').lstrip('0').replace('/0', '/')
-    s = str(raw).replace('As of', '').strip()
-    month = int(s.split('/')[0])
+    s = str(raw if raw is not None else '').replace('As of', '').strip()
+    head = s.split('/')[0].strip()
+    if not head.isdigit():
+        return None, ''
+    month = int(head)
+    if not 1 <= month <= 12:
+        return None, ''
     return month, s
 
 def _jrf_section_rows(ws, cat_col, acct_col, val_fn):
@@ -1941,9 +1953,10 @@ def _jrf_section_rows(ws, cat_col, acct_col, val_fn):
 def read_jrf():
     """JRF (Jetty Rock Foundation) tracks its own budget in a separate,
     simpler workbook (monthly cadence, no weekly detail) -- a distinct file
-    from the main budget.xlsb. Returns None if that file isn't present so the
-    main dashboard build never breaks on it; the JRF tab is simply omitted
-    when that happens (see build_html).
+    from the main budget.xlsb. Returns None if that file isn't present, or
+    if its 'As of' cell cannot be read, so the main dashboard build never
+    breaks on it; the JRF tab is simply omitted when that happens (see
+    build_html).
 
     Budget/Actual/Projection are all derived here rather than read from the
     Summary sheet's own (manually-typed) columns -- so month to month, the
@@ -1959,6 +1972,13 @@ def read_jrf():
     ws = wb['Summary']
     as_of_raw = ws.cell(row=4, column=2).value
     as_of_month, as_of_str = _jrf_as_of_month(as_of_raw)
+    if as_of_month is None:
+        # Every figure on this tab is cumulative to that month -- without it
+        # there is no "to date" to compare a budget against, so the tab is
+        # skipped rather than built out of a guess.
+        print("JRF 'As of' cell (Summary!B4) reads %r — skipping JRF tab"
+              % (as_of_raw,))
+        return None
 
     def norm_opex_cat(section, cat):
         return JRF_OPEX_CATEGORY_FIX.get(cat, cat) if section == 'opex' else cat
