@@ -136,13 +136,25 @@ CREATE TABLE IF NOT EXISTS comments (
 );
 CREATE INDEX IF NOT EXISTS idx_comments_item ON comments(item_id);
 
--- Who can be mentioned. Filled from Slack when a bot token is configured, so
--- there is no list to maintain by hand; anyone who has used the calendar is
--- offered too, so the picker works before Slack is wired up.
+-- Who can be mentioned and reminded, and how to reach them.
+--
+-- NOT who can get in: Cloudflare Access decides that and a row here grants
+-- nobody anything. Filled from Slack when a bot token is configured -- which
+-- covers guests, and is how an agency gets a DM -- so there is no list to
+-- maintain by hand; anyone who has used the calendar is offered too, so the
+-- picker works before Slack is wired up.
+--
+-- `manual` marks a row somebody typed here. The six-hourly Slack refresh
+-- overwrites name and slack_id on every row it finds, which would quietly
+-- undo a hand correction, so it leaves these alone. `active` is how somebody
+-- stops being notified without deleting the history of what they were on.
 CREATE TABLE IF NOT EXISTS people (
   email      TEXT PRIMARY KEY,
   name       TEXT,
   slack_id   TEXT,
+  manual     INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1,
+  added_by   TEXT,
   updated_at TEXT
 );
 

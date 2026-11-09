@@ -20,6 +20,8 @@ import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
          SUB_TYPE_MERGES } from '../worker/migrate.js';
 import { normaliseProducts, readProducts, MAX_PRODUCTS } from '../worker/products.js';
 import { applyBlanks } from '../worker/blanks.js';
+import { channelFor, cleanPerson, cleanSlackId, MAX_NAME, outsideAccess,
+         resolveRecipients, sourceOf, splitChannels, whyNoChannel } from '../worker/people.js';
 import { commentMessage, displayName, dmMentions, escapeSlack, eventUrl, eventWhen,
          slackHint, watchMessage, changedFields, eventWhere,
          WATCHED_FIELDS } from '../worker/slack.js';
@@ -2831,6 +2833,141 @@ describe('what the reminder says', () => {
   it('says something sensible with nothing to go on', () => {
     const out = reminderText({}, '2026-11-09');
     ok(out.subject.length > 0 && out.body.length > 0, 'it produced an empty mail');
+  });
+});
+
+// ── the people directory ─────────────────────────────────────────────────
+//
+// The directory decides how a reminder is delivered, so a mistake here is a
+// reminder that does not arrive. Every case below is one that costs somebody
+// their deadline if it goes wrong.
+
+describe('people directory', () => {
+  it('takes a Slack ID in any case and upper-cases it', () => {
+    eq(cleanSlackId('u0123abcd'), 'U0123ABCD');
+    eq(cleanSlackId('  W07KJ9QLM  '), 'W07KJ9QLM');
+  });
+
+  it('refuses anything that is not a Slack ID', () => {
+    for (const bad of ['', 'nope', 'U123', 'katie@jettylife.com', '0123ABCD',
+                       'U0123-ABCD', 'XU0123ABCD']) {
+      eq(cleanSlackId(bad), '', 'should refuse ' + JSON.stringify(bad));
+    }
+  });
+
+  it('needs an email and nothing else', () => {
+    const errs = [];
+    eq(cleanPerson({ name: 'Taylor' }, errs), null);
+    ok(errs.length === 1 && /email address is required/i.test(errs[0]), errs[0]);
+    const p = cleanPerson({ email: 'Taylor.Heussner@SunnySideCalifornia.com' }, []);
+    eq(p.email, 'taylor.heussner@sunnysidecalifornia.com');
+    eq(p.slack_id, null);
+    eq(p.active, 1);
+  });
+
+  // A blank Slack ID means "reach them by email" and is the common case. A
+  // WRONG one is a typo that fails a day later, to somebody not watching.
+  it('accepts a blank Slack ID and refuses a wrong one', () => {
+    eq(cleanPerson({ email: 'a@b.co', slack_id: '' }, []).slack_id, null);
+    eq(cleanPerson({ email: 'a@b.co', slack_id: '   ' }, []).slack_id, null);
+    const errs = [];
+    eq(cleanPerson({ email: 'a@b.co', slack_id: 'U12' }, errs), null);
+    ok(/not a Slack ID/.test(errs[0] || ''), 'should say what is wrong: ' + errs[0]);
+    ok(/Copy member ID/.test(errs[0] || ''), 'should say where to get one');
+  });
+
+  it('refuses an address that is not one', () => {
+    const errs = [];
+    eq(cleanPerson({ email: 'katie at jettylife' }, errs), null);
+    ok(/is not an email address/.test(errs[0] || ''), errs[0]);
+  });
+
+  it('trims a name and caps its length', () => {
+    eq(cleanPerson({ email: 'a@b.co', name: '  Katie Hehl  ' }, []).name, 'Katie Hehl');
+    eq(cleanPerson({ email: 'a@b.co', name: 'x'.repeat(200) }, []).name.length, MAX_NAME);
+  });
+
+  it('routes by Slack ID, and says so when it routes nowhere', () => {
+    eq(channelFor({ slack_id: 'U0123ABCD', active: 1 }), 'slack');
+    eq(channelFor({ slack_id: null, active: 1 }), 'email');
+    eq(channelFor({ slack_id: 'U0123ABCD', active: 0 }), 'none');
+    eq(channelFor({ slack_id: null, active: 0 }), 'none');
+    ok(/not notified/i.test(whyNoChannel({ active: 0 })), 'should explain itself');
+    eq(whyNoChannel({ slack_id: null, active: 1 }), '');
+  });
+
+  // The agency case, which is the whole reason reminders exist. Taylor is a
+  // guest in the workspace, so the roster has her Slack ID and she is DMed.
+  it('DMs a guest and emails a stranger', () => {
+    const roster = [
+      { email: 'taylor.heussner@sunnysidecalifornia.com', name: 'Taylor', slack_id: 'U0GUEST01', active: 1 },
+      { email: 'cory@jettylife.com', name: 'Cory', slack_id: 'U0CORY001', active: 1 },
+    ];
+    const got = resolveRecipients(
+      ['taylor.heussner@sunnysidecalifornia.com', 'printer@someshop.com'], roster);
+    eq(got.length, 2);
+    eq(got[0].channel, 'slack');
+    eq(got[0].slack_id, 'U0GUEST01');
+    eq(got[1].channel, 'email', 'an unknown address must still be reachable');
+    eq(got[1].known, false);
+  });
+
+  it('matches regardless of case and never tells anyone twice', () => {
+    // Mixed case on BOTH sides. The roster is lower-cased on the way in
+    // today, so a roster row that is not would only ever appear from a hand
+    // edit or an older write -- and it would fail by falling back to email,
+    // which looks exactly like someone who simply has no Slack.
+    const roster = [{ email: 'Cory@JettyLife.com', name: 'Cory', slack_id: 'U0CORY001', active: 1 }];
+    const got = resolveRecipients(
+      ['Cory@JettyLife.com', 'cory@jettylife.com', '  CORY@jettylife.com '], roster);
+    eq(got.length, 1, 'one person, one reminder');
+    eq(got[0].channel, 'slack', 'a mixed-case roster row must still match');
+    eq(got[0].slack_id, 'U0CORY001');
+  });
+
+  // Kevin's case. Somebody switched off is still named on whatever deadlines
+  // already listed them, and sending them nothing in silence is how an
+  // offboarded account goes on looking covered.
+  it('reports a switched-off person rather than dropping them', () => {
+    const roster = [{ email: 'kevin@jettylife.com', name: 'Kevin', slack_id: 'U0KEV0001', active: 0 }];
+    const got = resolveRecipients(['kevin@jettylife.com'], roster);
+    eq(got.length, 1, 'must not vanish from the list');
+    eq(got[0].channel, 'none');
+    // The reason has to travel WITH the target. The target carries no
+    // `active`, so anything that asks channelFor() about it later gets a
+    // confident 'email' back and says nothing at all.
+    ok(/not notified/i.test(got[0].why || ''),
+       'the target must carry its own reason, got ' + JSON.stringify(got[0].why));
+    eq(resolveRecipients(['printer@someshop.com'], roster)[0].why, '');
+  });
+
+  it('splits a list by how it goes out', () => {
+    const split = splitChannels([
+      { email: 'a@b.co', channel: 'slack' }, { email: 'c@d.co', channel: 'email' },
+      { email: 'e@f.co', channel: 'none' }, { email: 'g@h.co', channel: 'slack' },
+    ]);
+    eq(split.slack.map((t) => t.email), ['a@b.co', 'g@h.co']);
+    eq(split.email.map((t) => t.email), ['c@d.co']);
+    eq(split.none.map((t) => t.email), ['e@f.co']);
+  });
+
+  it('says where a row came from, so you know what a refresh will undo', () => {
+    eq(sourceOf({ manual: 1, slack_id: 'U0123ABCD' }), 'typed here');
+    eq(sourceOf({ manual: 0, slack_id: 'U0123ABCD' }), 'Slack');
+    eq(sourceOf({ manual: 0, slack_id: null }), 'seen in the calendar');
+  });
+
+  // The same trap CALENDAR_EDITORS already has a test for: a person who can
+  // be tagged and cannot sign in.
+  it('flags a directory address Access will not admit', () => {
+    const people = [
+      { email: 'cory@jettylife.com' },
+      { email: 'taylor.heussner@sunnysidecalifornia.com' },
+      { email: 'printer@someshop.com' },
+    ];
+    eq(outsideAccess(people, 'jettylife.com,sunnysidecalifornia.com'),
+       ['printer@someshop.com']);
+    eq(outsideAccess(people, ''), [], 'no policy configured means no claim');
   });
 });
 

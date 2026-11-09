@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Calendar people</title>
+<link rel="icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/assets/fonts.css">
+<link rel="stylesheet" href="/assets/rc_system.css">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/calendar.css">
+<link rel="stylesheet" href="/assets/people.css">
+<!-- Not linked from a search engine's point of view, even behind Access. -->
+<meta name="robots" content="noindex,nofollow">
+</head>
+<body>
+
+<header class="site-top">
+  <div class="brand">
+    <img src="/assets/logo.png" alt="Jetty">
+    <div class="divider"></div>
+    <div>
+      <div class="title-main">Calendar people</div>
+      <div class="title-sub" id="sub">Loading</div>
+    </div>
+  </div>
+  <div class="site-who"><a class="back" href="/">&larr; Back to the calendar</a></div>
+</header>
+
+<main class="cal-shell pp-shell">
+  <p class="pp-intro">
+    Who can be named on a deadline, and how a reminder reaches them.
+    <strong>This list does not let anybody in</strong> &mdash; Cloudflare Access
+    decides that. Most of it fills itself from Slack every few hours,
+    including guests. Add somebody here only when Slack does not know them,
+    or knows them under a different address.
+  </p>
+
+  <div id="notice"></div>
+
+  <div class="pp-bar" id="bar" hidden>
+    <span class="pp-lbl">Show</span>
+    <select id="filter" class="pp-sel" aria-label="Which people to show">
+      <option value="all">Everybody</option>
+      <option value="slack">Reached on Slack</option>
+      <option value="email">Reached by email</option>
+      <option value="none">Not notified</option>
+      <option value="typed">Typed here</option>
+    </select>
+    <button type="button" class="pp-add" id="add">Add somebody</button>
+  </div>
+
+  <form class="pp-form" id="form" hidden>
+    <div class="pp-row">
+      <label class="pp-field">
+        <span>Name</span>
+        <input type="text" id="f-name" maxlength="80" autocomplete="off">
+      </label>
+      <label class="pp-field">
+        <span>Email</span>
+        <input type="email" id="f-email" autocomplete="off" required>
+      </label>
+      <label class="pp-field">
+        <span>Slack ID <em>optional</em></span>
+        <input type="text" id="f-slack" placeholder="U0123ABCD" autocomplete="off">
+      </label>
+    </div>
+    <p class="pp-hint">
+      Leave the Slack ID blank to reach them by email. To find one: open their
+      Slack profile &rarr; the three dots &rarr; <strong>Copy member ID</strong>.
+    </p>
+    <div class="pp-actions">
+      <button type="submit" class="pp-save" id="save">Save</button>
+      <button type="button" class="pp-cancel" id="cancel">Cancel</button>
+      <span class="pp-err" id="err"></span>
+    </div>
+  </form>
+
+  <div id="list" class="pp-list" aria-live="polite"></div>
+</main>
+
+<script src="/assets/people.js"></script>
+</body>
+</html>

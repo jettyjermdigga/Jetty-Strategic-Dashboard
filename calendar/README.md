@@ -184,26 +184,85 @@ the same person reads as a mistake — and a To line carrying an agency and an
 internal list is one somebody replies-all to. Anybody already tagged on the
 deadline is not copied twice. Empty the var to turn it off.
 
-**Nothing goes out until it is set up**, and until then the run records why
-and sends nothing rather than failing quietly:
+**Each person is reached however the directory says they can be.** A Slack DM
+where there is a Slack ID for them, email where there is not, and email as
+the fall back when a DM is refused — a reminder that cannot be delivered one
+way is not a reminder that disappears. Which way each person would be reached
+is on `GET /api/reminders/due`, per recipient, before the morning comes.
 
-1. **Verify jettylife.com with Resend.** It gives you two or three DNS
-   records — a DKIM `TXT` on `resend._domainkey`, and an `include:` to add to
-   the domain's existing SPF record. *Add to* the SPF record; a second
-   `v=spf1` record on the same name breaks both, and this domain already
-   sends through Google Workspace.
+That ordering matters for setup: **Slack needs no DNS and no verified domain,
+so the calendar sends perfectly well with nothing but `SLACK_BOT_TOKEN`** —
+which is already set, because the sales report and the website posts use it.
+Everybody in the workspace, guests included, is reachable today. Resend is
+only needed for somebody who is not in Slack at all.
+
+### The directory
+
+`/people.html`, linked from the calendar header for editors. Name, address,
+Slack ID, and how a reminder would reach each person.
+
+**It grants nobody anything.** Cloudflare Access decides who opens the
+calendar and `CALENDAR_EDITORS` decides who may change it; this list only
+decides who can be *named and reminded*, which is why it does not have to be
+restricted to jettylife.com addresses. A row whose domain Access does not
+admit is flagged on the page: reminders still reach them, but they cannot
+open the event one is about.
+
+Most of it maintains itself — the Slack roster is pulled in every six hours.
+Add somebody by hand only when:
+
+* **they are not in Slack at all** — then leave the Slack ID blank and they
+  are emailed; or
+* **Slack knows them under a different address** than the one you would type
+  on a deadline. Paste their member ID (their Slack profile → the three dots
+  → *Copy member ID*).
+
+A row that was typed here is marked `manual` and **the six-hourly refresh
+leaves it alone**. Slack is authoritative about Slack and wrong about exactly
+the rows somebody had to correct, and overwriting those hours later, in
+silence, is the worst way to lose a fix.
+
+*Stop notifying* switches somebody off rather than deleting them where Slack
+knows them, because a deleted row comes straight back on the next refresh and
+whoever deleted it believes they are done. Somebody switched off who is still
+named on a deadline is reported in the run's `errors` — a deadline nobody is
+being told about must not read as one that is covered.
+
+### Adding email, when somebody is not in Slack
+
+1. **Verify a domain with Resend.** It issues **three** records: a DKIM
+   `TXT`, an SPF `TXT`, and an **`MX`**.
+
+   **Do not put that MX on `jettylife.com`.** The root domain already carries
+   Google Workspace's MX records and this would land in the middle of them.
+   Verify **`send.jettylife.com`** instead: all three records go on an empty
+   subdomain, Google Workspace is untouched, there is no existing SPF record
+   to edit, and sending reputation stays separate from the main domain, which
+   is what you want for machine-sent mail anyway.
+
+   The cost is that `REMINDER_FROM` has to be an address on the verified
+   domain — `jeremy@send.jettylife.com`. Replies still arrive normally,
+   because `REMINDER_REPLY_TO` is the real address.
+
 2. **Put the API key where secrets go**, not in `[vars]` — a deploy
    overwrites every var in that file and leaves secrets alone:
 
        cd calendar && npx wrangler secret put RESEND_KEY
 
 3. **Check it** without waiting for the morning. `GET /api/reminders/due`
-   says who is owed one, what it would say, whether a send would actually go
-   (`sending`) and why not if it would not (`why`), plus what the last run
-   did. `?on=2026-11-09` looks at another day.
+   says who is owed one, what it would say, which channel each recipient
+   would take, whether a send would actually go (`sending`) and why not if it
+   would not (`why`), plus what the last run did. `?on=2026-11-09` looks at
+   another day.
 
    `POST /api/reminders/send` runs it now, for real. Editors only, and
    deliberately not a button on the page.
+
+**The blind copy rides on the email.** A morning that went entirely by Slack
+carries no BCC, so the watcher gets a Slack DM copy instead — but only when
+the reminder actually reached somebody. A reminder that reached nobody is not
+news to deliver as though it had worked; that case is in `errors`, where it
+reads as the problem it is.
 
 Two limits worth knowing, both of them about blast radius rather than about
 the provider. One deadline takes at most **25 addresses**: a reminder going

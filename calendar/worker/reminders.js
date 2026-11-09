@@ -140,3 +140,23 @@ function daysBetween(from, to) {
   if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
   return Math.round((b - a) / 86400000);
 }
+
+/**
+ * The same reminder, as a Slack DM.
+ *
+ * Built from the email's subject and body rather than written twice: a
+ * reminder that says one thing in Slack and another in an inbox is a second
+ * thing to keep up to date, which is the same reason the deadline's notes
+ * are the message in the first place.
+ *
+ * `escape` is passed in so this module stays free of the Slack client -- it
+ * is the one piece of formatting that has to know Slack's rules.
+ */
+export function reminderSlack({ subject, body }, escape) {
+  const esc = escape || ((s) => String(s == null ? '' : s));
+  const head = String(subject == null ? '' : subject).trim();
+  const rest = String(body == null ? '' : body).trim();
+  if (!head) return esc(rest);
+  if (!rest) return '*' + esc(head) + '*';
+  return '*' + esc(head) + '*\n' + esc(rest);
+}

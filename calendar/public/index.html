@@ -21,7 +21,11 @@
       <div class="title-sub">Jetty &middot; 2026</div>
     </div>
   </div>
-  <div class="site-who" id="who"></div>
+  <!-- #who is written with textContent, which would wipe any sibling put
+       inside it -- so the identity goes in its own span and the link
+       lives beside it. -->
+  <div class="site-who"><a class="back" id="people-link" href="/people.html"
+     hidden>People</a><span id="who"></span></div>
 </header>
 
 <div class="cal-bar">

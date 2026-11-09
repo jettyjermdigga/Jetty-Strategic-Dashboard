@@ -21,7 +21,7 @@ import { planMigration, mergeSubTypes, mergeFeedFilters, promoteSocial,
 import { planSmsDedupe } from './repair.js';
 import { applyBlanks } from './blanks.js';
 import { normaliseProducts } from './products.js';
-import { commentMessage, dmMentions, displayName, eventUrl,
+import { commentMessage, dmMentions, displayName, escapeSlack, eventUrl,
          fetchSlackPeople, slackHint, watchMessage, changedFields,
          postToChannel, postFileToChannel } from './slack.js';
 import { rollPlaces, FIELDS as PLACE_FIELDS } from './places.js';
@@ -31,7 +31,10 @@ import {
   listingAction, listingMessage, needed as listingNeeded, WEBSITE_NEED,
 } from './listing.js';
 import { deadlineFor, deadlineAction, PREFIX as DEADLINE_PREFIX } from './deadlines.js';
-import { cleanEmails, dueReminders, reminderText, recipientsOf } from './reminders.js';
+import { cleanEmails, dueReminders, reminderText, reminderSlack,
+         recipientsOf } from './reminders.js';
+import { channelFor, cleanPerson, outsideAccess, resolveRecipients,
+         sourceOf, splitChannels } from './people.js';
 import { sendMail, canSend, whyNotSending, MAX_PER_RUN } from './mail.js';
 import {
   ROLES, ROLE_KEYS, pointsFromConfig, cleanEntry, cleanLedger, cleanKey as boxyKey,
@@ -115,6 +118,15 @@ const ADDED_COLUMNS = [
 // Same idea, on the attachments table.
 const ADDED_ATTACHMENT_COLUMNS = ['slot TEXT'];
 
+// And on the people table, which shipped as a cache of the Slack roster and
+// is now the directory -- so it has to carry rows Slack does not know about,
+// and remember which ones a refresh must not overwrite.
+const ADDED_PEOPLE_COLUMNS = [
+  'manual INTEGER NOT NULL DEFAULT 0',
+  'active INTEGER NOT NULL DEFAULT 1',
+  'added_by TEXT',
+];
+
 // And on the Boxy Bucks ledger, which shipped before a spend recorded the
 // day the samples were taken or who handed them over.
 const ADDED_LEDGER_COLUMNS = ['on_date TEXT', 'checked_by TEXT'];
@@ -128,6 +140,7 @@ async function ensureSchema(db) {
   }
   for (const [table, cols] of [['items', ADDED_COLUMNS],
                                ['attachments', ADDED_ATTACHMENT_COLUMNS],
+                               ['people', ADDED_PEOPLE_COLUMNS],
                                ['boxy_ledger', ADDED_LEDGER_COLUMNS]]) {
     for (const col of cols) {
       try {
@@ -794,39 +807,125 @@ async function runReminders(db, env, today, by) {
   const all = dueReminders(rows, when);
   const owed = all.slice(0, MAX_PER_RUN);
   const out = { on: when, owed: all.length, sent: 0, failed: 0,
+                slack: 0, email: 0, skipped: 0,
                 more: all.length > owed.length, errors: [], by: by || 'schedule' };
 
   if (!owed.length) return out;
-  if (!canSend(env)) {
+
+  // Two ways out, and either one is enough. Slack needs no DNS and no
+  // verified domain, so it is usually the one that works first; email is the
+  // only one that reaches somebody who is not in the workspace at all.
+  const canMail = canSend(env);
+  const canSlack = Boolean(env.SLACK_BOT_TOKEN);
+  if (!canMail && !canSlack) {
     out.failed = owed.length;
-    out.errors.push(whyNotSending(env));
+    out.errors.push(whyNotSending(env)
+      + ' There is no SLACK_BOT_TOKEN either, so there is nothing to fall back on.');
     return out;
   }
 
+  // The directory, once for the run rather than once per deadline.
+  const roster = await listPeople(db);
+  const note = (m) => { if (out.errors.length < 5) out.errors.push(m); };
+  const watcher = String(env.REMINDER_BCC || '').trim().toLowerCase();
+
   for (const item of owed) {
-    const { subject, body } = reminderText(item, when);
-    try {
-      await sendMail({
-        key: env.RESEND_KEY,
-        from: env.REMINDER_FROM,
-        replyTo: env.REMINDER_REPLY_TO || '',
-        bcc: env.REMINDER_BCC || '',
-        to: recipientsOf(item),
-        subject,
-        body,
-        post: fetch,
-      });
+    const label = String(item.title || item.id);
+    const text = reminderText(item, when);
+    const targets = resolveRecipients(recipientsOf(item), roster);
+    const split = splitChannels(targets);
+    let went = 0;
+
+    // Switched off in the directory. Said out loud rather than dropped: a
+    // deadline that names somebody nobody is telling should not read as one
+    // that is covered.
+    for (const t of split.none) {
+      out.skipped += 1;
+      note(label + ': ' + t.email + ' -- ' + t.why);
+    }
+
+    // Slack first, where a Slack ID resolved.
+    let slackTargets = split.slack;
+    const toMail = split.email.map((t) => t.email);
+    if (slackTargets.length && !canSlack) {
+      // Resolved to Slack, but there is no token to send with. Email rather
+      // than nothing -- the address is what was typed on the deadline.
+      for (const t of slackTargets) toMail.push(t.email);
+      slackTargets = [];
+    }
+    if (slackTargets.length) {
+      try {
+        const r = await dmMentions(env.SLACK_BOT_TOKEN, slackTargets,
+          reminderSlack(text, escapeSlack));
+        out.slack += r.sent;
+        went += r.sent;
+        // A DM that did not land falls back to email rather than being lost.
+        for (const e of r.errors || []) {
+          toMail.push(e.email);
+          note(label + ': Slack to ' + e.email + ' failed (' + e.error + '), trying email.');
+        }
+      } catch (err) {
+        for (const t of slackTargets) toMail.push(t.email);
+        note(label + ': Slack failed (' + String((err && err.message) || err)
+          + '), trying email.');
+      }
+    }
+
+    // Then email, for everyone Slack could not take.
+    const mailList = [...new Set(toMail.filter(Boolean))];
+    let emailWent = false;
+    if (mailList.length) {
+      if (!canMail) {
+        out.skipped += mailList.length;
+        note(label + ': ' + mailList.join(', ') + ' -- ' + whyNotSending(env));
+      } else {
+        try {
+          await sendMail({
+            key: env.RESEND_KEY,
+            from: env.REMINDER_FROM,
+            replyTo: env.REMINDER_REPLY_TO || '',
+            bcc: env.REMINDER_BCC || '',
+            to: mailList,
+            subject: text.subject,
+            body: text.body,
+            post: fetch,
+          });
+          out.email += mailList.length;
+          went += mailList.length;
+          emailWent = true;
+        } catch (err) {
+          note(label + ': ' + String((err && err.message) || err));
+        }
+      }
+    }
+
+    // The blind copy rides on the email. A morning that went entirely by
+    // Slack carries no copy, and the watcher asked to see what went out
+    // without being tagged on every deadline -- so send them one.
+    //
+    // Only when something actually went. A reminder that reached nobody is
+    // not news the watcher should receive as though it had been delivered;
+    // that case is in `errors`, where it reads as the problem it is.
+    if (went > 0 && !emailWent && watcher && canSlack) {
+      const already = slackTargets.some((t) => t.email === watcher);
+      const copy = already ? null : (resolveRecipients([watcher], roster)[0] || null);
+      if (copy && copy.channel === 'slack') {
+        try {
+          await dmMentions(env.SLACK_BOT_TOKEN, [copy],
+            reminderSlack(text, escapeSlack));
+        } catch (err) {
+          // A copy that failed must never fail the reminder it is a copy of.
+        }
+      }
+    }
+
+    if (went > 0) {
       await db.prepare('UPDATE items SET reminded_at = ? WHERE id = ?')
         .bind(new Date().toISOString(), item.id).run();
       out.sent += 1;
-    } catch (err) {
-      // One bad address does not stop the rest of the morning. The
-      // deadline keeps a null reminded_at, so the next run tries again.
+    } else {
+      // reminded_at stays null on purpose, so tomorrow tries again.
       out.failed += 1;
-      if (out.errors.length < 5) {
-        out.errors.push(String(item.title || item.id) + ': '
-          + String((err && err.message) || err));
-      }
     }
   }
 
@@ -1053,19 +1152,30 @@ async function listComments(db, itemId) {
 // day it ships rather than the day the Slack app is approved.
 async function listPeople(db) {
   const byEmail = new Map();
-  const add = (email, name, slackId) => {
+  const add = (email, name, slackId, extra) => {
     const low = String(email || '').toLowerCase();
     if (!low || !EMAIL_RE.test(low)) return;
     const was = byEmail.get(low) || {};
-    byEmail.set(low, {
+    const row = {
       email: low,
       name: was.name || name || displayName(low, ''),
       slack_id: was.slack_id || slackId || null,
-    });
+      // Anyone merely SEEN in the calendar has no directory row, so they are
+      // on by default -- switching somebody off is a decision, and it has to
+      // have been made for them to be off.
+      manual: was.manual || (extra && extra.manual) || 0,
+      active: was.active === 0 || (extra && extra.active === 0) ? 0 : 1,
+    };
+    row.source = sourceOf(row);
+    row.channel = channelFor(row);
+    byEmail.set(low, row);
   };
 
-  const roster = await db.prepare('SELECT email, name, slack_id FROM people').all();
-  for (const p of roster.results || []) add(p.email, p.name, p.slack_id);
+  const roster = await db.prepare(
+    'SELECT email, name, slack_id, manual, active FROM people').all();
+  for (const p of roster.results || []) {
+    add(p.email, p.name, p.slack_id, { manual: p.manual, active: p.active });
+  }
 
   const seen = await db.prepare(
     'SELECT created_by AS e FROM items WHERE created_by IS NOT NULL '
@@ -1097,10 +1207,17 @@ async function refreshRoster(env, db) {
   const people = await fetchSlackPeople(env.SLACK_BOT_TOKEN);
   if (!people.length) return;
   const now = new Date().toISOString();
+  // A hand-typed row wins. Slack is authoritative about Slack, and it is
+  // wrong about exactly the rows somebody had to correct by hand -- the
+  // address that differs from their Slack profile, the person who is not in
+  // Slack at all. Overwriting those every six hours would undo the fix
+  // silently, hours after it was made, which is the worst way to lose one.
   const stmt = db.prepare(
     'INSERT INTO people (email, name, slack_id, updated_at) VALUES (?, ?, ?, ?) '
-    + 'ON CONFLICT(email) DO UPDATE SET name = excluded.name, '
-    + 'slack_id = excluded.slack_id, updated_at = excluded.updated_at');
+    + 'ON CONFLICT(email) DO UPDATE SET '
+    + "name = CASE WHEN people.manual = 1 THEN people.name ELSE excluded.name END, "
+    + "slack_id = CASE WHEN people.manual = 1 THEN people.slack_id "
+    + 'ELSE excluded.slack_id END, updated_at = excluded.updated_at');
   const BATCH = 200;
   for (let i = 0; i < people.length; i += BATCH) {
     await db.batch(people.slice(i, i + BATCH)
@@ -1524,11 +1641,16 @@ async function handleApi(request, env, url, who, ctx) {
       "SELECT id, title, event_type, status, start_date, notes, remind_emails, reminded_at "
       + "FROM items WHERE event_type = 'deadline' AND remind_emails IS NOT NULL "
       + "AND remind_emails != '' AND reminded_at IS NULL").all()).results) || [];
+    // Resolved against the directory, so the listing shows HOW each person
+    // would be reached rather than just that they are on the list. A name
+    // that would silently go nowhere is the thing worth seeing here.
+    const roster = await listPeople(db);
     const due = dueReminders(rows, today).map((r) => ({
       id: r.id,
       title: r.title,
       start_date: r.start_date,
       to: recipientsOf(r),
+      recipients: resolveRecipients(recipientsOf(r), roster),
       ...reminderText(r, today),
     }));
     const last = await db.prepare('SELECT value, applied_at FROM meta WHERE key = ?')
@@ -1539,7 +1661,12 @@ async function handleApi(request, env, url, who, ctx) {
       on: today, due,
       // Whether pressing send would actually send, and why not if it would
       // not -- rather than leaving a listing to be read as a thing that went.
-      sending: canSend(env),
+      // Either channel is enough to send SOMETHING, so this is no longer
+      // "is Resend set up" -- a Slack-only calendar sends perfectly well to
+      // everybody who is in the workspace.
+      sending: canSend(env) || Boolean(env.SLACK_BOT_TOKEN),
+      slack: Boolean(env.SLACK_BOT_TOKEN),
+      mail: canSend(env),
       why: canSend(env) ? '' : whyNotSending(env),
       lastRun, lastRunAt: (last && last.applied_at) || null,
     });
@@ -1932,13 +2059,73 @@ async function handleApi(request, env, url, who, ctx) {
     } catch (e) {
       // A Slack problem costs the list its freshness, not its existence.
     }
+    const people = await listPeople(db);
     return json({
-      people: await listPeople(db),
+      people,
       slackConfigured: Boolean(env.SLACK_BOT_TOKEN),
+      mailConfigured: canSend(env),
+      // So the page can hide controls that would only 403. Readers can see
+      // the directory -- the mention picker is useless without it -- and
+      // cannot change who gets told about a deadline.
+      canEdit: Boolean(who.canEdit),
       // So a mention that is quietly not arriving shows up as a warning rather
       // than as nothing at all.
       slackStatus: env.SLACK_BOT_TOKEN ? await readSlackStatus(db) : null,
+      // Directory rows Cloudflare Access will not admit. Not an error -- a
+      // reminder is mail and reaches them anyway -- but they cannot open the
+      // event it is about, and that is worth knowing before somebody is
+      // tagged and left staring at a sign-in wall.
+      outsideAccess: outsideAccess(people, env.ACCESS_DOMAINS || ''),
     });
+  }
+
+  // Adding somebody the roster cannot find, or correcting what it found.
+  //
+  // Editors only: this decides who gets told about a deadline, which is the
+  // same weight as changing the deadline. It grants no access -- see the
+  // comment on the people table.
+  if (path === '/api/people' && method === 'POST') {
+    const denied = requireEditor();
+    if (denied) return denied;
+    const body = await request.json().catch(() => ({}));
+    const now = new Date().toISOString();
+
+    // Forgetting somebody. A row that came from Slack would simply come back
+    // on the next refresh, so that one is switched off instead of deleted --
+    // and the page is told which happened rather than appearing to do one
+    // and doing the other.
+    if (body && body.remove) {
+      const email = String(body.email || '').trim().toLowerCase();
+      if (!email) return json({ error: 'Which address?' }, 400);
+      const was = await db.prepare(
+        'SELECT manual FROM people WHERE email = ?').bind(email).first();
+      if (was && was.manual === 1) {
+        await db.prepare('DELETE FROM people WHERE email = ?').bind(email).run();
+        return json({ ok: true, removed: email, how: 'deleted' });
+      }
+      await db.prepare(
+        'INSERT INTO people (email, active, manual, updated_at) VALUES (?, 0, 1, ?) '
+        + 'ON CONFLICT(email) DO UPDATE SET active = 0, manual = 1, '
+        + 'updated_at = excluded.updated_at').bind(email, now).run();
+      return json({ ok: true, removed: email, how: 'switched off',
+                    note: 'They are in the Slack roster, so the refresh would '
+                      + 'bring them back. Switched off instead.' });
+    }
+
+    const errors = [];
+    const person = cleanPerson(body, errors);
+    if (!person) return json({ error: errors[0] || 'That did not look right.' }, 400);
+
+    await db.prepare(
+      'INSERT INTO people (email, name, slack_id, manual, active, added_by, updated_at) '
+      + 'VALUES (?, ?, ?, 1, ?, ?, ?) '
+      + 'ON CONFLICT(email) DO UPDATE SET name = excluded.name, '
+      + 'slack_id = excluded.slack_id, manual = 1, active = excluded.active, '
+      + 'added_by = excluded.added_by, updated_at = excluded.updated_at')
+      .bind(person.email, person.name, person.slack_id, person.active,
+            who.email || '', now).run();
+
+    return json({ ok: true, person, people: await listPeople(db) });
   }
 
   const cmtMatch = path.match(new RegExp('^/api/items/(' + UUID + ')/comments$', 'i'));

@@ -1,0 +1,141 @@
+/* The calendar's directory. Shares the calendar's tokens and chrome; only
+   the list itself lives here.
+
+   Tokens only -- --cell, --surface-alt, --wash, --ink, --mono, --body,
+   --good, --watch -- because a var this Worker does not declare invalidates
+   the whole declaration rather than falling back, which is how text once
+   ended up painted on its own colour. */
+
+.pp-shell{max-width:1040px;margin:0 auto;padding:26px 24px 60px}
+
+.pp-intro{
+  font-family:var(--body);font-size:14px;line-height:1.55;
+  max-width:70ch;margin:0 0 18px;opacity:.9;
+}
+
+.pp-bar{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  background:var(--cell);border:1px solid var(--surface-alt);border-radius:10px;
+  padding:12px 15px;margin:0 0 14px;
+}
+.pp-bar[hidden]{display:none}
+.pp-lbl{
+  font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;
+  opacity:.75;
+}
+.pp-sel{
+  font-family:var(--body);font-size:13.5px;padding:6px 9px;border-radius:7px;
+  border:1px solid var(--surface-alt);background:var(--cell);color:var(--ink);
+}
+.pp-add,.pp-save,.pp-cancel,.pp-edit,.pp-drop{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  padding:7px 12px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--surface-alt);background:var(--cell);color:var(--ink);
+}
+.pp-add{margin-left:auto}
+.pp-add:hover,.pp-save:hover,.pp-cancel:hover,.pp-edit:hover,.pp-drop:hover{
+  background:var(--wash);
+}
+
+.pp-form{
+  background:var(--cell);border:1px solid var(--surface-alt);border-radius:10px;
+  padding:16px 16px 13px;margin:0 0 16px;
+}
+.pp-form[hidden]{display:none}
+.pp-row{display:flex;gap:14px;flex-wrap:wrap}
+.pp-field{display:flex;flex-direction:column;gap:5px;flex:1 1 210px}
+.pp-field span{
+  font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  opacity:.75;
+}
+.pp-field span em{font-style:normal;opacity:.65;text-transform:none;letter-spacing:0}
+.pp-field input{
+  font-family:var(--body);font-size:14px;padding:8px 10px;border-radius:7px;
+  border:1px solid var(--surface-alt);background:var(--cell);color:var(--ink);
+}
+.pp-hint{
+  font-family:var(--body);font-size:12.5px;line-height:1.5;opacity:.8;
+  margin:11px 0 0;max-width:62ch;
+}
+.pp-actions{display:flex;align-items:center;gap:10px;margin-top:13px}
+.pp-err{font-family:var(--body);font-size:13px;color:var(--watch)}
+
+.pp-list{display:flex;flex-direction:column;gap:7px}
+
+.pp-person{
+  display:flex;align-items:center;gap:13px;flex-wrap:wrap;
+  background:var(--cell);border:1px solid var(--surface-alt);border-radius:9px;
+  padding:11px 14px;
+}
+.pp-off{opacity:.62}
+.pp-name{font-family:var(--body);font-size:14.5px;min-width:150px}
+.pp-email{font-family:var(--mono);font-size:11.5px;opacity:.8;min-width:200px}
+.pp-spacer{flex:1 1 auto}
+
+/* How they are reached. Not colour alone -- the word is the signal and the
+   colour only agrees with it, so this reads the same to anybody who cannot
+   tell the two greens apart. */
+.pp-via{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+  padding:3px 8px;border-radius:999px;border:1px solid var(--surface-alt);
+}
+.pp-via-slack{color:var(--good);border-color:var(--good)}
+.pp-via-email{color:var(--primary);border-color:var(--primary)}
+.pp-via-none{color:var(--watch);border-color:var(--watch)}
+
+.pp-src{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.07em;
+  opacity:.65;min-width:118px;
+}
+.pp-warn{
+  font-family:var(--body);font-size:12.5px;color:var(--watch);
+  flex-basis:100%;margin-top:4px;
+}
+.pp-empty{
+  font-family:var(--body);font-size:14px;opacity:.75;padding:22px 2px;
+}
+
+@media (max-width:640px){
+  .pp-shell{padding:18px 14px 48px}
+  .pp-person{gap:8px}
+  .pp-name{min-width:0;flex-basis:100%}
+  .pp-email{min-width:0;flex-basis:100%}
+  .pp-src{min-width:0}
+  /* The spacer exists to push the badge and buttons to the right of a wide
+     row. On a narrow one everything has already wrapped, and all it does is
+     shove each wrapped line to the right edge on its own. */
+  .pp-spacer{display:none}
+  .pp-add{margin-left:0}
+}
+
+/* Dark mode. --good, --primary and --watch do NOT flip with the theme --
+   only --surface, --surface-alt and --ink do -- so the brand colours land
+   on a dark cell at 2.0:1, 2.9:1 and 2.8:1. All three are unreadable, and
+   the worst of them is the one that says somebody is NOT being notified.
+
+   Measured against --cell #22262e, not judged by eye:
+     slack  #5CC79A  7.29:1
+     email  #9DBBC6  7.48:1
+     none   #F2B0A0  8.30:1   (the same red boxy.css already flips to)
+
+   Written three times over, the way boxy.css does it: the media query for
+   people who have chosen nothing, and both explicit themes for people who
+   have. */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .pp-via-slack{color:#5CC79A;border-color:#5CC79A}
+  :root:not([data-theme="light"]) .pp-via-email{color:#9DBBC6;border-color:#9DBBC6}
+  :root:not([data-theme="light"]) .pp-via-none{color:#F2B0A0;border-color:#F2B0A0}
+  :root:not([data-theme="light"]) .pp-warn,
+  :root:not([data-theme="light"]) .pp-err{color:#F2B0A0}
+}
+:root[data-theme="dark"] .pp-via-slack{color:#5CC79A;border-color:#5CC79A}
+:root[data-theme="dark"] .pp-via-email{color:#9DBBC6;border-color:#9DBBC6}
+:root[data-theme="dark"] .pp-via-none{color:#F2B0A0;border-color:#F2B0A0}
+:root[data-theme="dark"] .pp-warn,
+:root[data-theme="dark"] .pp-err{color:#F2B0A0}
+
+:root[data-theme="light"] .pp-via-slack{color:var(--good);border-color:var(--good)}
+:root[data-theme="light"] .pp-via-email{color:var(--primary);border-color:var(--primary)}
+:root[data-theme="light"] .pp-via-none{color:var(--watch);border-color:var(--watch)}
+:root[data-theme="light"] .pp-warn,
+:root[data-theme="light"] .pp-err{color:var(--watch)}

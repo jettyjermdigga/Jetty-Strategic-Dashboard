@@ -83,6 +83,7 @@ const ENV = {
 // Worker reaches for. Nothing here talks to Resend, and no test needs a key
 // that would work if it did.
 const mail = { sent: [], fail: '' };
+const dm = { sent: [], fail: '', down: '', members: [] };
 globalThis.fetch = async (url, opts) => {
   if (String(url).startsWith('https://api.resend.com/')) {
     const body = JSON.parse(opts.body);
@@ -92,6 +93,29 @@ globalThis.fetch = async (url, opts) => {
     }
     mail.sent.push({ ...body, auth: opts.headers.authorization });
     return { ok: true, status: 200, json: async () => ({ id: 'id-' + mail.sent.length }) };
+  }
+  // Slack, stubbed the same way. `dm.fail` refuses a named recipient so the
+  // fall back to email can be checked; `dm.down` refuses the whole call.
+  if (String(url).startsWith('https://slack.com/api/')) {
+    const method = String(url).slice('https://slack.com/api/'.length);
+    const body = JSON.parse(opts.body);
+    if (dm.down) return { ok: true, status: 200, json: async () => ({ ok: false, error: dm.down }) };
+    if (method === 'conversations.open') {
+      if (dm.fail && dm.fail === body.users) {
+        return { ok: true, status: 200, json: async () => ({ ok: false, error: 'user_not_found' }) };
+      }
+      return { ok: true, status: 200,
+               json: async () => ({ ok: true, channel: { id: 'D' + body.users } }) };
+    }
+    if (method === 'chat.postMessage') {
+      dm.sent.push({ channel: body.channel, text: body.text });
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    }
+    if (method === 'users.list') {
+      return { ok: true, status: 200,
+               json: async () => ({ ok: true, members: dm.members, response_metadata: {} }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
   }
   throw new Error('Unexpected fetch to ' + url);
 };
@@ -775,6 +799,246 @@ await t('swallows a failure on the cron rather than being retried into one', asy
   try { await worker.scheduled({}, SEND_ENV, { waitUntil() {} }); } catch (e) { threw = true; }
   mail.fail = '';
   return !threw;
+});
+
+// ── the directory, and reminders that go by Slack ──────────────────────
+//
+// The point of the directory is that a reminder reaches somebody without a
+// jettylife.com address and without a verified mail domain. Taylor is a
+// guest in the Slack workspace, which is the case these are written around.
+
+console.log('');
+console.log('the people directory');
+
+const SLACK_ENV = { ...SEND_ENV, SLACK_BOT_TOKEN: 'xoxb-test' };
+// Slack but no mail service: the position before Resend is set up at all.
+const SLACK_ONLY = { ...ENV, SLACK_BOT_TOKEN: 'xoxb-test',
+                     REMINDER_BCC: 'jeremy@jettylife.com' };
+
+const peopleCall = async (body, env) => {
+  const res = await worker.fetch(new Request('https://cal.test/api/people', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json',
+               'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' },
+    body: JSON.stringify(body || {}),
+  }), env || SLACK_ENV, { waitUntil() {} });
+  return { status: res.status, body: await res.json().catch(() => null) };
+};
+
+await t('takes somebody the roster has never heard of', async () => {
+  const r = await peopleCall({ name: 'Taylor Heussner',
+    email: 'Taylor.Heussner@SunnySideCalifornia.com', slack_id: 'u0guest01' });
+  const got = rows('SELECT * FROM people WHERE email = ?',
+    'taylor.heussner@sunnysidecalifornia.com')[0];
+  return r.status === 200 && got && got.slack_id === 'U0GUEST01'
+    && got.manual === 1 && got.active === 1
+    && got.added_by === 'jeremy@jettylife.com';
+});
+
+await t('refuses a Slack ID that is not one, rather than dropping it', async () => {
+  const r = await peopleCall({ email: 'nope@elsewhere.com', slack_id: 'not-an-id' });
+  const got = rows('SELECT * FROM people WHERE email = ?', 'nope@elsewhere.com');
+  return r.status === 400 && /not a Slack ID/.test(r.body.error) && got.length === 0;
+});
+
+await t('will not let a reader change the directory', async () => {
+  const res = await worker.fetch(new Request('https://cal.test/api/people', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json',
+               'Cf-Access-Authenticated-User-Email': 'nobody@jettylife.com' },
+    body: JSON.stringify({ email: 'x@y.co' }),
+  }), SLACK_ENV, { waitUntil() {} });
+  return res.status === 403;
+});
+
+// The whole reason `manual` exists. Slack is authoritative about Slack and
+// wrong about exactly the rows somebody had to fix by hand.
+await t('a Slack refresh does not undo a hand correction', async () => {
+  await peopleCall({ name: 'Katie Hehl', email: 'katie@jettylife.com',
+                     slack_id: 'U0KATIE01' });
+  dm.members = [
+    { id: 'U0SOMEONE', profile: { email: 'katie@jettylife.com', real_name: 'K. Hehl' } },
+  ];
+  sqlite.prepare('DELETE FROM meta WHERE key = ?').run('slack-roster-next');
+  await worker.fetch(new Request('https://cal.test/api/people', {
+    headers: { 'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' },
+  }), SLACK_ENV, { waitUntil() {} });
+  dm.members = [];
+  const got = rows('SELECT * FROM people WHERE email = ?', 'katie@jettylife.com')[0];
+  return got.slack_id === 'U0KATIE01' && got.name === 'Katie Hehl';
+});
+
+await t('DMs the people it has a Slack ID for', async () => {
+  dm.sent.length = 0; mail.sent.length = 0;
+  await call('POST', '/api/items', {
+    title: 'Artwork to Sunnyside', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    notes: 'Spring campaign, three sizes.',
+    remind_emails: 'taylor.heussner@sunnysidecalifornia.com',
+  });
+  const r = await sendCall('/api/reminders/send', { on: ymd(2) }, SLACK_ENV);
+  return r.body.sent === 1 && r.body.slack === 1 && r.body.email === 0
+    && dm.sent.length === 1
+    && dm.sent[0].channel === 'DU0GUEST01'
+    && /Artwork to Sunnyside/.test(dm.sent[0].text)
+    && /three sizes/.test(dm.sent[0].text)
+    && !mail.sent.some((m) => /Artwork to Sunnyside/.test(m.subject));
+});
+
+await t('emails the ones it has no Slack ID for, in the same run', async () => {
+  dm.sent.length = 0; mail.sent.length = 0;
+  await call('POST', '/api/items', {
+    title: 'Mixed list', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'taylor.heussner@sunnysidecalifornia.com, printer@someshop.com',
+  });
+  const r = await sendCall('/api/reminders/send', { on: ymd(2) }, SLACK_ENV);
+  const one = mail.sent.filter((m) => /Mixed list/.test(m.subject))[0];
+  return r.body.slack === 1 && r.body.email === 1
+    && dm.sent.length === 1
+    && one && one.to.join(',') === 'printer@someshop.com';
+});
+
+// A DM that fails must not be a reminder that vanishes.
+await t('falls back to email when the DM is refused', async () => {
+  dm.sent.length = 0; mail.sent.length = 0;
+  dm.fail = 'U0GUEST01';
+  await call('POST', '/api/items', {
+    title: 'DM refused', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'taylor.heussner@sunnysidecalifornia.com',
+  });
+  const r = await sendCall('/api/reminders/send', { on: ymd(2) }, SLACK_ENV);
+  dm.fail = '';
+  const one = mail.sent.filter((m) => /DM refused/.test(m.subject))[0];
+  return r.body.sent === 1 && dm.sent.length === 0
+    && one && one.to.join(',') === 'taylor.heussner@sunnysidecalifornia.com'
+    && /trying email/.test((r.body.errors || []).join(' '));
+});
+
+// Before Resend exists at all, Slack alone still delivers.
+await t('sends with no mail service configured at all', async () => {
+  dm.sent.length = 0; mail.sent.length = 0;
+  await call('POST', '/api/items', {
+    title: 'Slack only', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'taylor.heussner@sunnysidecalifornia.com',
+  });
+  const r = await sendCall('/api/reminders/send', { on: ymd(2) }, SLACK_ONLY);
+  return r.body.sent === 1 && r.body.slack === 1 && mail.sent.length === 0;
+});
+
+// Jeremy asked to see what went out without being tagged on each deadline.
+// A Slack-only morning would have told him nothing.
+await t('copies the watcher on Slack when no email went', async () => {
+  await peopleCall({ name: 'Jeremy', email: 'jeremy@jettylife.com',
+                     slack_id: 'U0JEREMY1' }, SLACK_ONLY);
+  dm.sent.length = 0;
+  await call('POST', '/api/items', {
+    title: 'Watcher copy', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'taylor.heussner@sunnysidecalifornia.com',
+  });
+  await sendCall('/api/reminders/send', { on: ymd(2) }, SLACK_ONLY);
+  return dm.sent.length === 2
+    && dm.sent.some((d) => d.channel === 'DU0JEREMY1');
+});
+
+await t('does not copy the watcher twice when they are on the deadline', async () => {
+  dm.sent.length = 0;
+  await call('POST', '/api/items', {
+    title: 'Watcher tagged', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'jeremy@jettylife.com',
+  });
+  await sendCall('/api/reminders/send', { on: ymd(2) }, SLACK_ONLY);
+  return dm.sent.length === 1;
+});
+
+// Kevin's case. Switched off, still named on deadlines that already listed
+// him, and the run has to say so rather than quietly sending nothing.
+await t('says out loud that a switched-off person was not told', async () => {
+  dm.sent.length = 0; mail.sent.length = 0;
+  await peopleCall({ name: 'Kevin', email: 'kevin@jettylife.com', active: false });
+  await call('POST', '/api/items', {
+    title: 'Kevin still tagged', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'kevin@jettylife.com',
+  });
+  const r = await sendCall('/api/reminders/send', { on: ymd(2) }, SLACK_ENV);
+  const said = (r.body.errors || []).join(' ');
+  return r.body.skipped >= 1 && dm.sent.length === 0
+    && !mail.sent.some((m) => (m.to || []).includes('kevin@jettylife.com'))
+    && /kevin@jettylife.com/.test(said) && /not notified/i.test(said);
+});
+
+await t('forgetting a Slack person switches them off instead of deleting', async () => {
+  const r = await peopleCall({ email: 'katie@jettylife.com', remove: true });
+  const got = rows('SELECT * FROM people WHERE email = ?', 'katie@jettylife.com')[0];
+  // She was hand-corrected, so manual = 1 and the row really goes.
+  return r.body.how === 'deleted' && got === undefined;
+});
+
+// A directory full of Slack IDs is useless if the token goes away. The
+// address typed on the deadline is still an address.
+await t('emails a Slack person when there is no token to send with', async () => {
+  dm.sent.length = 0; mail.sent.length = 0;
+  await call('POST', '/api/items', {
+    title: 'No token', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'taylor.heussner@sunnysidecalifornia.com',
+  });
+  // SEND_ENV has the mail service but no SLACK_BOT_TOKEN.
+  const r = await sendCall('/api/reminders/send', { on: ymd(2) }, SEND_ENV);
+  const one = mail.sent.filter((m) => /No token/.test(m.subject))[0];
+  return r.body.sent === 1 && dm.sent.length === 0
+    && one && one.to.join(',') === 'taylor.heussner@sunnysidecalifornia.com';
+});
+
+// Deleting a row Slack knows about achieves nothing -- the next refresh puts
+// it straight back, and whoever deleted it believes they are done.
+await t('forgetting a Slack-sourced person switches them off, not deletes', async () => {
+  sqlite.prepare(
+    'INSERT INTO people (email, name, slack_id, manual, active) VALUES (?, ?, ?, 0, 1)')
+    .run('fromslack@jettylife.com', 'From Slack', 'U0FROMSLK');
+  const r = await peopleCall({ email: 'fromslack@jettylife.com', remove: true });
+  const got = rows('SELECT * FROM people WHERE email = ?', 'fromslack@jettylife.com')[0];
+  return r.body.how === 'switched off' && got && got.active === 0
+    && /bring them back/.test(r.body.note || '');
+});
+
+// Seeing that somebody would be reached, and how, is the whole point of
+// being able to look before the morning.
+await t('the listing says which channel each person would take', async () => {
+  await call('POST', '/api/items', {
+    title: 'Channel listing', event_type: 'deadline', department: 'wholesale',
+    status: 'Booked', start_date: ymd(3), end_date: ymd(3), all_day: 1,
+    remind_emails: 'taylor.heussner@sunnysidecalifornia.com, printer@someshop.com, kevin@jettylife.com',
+  });
+  const res = await worker.fetch(new Request('https://cal.test/api/reminders/due?on=' + ymd(2), {
+    headers: { 'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' },
+  }), SLACK_ENV, { waitUntil() {} });
+  const body = await res.json();
+  const row = (body.due || []).filter((d) => d.title === 'Channel listing')[0];
+  if (!row) return false;
+  const by = {};
+  for (const r of row.recipients) by[r.email] = r.channel;
+  return body.sending === true && body.slack === true
+    && by['taylor.heussner@sunnysidecalifornia.com'] === 'slack'
+    && by['printer@someshop.com'] === 'email'
+    && by['kevin@jettylife.com'] === 'none';
+});
+
+await t('flags a directory address Access will not let in', async () => {
+  await peopleCall({ name: 'The printer', email: 'printer@someshop.com' });
+  const res = await worker.fetch(new Request('https://cal.test/api/people', {
+    headers: { 'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' },
+  }), { ...SLACK_ENV, ACCESS_DOMAINS: 'jettylife.com,sunnysidecalifornia.com' },
+    { waitUntil() {} });
+  const body = await res.json();
+  return Array.isArray(body.outsideAccess)
+    && body.outsideAccess.includes('printer@someshop.com')
+    && !body.outsideAccess.includes('taylor.heussner@sunnysidecalifornia.com');
 });
 
 console.log('');

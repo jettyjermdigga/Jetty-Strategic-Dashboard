@@ -371,8 +371,16 @@
   }
 
   function renderWho() {
-    if (!state.me.email) { $('#who').textContent = ''; return; }
+    var plink = $('#people-link');
+    if (!state.me.email) {
+      $('#who').textContent = '';
+      if (plink) plink.hidden = true;
+      return;
+    }
     $('#who').textContent = state.me.email + (state.me.canEdit ? '' : ' · read only');
+    // Readers can see the directory but change nothing, so the link is for
+    // the people who can act on it.
+    if (plink) plink.hidden = !state.me.canEdit;
   }
 
   function periodLabel() {
