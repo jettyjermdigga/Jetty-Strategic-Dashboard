@@ -36,7 +36,8 @@ import {
   rows as cogsRows, summary as cogsSummary, duplicates as cogsDuplicates,
   seasonOptions as cogsSeasons, csv as cogsCsv, lineId as cogsLineId,
   yearsAround as cogsYearsAround,
-  cleanSeasonKey, SEASONS as COGS_SEASONS, KINDS as COGS_KINDS,
+  cleanSeasonKey, addCollision as cogsAddCollision,
+  SEASONS as COGS_SEASONS, KINDS as COGS_KINDS,
   SHOWS as COGS_SHOWS,
 } from './cogs.js';
 import {
@@ -378,8 +379,19 @@ async function cogs(request, env, url, who) {
 
     // A line added by hand keeps the id it was given, so editing one does
     // not leave a second copy behind under the old season.
-    const id = String(body.id || '')
+    const given = String(body.id || '');
+    const id = given
       || cogsLineId(cleanSeasonKey(body.season), String(body.kind || ''));
+
+    // A NEW line -- no id of its own -- must not land on top of one that is
+    // already on the sheet. An edit sends its id and is meant to overwrite;
+    // an add does not, and without this it silently replaced whatever that
+    // season had been costed at while appearing to do nothing at all.
+    if (!given) {
+      const why = cogsAddCollision(cogsRows(await readCogs(env.DB), year), id);
+      if (why) return json({ errors: [why] }, 409);
+    }
+
     const out = await saveCogsLine(
       env.DB, id, { budgetYear: year, ...body }, who.email);
     if (out.errors) return json(out, 400);

@@ -31,6 +31,7 @@ import {
   SEASONS as COGS_SEASONS, KINDS as COGS_KINDS, SEED as COGS_SEED,
   SHOWS as COGS_SHOWS, yearsAround as cogsYearsAround, dropYear as cogsDropYear,
   yearTotal as cogsYearTotal, cleanYears as cogsCleanYears, yearsOf as cogsYearsOf,
+  addCollision as cogsAddCollision,
 } from '../worker/cogs.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1978,6 +1979,69 @@ describe('the COGS sheet', () => {
     for (const show of COGS_SHOWS.map((x) => x.key).filter((x) => x !== 'all')) {
       ok(fn.includes("'" + show + "'"), 'the page does not know the ' + show + ' filter');
     }
+  });
+
+  // Starboard, Collab and Special Drops are seeded under a plain name
+  // somebody would naturally type again. A line's id is its season and its
+  // kind, and the save is an upsert -- so typing one of those a second time
+  // used to land on top of the line already there, replace whatever it had
+  // been costed at, and leave the sheet looking exactly as it did. "It will
+  // not let me add it" is what that looks like from the outside.
+  it('will not add a season the sheet already has', () => {
+    const lines = cogsRows({}, 2027);
+    const why = cogsAddCollision(lines, 'starboard:bulk');
+    ok(why, 'adding Starboard again was allowed');
+    ok(/already on the sheet/.test(why), why);
+    ok(/Starboard/.test(why) && /Bulk/.test(why), 'say which line it clashed with: ' + why);
+    // and it has to say what to do instead, or the only move left is to
+    // overwrite the line that is there
+    ok(/name of its own/.test(why), 'no way out offered: ' + why);
+  });
+
+  it('allows the same season under a name of its own', () => {
+    const lines = cogsRows({}, 2027);
+    eq(cogsAddCollision(lines, 'starboard-sp27:bulk'), '');
+    eq(cogsAddCollision(lines, 'starboard-2:bulk'), '');
+    // a season that was struck off is not in the way of re-adding it
+    const gone = cogsRows({ 'starboard:bulk': { removed: 1 } }, 2027);
+    eq(cogsAddCollision(gone, 'starboard:bulk'), '');
+  });
+
+  // Said on the page as well, so it is said before the round trip -- and
+  // before Both sends two requests of which one lands and one is refused.
+  it('is the same refusal on the page as in the Worker', () => {
+    const page = rd('public/assets/cogs.js');
+    const fn = page.slice(page.indexOf('function collides(key, kinds)'),
+                          page.indexOf('function addLine()'));
+    ok(fn, 'the page has no collides()');
+    ok(/already on the/.test(fn), 'the page does not say the line is already there');
+    ok(/name of its own/.test(fn), 'the page offers no way out');
+    // and addLine has to actually call it, before it clears what was typed
+    const add = page.slice(page.indexOf('function addLine()'),
+                           page.indexOf('function bind()'));
+    const calls = add.indexOf('collides(');
+    const clears = add.indexOf('nu = {');
+    ok(calls > -1, 'addLine never checks for a collision');
+    ok(clears > -1 && calls < clears, 'the box is cleared before the check');
+  });
+
+  // The route itself. dash has no Worker harness -- nothing here can issue
+  // a request -- so this reads the source, the way sql.mjs does for the same
+  // reason. Weaker than running it, and it still catches the two ways this
+  // guard goes wrong: dropped entirely, or applied to an edit as well, which
+  // would make every existing line unsaveable.
+  it('guards the add route, and only the add route', () => {
+    const src = rd('worker/index.js');
+    const route = src.slice(src.indexOf("what === '/line'"),
+                            src.indexOf('async function labor('));
+    ok(route.includes('cogsAddCollision'), 'the route never checks for a collision');
+    ok(/if \(!given\)/.test(route),
+       'the check is not limited to a line with no id of its own, so an edit '
+       + 'would be refused as a duplicate of itself');
+    // and the refusal has to be a refusal, not a 200 with a note in it
+    const guard = route.slice(route.indexOf('if (!given)'));
+    ok(/errors: \[why\]/.test(guard) && /40\d/.test(guard),
+       'a collision does not come back as an error the page can show');
   });
 
   it('refuses a line with nothing to file it under', () => {

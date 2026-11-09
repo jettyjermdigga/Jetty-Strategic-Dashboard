@@ -415,6 +415,31 @@ export function cleanLine(input, existing) {
   };
 }
 
+/**
+ * Why a new line cannot go on, when that line is already there.
+ *
+ * A line's id is its season and its kind, and the save is an upsert -- so
+ * adding a season the sheet already has does not add anything. It lands on
+ * top of the line that is there and replaces its figures, and the sheet
+ * looks exactly as it did before. "It will not let me add it" is what that
+ * looks like from the outside, and silently losing what was already costed
+ * is what it actually does.
+ *
+ * Starboard, Collab and Special Drops are the ones this bites, because they
+ * are seeded under a plain name somebody would naturally type again.
+ *
+ * Returns '' when there is no collision.
+ */
+export function addCollision(lines, id) {
+  const hit = (lines || []).filter((r) => r && r.id === id)[0];
+  if (!hit) return '';
+  const kind = (KINDS.find((k) => k.key === hit.kind) || {}).label || hit.kind;
+  const name = hit.seasonLabel || hit.season;
+  return name + ' (' + kind + ') is already on the sheet. Cost that line, '
+    + 'or give this one a name of its own -- "' + name + ' 2" or "'
+    + name + ' SP27" sits beside it as a separate line.';
+}
+
 // ── Download ────────────────────────────────────────────────────────────
 
 const cell = (v) => {

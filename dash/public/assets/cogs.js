@@ -975,6 +975,24 @@
    * "ss25" when SS25 is already here must not leave two seasons a
    * character apart in every dropdown.
    */
+  // Mirrors addCollision() in worker/cogs.js, and the tests check the two
+  // agree. Said here as well as there so it is said before the round trip --
+  // and before 'Both' sends two requests of which one lands and one is
+  // refused, which is the one case the server cannot tidy up after.
+  function collides(key, kinds) {
+    for (var i = 0; i < kinds.length; i++) {
+      var id = key + ':' + kinds[i];
+      var hit = (D.lines || []).filter(function (r) { return r.id === id; })[0];
+      if (!hit) continue;
+      var k = (D.kinds || []).filter(function (x) { return x.key === hit.kind; })[0];
+      var name = hit.seasonLabel || hit.season;
+      return name + ' (' + ((k && k.label) || hit.kind) + ') is already on the '
+        + 'sheet. Cost that line, or give this one a name of its own -- "'
+        + name + ' 2" or "' + name + ' SP27" sits beside it as a separate line.';
+    }
+    return '';
+  }
+
   function addLine() {
     var label = nu.label.trim();
     if (!label) { var box = $('#nuSeason'); if (box) box.focus(); return; }
@@ -986,6 +1004,11 @@
     var kinds = nu.kind === 'both'
       ? (D.kinds || []).map(function (k) { return k.key; })
       : [nu.kind];
+
+    // Refused before anything is cleared, so what was typed is still there
+    // to rename rather than typed again from memory.
+    var clash = collides(key, kinds);
+    if (clash) return say(clash);
     // Figures only go on when there is one line to put them on. Splitting a
     // typed total across bulk and samples would be inventing a number
     // nobody said.
