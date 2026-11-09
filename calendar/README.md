@@ -228,6 +228,28 @@ whoever deleted it believes they are done. Somebody switched off who is still
 named on a deadline is reported in the run's `errors` — a deadline nobody is
 being told about must not read as one that is covered.
 
+### Offboarding, and the one credential that outlives it
+
+A row marked **Calendar feed** means that person holds a subscription link.
+**That token is the whole credential and it is not behind Access** — it
+cannot be, because the feed is a separate Worker and Google's fetchers
+cannot sign in. Nothing about it goes through their mailbox either, so
+forwarding or closing the account does not touch it. Left alone it keeps
+serving the full company calendar to whatever app it was pasted into.
+
+So **switching somebody off revokes their feed in the same action**, and the
+page says so before you click rather than after. Left as a second step it is
+the step that gets forgotten, which is exactly how it was found.
+
+*Revoke feed* on its own is there too: a lost laptop is not an offboarding,
+and somebody can need a fresh link without being switched off. Revoking is
+not reversible — the token is deleted, not disabled — so somebody who still
+needs a feed opens Subscribe again and gets a new one.
+
+The page says whether a feed was actually revoked or there was none to
+revoke. Reporting a revoke that matched nothing is how somebody comes to
+believe a door is shut that was never there.
+
 ### Adding email, when somebody is not in Slack
 
 1. **Verify a domain with Resend.** It issues **three** records: a DKIM

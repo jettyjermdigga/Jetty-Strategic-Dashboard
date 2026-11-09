@@ -1184,7 +1184,32 @@ async function listPeople(db) {
     + 'UNION SELECT email FROM feeds').all();
   for (const r of seen.results || []) add(r.e, '', null);
 
+  // Who holds a live calendar feed. The token in that URL is the whole
+  // credential and it sits OUTSIDE Cloudflare Access -- Google cannot sign
+  // in -- so it is the one thing about a person that outlives their account,
+  // their mailbox and their Slack. Worth seeing beside the rest.
+  const subs = await db.prepare('SELECT email, created_at FROM feeds').all();
+  for (const f of subs.results || []) {
+    const row = byEmail.get(String(f.email || '').toLowerCase());
+    if (row) { row.feed = true; row.feed_since = f.created_at || null; }
+  }
+  for (const row of byEmail.values()) if (!row.feed) row.feed = false;
+
   return [...byEmail.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Cutting a person's calendar feed off. Returns how many went, so the page
+// can say "revoked" or "there was nothing to revoke" rather than claiming a
+// thing it did not do.
+//
+// `email` must already be trimmed and lower-cased -- the route does that
+// once, for every query it makes, and normalising again here would be a
+// second place for the two to disagree about what the same address is.
+async function revokeFeeds(db, email) {
+  const res = await db.prepare('DELETE FROM feeds WHERE email = ?')
+    .bind(String(email || '')).run();
+  const meta = res && (res.meta || res);
+  return Number((meta && (meta.changes != null ? meta.changes : meta.rows_written)) || 0);
 }
 
 // Refreshed in the background off a timestamp in meta. A Slack outage leaves
@@ -2094,22 +2119,46 @@ async function handleApi(request, env, url, who, ctx) {
     // on the next refresh, so that one is switched off instead of deleted --
     // and the page is told which happened rather than appearing to do one
     // and doing the other.
+    // Cutting the calendar feed off, on its own. Somebody can lose their
+    // subscription without being switched off -- a lost laptop is not an
+    // offboarding.
+    if (body && body.revokeFeed) {
+      const email = String(body.email || '').trim().toLowerCase();
+      if (!email) return json({ error: 'Which address?' }, 400);
+      const gone = await revokeFeeds(db, email);
+      return json({ ok: true, email, feedRevoked: gone,
+                    note: gone
+                      ? 'Their calendar feed link no longer works. If they still '
+                        + 'need one, they can subscribe again and get a new one.'
+                      : 'They had no calendar feed, so there was nothing to revoke.',
+                    people: await listPeople(db) });
+    }
+
     if (body && body.remove) {
       const email = String(body.email || '').trim().toLowerCase();
       if (!email) return json({ error: 'Which address?' }, 400);
+      // Switching somebody off is almost always an offboarding, and the feed
+      // token is the one credential that outlives the account -- it is not
+      // behind Access and nothing about it goes through their mailbox. Left
+      // for a second step it is the step that gets forgotten.
+      const gone = await revokeFeeds(db, email);
+      const feedNote = gone ? ' Their calendar feed link was revoked too.' : '';
       const was = await db.prepare(
         'SELECT manual FROM people WHERE email = ?').bind(email).first();
       if (was && was.manual === 1) {
         await db.prepare('DELETE FROM people WHERE email = ?').bind(email).run();
-        return json({ ok: true, removed: email, how: 'deleted' });
+        return json({ ok: true, removed: email, how: 'deleted',
+                      feedRevoked: gone,
+                      note: ('Removed from the directory.' + feedNote).trim() });
       }
       await db.prepare(
         'INSERT INTO people (email, active, manual, updated_at) VALUES (?, 0, 1, ?) '
         + 'ON CONFLICT(email) DO UPDATE SET active = 0, manual = 1, '
         + 'updated_at = excluded.updated_at').bind(email, now).run();
       return json({ ok: true, removed: email, how: 'switched off',
+                    feedRevoked: gone,
                     note: 'They are in the Slack roster, so the refresh would '
-                      + 'bring them back. Switched off instead.' });
+                      + 'bring them back. Switched off instead.' + feedNote });
     }
 
     const errors = [];

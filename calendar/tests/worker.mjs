@@ -1029,6 +1029,83 @@ await t('the listing says which channel each person would take', async () => {
     && by['kevin@jettylife.com'] === 'none';
 });
 
+// The calendar feed. Its token is not behind Access and nothing about it
+// goes through a mailbox, so it is the one credential that outlives an
+// offboarding -- and the step that gets forgotten.
+
+await t('shows who holds a live calendar feed', async () => {
+  await peopleCall({ name: 'The printer', email: 'printer@someshop.com' });
+  sqlite.prepare(
+    'INSERT INTO feeds (token, email, filters, created_at) VALUES (?, ?, ?, ?)')
+    .run('f'.repeat(64), 'taylor.heussner@sunnysidecalifornia.com', '{}', '2026-01-01');
+  const res = await worker.fetch(new Request('https://cal.test/api/people', {
+    headers: { 'Cf-Access-Authenticated-User-Email': 'jeremy@jettylife.com' },
+  }), SLACK_ENV, { waitUntil() {} });
+  const body = await res.json();
+  const by = {};
+  for (const p of body.people) by[p.email] = p.feed;
+  return by['taylor.heussner@sunnysidecalifornia.com'] === true
+    && by['printer@someshop.com'] === false;
+});
+
+await t('revokes a feed on its own, and says it really went', async () => {
+  const r = await peopleCall({ email: 'taylor.heussner@sunnysidecalifornia.com',
+                               revokeFeed: true });
+  const left = rows('SELECT * FROM feeds WHERE email = ?',
+    'taylor.heussner@sunnysidecalifornia.com');
+  return r.body.feedRevoked === 1 && left.length === 0
+    && /no longer works/.test(r.body.note || '');
+});
+
+// The address may arrive however somebody typed it. A revoke that silently
+// matches nothing is the worst possible outcome here: it reports success and
+// leaves the link working.
+await t('revokes regardless of how the address was typed', async () => {
+  sqlite.prepare(
+    'INSERT INTO feeds (token, email, filters, created_at) VALUES (?, ?, ?, ?)')
+    .run('c'.repeat(64), 'mixedcase@jettylife.com', '{}', '2026-01-01');
+  const r = await peopleCall({ email: '  MixedCase@JettyLife.com  ', revokeFeed: true });
+  const left = rows('SELECT * FROM feeds WHERE email = ?', 'mixedcase@jettylife.com');
+  return r.body.feedRevoked === 1 && left.length === 0;
+});
+
+// Claiming to have revoked something that was not there is how somebody
+// believes a door is shut when it never existed.
+await t('says plainly when there was no feed to revoke', async () => {
+  const r = await peopleCall({ email: 'printer@someshop.com', revokeFeed: true });
+  return r.body.feedRevoked === 0 && /nothing to revoke/.test(r.body.note || '');
+});
+
+// The whole point: one action, nothing left behind.
+await t('switching somebody off revokes their feed too', async () => {
+  sqlite.prepare(
+    'INSERT INTO feeds (token, email, filters, created_at) VALUES (?, ?, ?, ?)')
+    .run('e'.repeat(64), 'exiting@jettylife.com', '{}', '2026-01-01');
+  sqlite.prepare(
+    'INSERT INTO people (email, name, slack_id, manual, active) VALUES (?, ?, ?, 0, 1)')
+    .run('exiting@jettylife.com', 'On the way out', 'U0EXIT001');
+  const r = await peopleCall({ email: 'exiting@jettylife.com', remove: true });
+  const feed = rows('SELECT * FROM feeds WHERE email = ?', 'exiting@jettylife.com');
+  const who = rows('SELECT * FROM people WHERE email = ?', 'exiting@jettylife.com')[0];
+  return feed.length === 0 && r.body.feedRevoked === 1
+    && /feed link was revoked/.test(r.body.note || '')
+    && who.active === 0;
+});
+
+await t('will not let a reader revoke a feed', async () => {
+  sqlite.prepare(
+    'INSERT INTO feeds (token, email, filters, created_at) VALUES (?, ?, ?, ?)')
+    .run('d'.repeat(64), 'safe@jettylife.com', '{}', '2026-01-01');
+  const res = await worker.fetch(new Request('https://cal.test/api/people', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json',
+               'Cf-Access-Authenticated-User-Email': 'nobody@jettylife.com' },
+    body: JSON.stringify({ email: 'safe@jettylife.com', revokeFeed: true }),
+  }), SLACK_ENV, { waitUntil() {} });
+  const left = rows('SELECT * FROM feeds WHERE email = ?', 'safe@jettylife.com');
+  return res.status === 403 && left.length === 1;
+});
+
 await t('flags a directory address Access will not let in', async () => {
   await peopleCall({ name: 'The printer', email: 'printer@someshop.com' });
   const res = await worker.fetch(new Request('https://cal.test/api/people', {

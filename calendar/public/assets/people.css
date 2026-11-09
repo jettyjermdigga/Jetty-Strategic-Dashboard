@@ -6,7 +6,7 @@
    the whole declaration rather than falling back, which is how text once
    ended up painted on its own colour. */
 
-.pp-shell{max-width:1040px;margin:0 auto;padding:26px 24px 60px}
+.pp-shell{max-width:1180px;margin:0 auto;padding:26px 24px 60px}
 
 .pp-intro{
   font-family:var(--body);font-size:14px;line-height:1.55;
@@ -68,8 +68,8 @@
   padding:11px 14px;
 }
 .pp-off{opacity:.62}
-.pp-name{font-family:var(--body);font-size:14.5px;min-width:150px}
-.pp-email{font-family:var(--mono);font-size:11.5px;opacity:.8;min-width:200px}
+.pp-name{font-family:var(--body);font-size:14.5px;min-width:132px}
+.pp-email{font-family:var(--mono);font-size:11.5px;opacity:.8;min-width:190px}
 .pp-spacer{flex:1 1 auto}
 
 /* How they are reached. Not colour alone -- the word is the signal and the
@@ -85,7 +85,7 @@
 
 .pp-src{
   font-family:var(--mono);font-size:9.5px;letter-spacing:.07em;
-  opacity:.65;min-width:118px;
+  opacity:.65;white-space:nowrap;
 }
 .pp-warn{
   font-family:var(--body);font-size:12.5px;color:var(--watch);
@@ -139,3 +139,17 @@
 :root[data-theme="light"] .pp-via-none{color:var(--watch);border-color:var(--watch)}
 :root[data-theme="light"] .pp-warn,
 :root[data-theme="light"] .pp-err{color:var(--watch)}
+
+/* Holding a calendar feed. Marked on everybody who has one, because the
+   token in that link works without signing in and is not revoked by losing
+   an account, a mailbox or a Slack login. */
+.pp-feed{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+  padding:3px 8px;border-radius:999px;
+  border:1px dashed var(--primary-alt);color:var(--primary-alt);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .pp-feed{border-color:#9DBBC6;color:#9DBBC6}
+}
+:root[data-theme="dark"] .pp-feed{border-color:#9DBBC6;color:#9DBBC6}
+:root[data-theme="light"] .pp-feed{border-color:var(--primary-alt);color:var(--primary-alt)}

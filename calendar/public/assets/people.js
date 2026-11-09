@@ -43,6 +43,7 @@
     var f = filter.value;
     if (f === 'all') return true;
     if (f === 'typed') return p.source === 'typed here';
+    if (f === 'feed') return Boolean(p.feed);
     return p.channel === f;
   }
 
@@ -85,6 +86,18 @@
       src.textContent = 'from ' + p.source;
       row.appendChild(src);
 
+      // The calendar feed. Shown for everybody who holds one because it is
+      // the one credential that is not behind Access and does not go
+      // through their mailbox -- so it is the one that quietly outlives an
+      // offboarding.
+      if (p.feed) {
+        var feed = document.createElement('span');
+        feed.className = 'pp-feed';
+        feed.textContent = 'Calendar feed';
+        feed.title = 'They hold a subscription link. It works without signing in.';
+        row.appendChild(feed);
+      }
+
       // Built now, appended last: it is full-width and would otherwise push
       // the buttons onto a line of their own.
       var warn = null;
@@ -109,10 +122,27 @@
 
       // "Not notified" rather than "Remove": the row may well stay, because
       // one that came from Slack comes straight back on the next refresh.
+      // Revoking on its own: a lost laptop is not an offboarding, and
+      // somebody can need a new link without being switched off.
+      if (p.feed) {
+        var cut = document.createElement('button');
+        cut.type = 'button';
+        cut.className = 'pp-drop';
+        cut.textContent = 'Revoke feed';
+        cut.addEventListener('click', function () { revoke(p); });
+        row.appendChild(cut);
+      }
+
       var drop = document.createElement('button');
       drop.type = 'button';
       drop.className = 'pp-drop';
       drop.textContent = p.channel === 'none' ? 'Turn back on' : 'Stop notifying';
+      // Said before it happens, not after. Switching somebody off also cuts
+      // their calendar link, and that is not what the words on the button
+      // say on their own.
+      drop.title = p.channel === 'none' ? 'Start notifying them again.'
+        : (p.feed ? 'Stops reminders AND revokes their calendar feed link.'
+                  : 'Stops reminders. They keep whatever access Access gives them.');
       drop.addEventListener('click', function () { toggle(p); });
       row.appendChild(drop);
 
@@ -137,6 +167,14 @@
       body: JSON.stringify(body),
     }).then(function (r) {
       return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+    });
+  }
+
+  function revoke(p) {
+    post({ email: p.email, revokeFeed: true }).then(function (r) {
+      if (!r.ok) { say((r.body && r.body.error) || 'That did not save.', true); return; }
+      say(r.body.note || '', !r.body.feedRevoked);
+      load();
     });
   }
 
