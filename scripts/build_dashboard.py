@@ -1974,11 +1974,24 @@ def read_jrf():
     as_of_month, as_of_str = _jrf_as_of_month(as_of_raw)
     if as_of_month is None:
         # Every figure on this tab is cumulative to that month -- without it
-        # there is no "to date" to compare a budget against, so the tab is
-        # skipped rather than built out of a guess.
-        print("JRF 'As of' cell (Summary!B4) reads %r — skipping JRF tab"
+        # there is no "to date" to compare a budget against, so nothing is
+        # built out of a guess.
+        #
+        # The TAB still appears, carrying the reason. Dropping it instead
+        # left a dashboard with one fewer tab than yesterday and the
+        # explanation only in a CI log nobody reads -- which is how a blank
+        # B4 went unnoticed for four days in November.
+        print("JRF 'As of' cell (Summary!B4) reads %r — tab will say so"
               % (as_of_raw,))
-        return None
+        return {'error': ('The JRF figures could not be worked out. '
+                          'The \u2018As of\u2019 date in Summary!B4 of the JRF Master '
+                          'Budget reads ' + (repr(as_of_raw) if as_of_raw not in (None, '')
+                                             else 'blank')
+                          + ', which is not a month this can read. It wants a date '
+                            'like 10/31/26, or the words \u2018As of 10/31/26\u2019. '
+                            'Everything on this tab is cumulative to that month, so '
+                            'nothing below it can be built until it is set.'),
+                'as_of': None}
 
     def norm_opex_cat(section, cat):
         return JRF_OPEX_CATEGORY_FIX.get(cat, cat) if section == 'opex' else cat
@@ -2031,6 +2044,13 @@ def read_jrf():
 
     jrf = {}
     jrf['as_of'] = 'As of ' + as_of_str
+    jrf['as_of_month'] = as_of_month
+    # How far behind the calendar this tab is. A month-end close always
+    # lags -- October's figures land in November -- so one month behind is
+    # normal and silent. Two or more means the 'As of' date has not been
+    # moved, and every figure here is older than it looks, which is the one
+    # way this tab can be wrong while appearing fine.
+    jrf['as_of_behind'] = max(0, datetime.date.today().month - as_of_month - 1)
     jrf['rev'] = total('rev')
     jrf['rev_cats'] = [(c, line('rev', c)) for c in ['Corporate','DTC','Event','Other','Private','Raffle']]
     jrf['don'] = total('don')
@@ -2699,7 +2719,8 @@ def build_chart_js(d):
         + build_summary_trend_charts_js(d)
         + build_cf_ty_ly_charts_js(d)
         + build_ar_chart_js(d)
-        + (build_jrf_chart_js(d['jrf']) if d.get('jrf') else '')
+        + (build_jrf_chart_js(d['jrf'])
+           if d.get('jrf') and not d['jrf'].get('error') else '')
         + build_update_checklist_js(d)
     )
 
@@ -3473,11 +3494,19 @@ def build_revenue_panel(d):
 # that file is present; see build_html.
 
 def build_jrf_panel(jrf):
+    if jrf.get('error'):
+        return ('<div class="rc-note" style="grid-column:1 / -1">'
+                + html_escape(jrf['error']) + '</div>\n')
     as_of = str(jrf['as_of']).replace('As of', '').strip() if jrf['as_of'] else None
+    behind = jrf.get('as_of_behind') or 0
     body = (
         '<div class="rc-note" style="grid-column:1 / -1;padding-top:0">'
         'Jetty Rock Foundation tracks its own budget separately, on a monthly cadence'
         + (' — as of ' + as_of + '.' if as_of else '.')
+        + (' <b>These figures are ' + str(behind + 1) + ' months behind the calendar.</b> '
+           'Every figure on this tab is cumulative to the \u2018As of\u2019 date in '
+           'Summary!B4 of the JRF Master Budget; move it on and save, and this tab '
+           'follows.' if behind else '')
         + '</div>\n'
     )
 
@@ -4562,7 +4591,9 @@ def main():
     d = read_all()
     print("Week " + str(d['week']) + " data loaded")
     d['jrf'] = read_jrf()
-    print("JRF data loaded" if d['jrf'] else "JRF file not found — skipping JRF tab")
+    print("JRF data loaded" if (d['jrf'] and not d['jrf'].get('error'))
+          else ("JRF file not found — skipping JRF tab" if not d['jrf']
+                else "JRF As-of unreadable — tab built with the reason"))
     print("Building dashboard...")
     html = build_html(d)
     os.makedirs("output", exist_ok=True)
