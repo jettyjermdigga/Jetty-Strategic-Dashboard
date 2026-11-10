@@ -1958,11 +1958,28 @@ describe('the COGS sheet', () => {
 
   const keys = (f) => cogsRows(saved).filter((r) => cogsMatches(r, f))
     .map((r) => r.id).join(',');
+  // Any subset, which is the point of the tick boxes: "these four of the
+  // nine" is not a question the dropdown they replaced could ask.
+  const allBut = (field, ...on) => {
+    const off = {};
+    const every = field === 'kind' ? COGS_KINDS.map((k) => k.key)
+      : COGS_SEASONS.map((x) => x.key);
+    every.forEach((k) => { if (!on.includes(k)) off[k] = true; });
+    return { off: { [field]: off } };
+  };
   it('narrows by each thing it offers', () => {
-    eq(keys({ season: 'sp26' }), 'sp26:bulk');
-    eq(keys({ kind: 'sms' }).split(',').length, COGS_SEASONS.length);
-    eq(keys({ season: 'sp27', kind: 'sms' }), 'sp27:sms');
+    eq(keys(allBut('season', 'sp26')), 'sp26:bulk');
+    eq(keys(allBut('kind', 'sms')).split(',').length, COGS_SEASONS.length);
+    eq(keys({ off: { season: allBut('season', 'sp27').off.season, kind: { bulk: true } } }),
+       'sp27:sms');
     eq(keys({ q: 'sp26' }), 'sp26:bulk');
+  });
+  // Nothing switched off draws everything, and a season added later is in
+  // by default rather than silently left out.
+  it('leaves everything in when nothing is switched off', () => {
+    eq(keys({}), keys({ off: { season: {}, kind: {} } }));
+    ok(keys({ off: { season: { sp26: true } } }).indexOf('sp26:') < 0);
+    ok(keys({ off: { season: { sp26: true } } }).indexOf('sp27:') >= 0);
   });
   it('answers what is left to cost', () => {
     eq(keys({ show: 'costed' }), 'sp27:bulk,sp27:sms,sp26:bulk');
@@ -1973,8 +1990,13 @@ describe('the COGS sheet', () => {
   it('is the same rule on the page as in the Worker', () => {
     const page = rd('public/assets/cogs.js');
     const fn = page.slice(page.indexOf('function keep(r)'), page.indexOf('function shown()'));
+    ok(fn.length > 50, 'keep() was not found on the page');
+    // Written out in full. 'f.' + field matched 'f.off.season' by accident
+    // of the second f, so it went on passing after the rule had changed
+    // shape underneath it.
     for (const field of ['season', 'kind']) {
-      ok(fn.includes('f.' + field), 'the page does not filter on ' + field);
+      ok(fn.includes('f.off.' + field + '[r.' + field + ']'),
+         'the page does not narrow on ' + field + ' the way the Worker does');
     }
     for (const show of COGS_SHOWS.map((x) => x.key).filter((x) => x !== 'all')) {
       ok(fn.includes("'" + show + "'"), 'the page does not know the ' + show + ' filter');

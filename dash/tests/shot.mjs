@@ -178,15 +178,26 @@ const CASES = [
   { file: 'labor-dept', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'labor.html', wait: '.lb-sel',
     select: ['#fDept', 'Flagship Store'], after: '.lb-foot' },
-  { file: 'cogs-light', scheme: 'light', adds: true, graph: true,
+  // The Sheet, which is what the page opens on: typing figures in is the
+  // job it exists for.
+  { file: 'cogs-light', scheme: 'light', adds: true,
     who: full('jeremy@jettylife.com'),
     path: 'cogs.html', wait: '.lb-sel' },
-  { file: 'cogs-dark', scheme: 'dark', graph: true, who: full('jeremy@jettylife.com'),
-    path: 'cogs.html', wait: '.cg-svg' },
-  // One season, which is the shape it gets read in: bulk against samples.
-  { file: 'cogs-season', scheme: 'light', who: full('jeremy@jettylife.com'),
-    path: 'cogs.html', wait: '.lb-sel',
-    select: ['#fSeason', 'sp27'], after: '.lb-foot' },
+  { file: 'cogs-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    path: 'cogs.html', wait: '.lb-sel' },
+  // The chart, in both themes, because its own colours are the thing that
+  // stops being legible first.
+  { file: 'cogs-graph', scheme: 'light', graph: true,
+    who: full('jeremy@jettylife.com'), path: 'cogs.html', wait: '.cg-svg' },
+  { file: 'cogs-graph-dark', scheme: 'dark', graph: true,
+    who: full('jeremy@jettylife.com'), path: 'cogs.html', wait: '.cg-svg' },
+  // Years down the side, lines across: what a year actually costs.
+  { file: 'cogs-by-year', scheme: 'light', byYear: true,
+    who: full('jeremy@jettylife.com'),
+    path: 'cogs.html', wait: '.cg-yt-t' },
+  { file: 'cogs-by-year-dark', scheme: 'dark', byYear: true,
+    who: full('jeremy@jettylife.com'),
+    path: 'cogs.html', wait: '.cg-yt-t' },
   { file: 'cogs-shut-out', scheme: 'light', who: full('amy@jettylife.com'),
     path: 'cogs.html', wait: '.notice', noBudget: true },
   { file: 'labor-shut-out', scheme: 'light', who: full('amy@jettylife.com'),
@@ -400,10 +411,11 @@ for (const c of CASES) {
   });
   // The chart is off until somebody presses Graph, so a case that wants it
   // in the shot -- and in the contrast sweep -- says so here.
-  if (c.graph) {
-    await page.addInitScript(() => {
-      try { localStorage.setItem('jetty-cogs-graph', '1'); } catch (err) { /* private */ }
-    });
+  if (c.graph || c.byYear) {
+    const view = c.byYear ? 'year' : 'graph';
+    await page.addInitScript((v) => {
+      try { localStorage.setItem('jetty-cogs-view', v); } catch (err) { /* private */ }
+    }, view);
   }
   await page.goto('http://local.test/' + (c.path || ''));
   await page.waitForSelector(c.wait || '.catbar, .pane-empty');
@@ -761,6 +773,51 @@ for (const c of CASES) {
   // It reads whatever the filters leave behind, which is the whole request.
   // The things worth driving: that filtering changes it, that the scale
   // covers the tallest column, and that one axis never mixes its units.
+  // ── By year ───────────────────────────────────────────────────────────
+  //
+  // The one thing this view must get right: the year rows have to add up to
+  // the same money the sheet says it is planning. Two readings of the same
+  // figures that disagree is worse than one reading, because now nobody
+  // knows which to believe.
+  if (c.byYear) {
+    const num = (t) => Number(String(t).replace(/[^0-9.]/g, '') || 0);
+    const got = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.cg-yt-t tbody tr')];
+      const foot = rows[rows.length - 1];
+      const body = rows.slice(0, -1);
+      const cell = (tr) => tr.querySelector('td.cg-yt');
+      return {
+        years: body.map((tr) => tr.querySelector('th').textContent.trim()),
+        rowTotals: body.map((tr) => cell(tr).textContent),
+        grand: cell(foot).textContent,
+        // the strip at the top of the page, which is worked out separately
+        everything: [...document.querySelectorAll('.lb-vs .lb-v, .lb-vs b, .lb-vs strong')]
+          .map((e) => e.textContent).join('|'),
+        headSwatches: document.querySelectorAll('.cg-lh i').length,
+        heads: document.querySelectorAll('.cg-lh').length,
+        // the total column has to STAY on screen; it is the whole point
+        totalPinned: getComputedStyle(cell(body[0])).position === 'sticky',
+        yearPinned: getComputedStyle(body[0].querySelector('th')).position === 'sticky',
+      };
+    });
+    const rowsSum = got.rowTotals.reduce((a, t) => a + num(t), 0);
+    const adds = Math.abs(rowsSum - num(got.grand)) < 1;
+    // 2024 down to 2028, in order, which is how it was asked for.
+    const ordered = got.years.join(',') === [...got.years].sort().join(',')
+      && got.years[0] === '2024';
+    const swatched = got.heads > 0 && got.headSwatches === got.heads;
+    const okYear = adds && ordered && swatched && got.totalPinned && got.yearPinned;
+    console.log('  by year: ' + got.years.length + ' year rows'
+      + ', ' + (adds ? 'rows add up to the total' : 'ROWS DO NOT ADD UP: '
+        + rowsSum + ' vs ' + got.grand)
+      + ', ' + (ordered ? '2024 first' : 'OUT OF ORDER: ' + got.years.join(','))
+      + ', ' + (swatched ? 'every column says which kind'
+        : 'MISSING KIND SWATCHES: ' + got.headSwatches + '/' + got.heads)
+      + ', ' + (got.yearPinned && got.totalPinned ? 'year and total stay put'
+        : 'A STICKY COLUMN SCROLLS AWAY'));
+    if (!okYear) process.exitCode = 1;
+  }
+
   if (c.graph) {
     const caps = () => page.locator('.cg-svg .cap').allTextContents();
     const cats = () => page.locator('.cg-svg .cat').allTextContents();
@@ -833,14 +890,16 @@ for (const c of CASES) {
     // One series per chart, so neither carries a legend box.
     const noLegend = (await page.locator('.cg-leg').count()) === 0;
 
-    await page.selectOption('#fKind', 'sms');
-    await page.waitForTimeout(120);
-    const smsCaps = await caps();
     // Narrowing to one kind leaves one chart, taking the width -- not a
-    // half-empty card beside an empty one.
+    // half-empty card beside an empty one. Asked with the tick box that
+    // replaced the dropdown: the filter lives in one place now.
+    await page.locator('#filters').evaluate((d) => { d.open = true; });
+    await page.locator('[data-off="kind"][value="bulk"]').uncheck();
+    await page.waitForTimeout(140);
+    const smsCaps = await caps();
     const onePanel = (await page.locator('.cg-panel').count()) === 1;
-    await page.selectOption('#fKind', '');
-    await page.waitForTimeout(120);
+    await page.locator('[data-off="kind"][value="bulk"]').check();
+    await page.waitForTimeout(140);
 
     // Oldest on the left, and within a year Spring, Summer, Fall, Holiday.
     // SS is the older naming where Spring and Summer were bought as one, so

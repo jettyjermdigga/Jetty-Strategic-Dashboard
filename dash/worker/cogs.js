@@ -339,8 +339,13 @@ export function matches(row, f) {
       .map((x) => String(x || '').toLowerCase());
     if (!hay.some((x) => x.indexOf(q) >= 0)) return false;
   }
-  if (f && f.season && String(r.season || '') !== f.season) return false;
-  if (f && f.kind && String(r.kind || '') !== f.kind) return false;
+  // Season and kind are sets of what is switched OFF, not a single pick.
+  // The page asks them with tick boxes -- any subset of nine seasons is a
+  // question a one-at-a-time dropdown cannot put -- and this is the rule it
+  // mirrors, so the two have to be the same shape.
+  const off = (f && f.off) || {};
+  if (off.season && off.season[r.season]) return false;
+  if (off.kind && off.kind[r.kind]) return false;
   const show = (f && f.show) || 'all';
   if (show === 'todo' && r.amount != null) return false;
   if (show === 'costed' && r.amount == null) return false;

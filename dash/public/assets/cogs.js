@@ -25,7 +25,7 @@
   // excluded means everything is drawn.
   var OFF = function () { return { kind: {}, season: {}, year: {} }; };
 
-  var f = { q: '', season: '', kind: '', show: 'all', year: 0, off: OFF(),
+  var f = { q: '', show: 'all', year: 0, off: OFF(), view: 'sheet',
             graph: false, graphBy: 'season' };
   // The row at the bottom of the sheet that is not a row yet. Kept out here
   // because the table is redrawn under it on every keystroke, and half a
@@ -71,8 +71,10 @@
       });
       if (!hay.some(function (x) { return x.indexOf(q) >= 0; })) return false;
     }
-    if (f.season && String(r.season || '') !== f.season) return false;
-    if (f.kind && String(r.kind || '') !== f.kind) return false;
+    // The ticks are the whole of the season and kind question now, and
+    // they narrow the sheet as well as the chart. One control, one meaning,
+    // wherever you are looking.
+    if (f.off.season[r.season] || f.off.kind[r.kind]) return false;
     if (f.show === 'todo' && r.amount != null) return false;
     if (f.show === 'costed' && r.amount == null) return false;
     return true;
@@ -107,8 +109,20 @@
     return n;
   }
 
+  // Everything the ticks offer, worked out once per redraw. Kept here
+  // rather than passed around because the PNG export asks for it too and
+  // has no list to work from, and a count that disagrees with the boxes on
+  // screen is worse than no count at all.
+  var offers = { seasons: [], years: [], kinds: [] };
+
+  function anyOff() {
+    return ['kind', 'season', 'year'].some(function (k) {
+      return Object.keys(f.off[k] || {}).length > 0;
+    });
+  }
+
   var filtered = function () {
-    return Boolean(f.q || f.season || f.kind || (f.show && f.show !== 'all'));
+    return Boolean(f.q || (f.show && f.show !== 'all') || anyOff());
   };
 
   /**
@@ -135,12 +149,12 @@
       var ys = ((D.years || []).map(String)).filter(function (y) { return !f.off.year[y]; });
       if (ys.length) out.push(ys.join(', '));
     }
-    if (Object.keys(f.off.season).length && chartOffered.seasons.length) {
+    if (Object.keys(f.off.season).length && offers.seasons.length) {
       // Counted from the boxes that were actually offered, so the number
       // here is the number of ticks on screen. Counting every season on the
       // sheet would say "6 of 13" beside eight boxes.
-      var on = chartOffered.seasons.filter(function (x) { return !f.off.season[x.key]; });
-      out.push(on.length + ' of ' + chartOffered.seasons.length + ' seasons');
+      var on = offers.seasons.filter(function (x) { return !f.off.season[x.key]; });
+      out.push(on.length + ' of ' + offers.seasons.length + ' seasons');
     }
     return out;
   }
@@ -419,15 +433,18 @@
     return any ? n : null;
   }
 
-  // Everything the chart COULD draw, before the exclusions are applied --
-  // so a box that is unticked is still on screen to tick again. Taken from
-  // the lines the table filters left, because the chart cannot draw what
-  // the sheet is not showing.
-  function offerings(list) {
+  // Every season and year on the SHEET, not on screen.
+  //
+  // It has to be every line, because these ticks now narrow the sheet too:
+  // taking the offers from what is left after they are applied would make
+  // a season's own box disappear the moment it was unticked, and there
+  // would be no way to tick it back.
+  function offerings() {
+    var list = (D && D.lines) || [];
     var seasons = [];
     var seenS = {};
     var years = {};
-    (list || []).forEach(function (r) {
+    list.forEach(function (r) {
       var has = false;
       Object.keys(r.years || {}).forEach(function (y) {
         var v = Number(r.years[y]);
@@ -467,7 +484,6 @@
     };
 
     list.forEach(function (r) {
-      if (f.off.kind[r.kind] || f.off.season[r.season]) return;
       if (f.graphBy === 'year') {
         Object.keys(r.years || {}).forEach(function (y) {
           if (f.off.year[y]) return;
@@ -776,7 +792,7 @@
   // they are.
   function group(kind, label, items, idOf, labelOf) {
     if (!items.length) return '';
-    var anyOff = items.some(function (x) { return f.off[kind][idOf(x)]; });
+    var someOff = items.some(function (x) { return f.off[kind][idOf(x)]; });
     return '<fieldset class="cg-pick">'
       + '<legend>' + esc(label) + '</legend>'
       + items.map(function (x) {
@@ -785,7 +801,7 @@
           + ' value="' + esc(id) + '"' + (f.off[kind][id] ? '' : ' checked') + '>'
           + '<span>' + esc(labelOf(x)) + '</span></label>';
       }).join('')
-      + (anyOff ? '<button type="button" class="cg-all" data-all="' + kind
+      + (someOff ? '<button type="button" class="cg-all" data-all="' + kind
           + '">All</button>' : '')
       + '</fieldset>';
   }
@@ -829,10 +845,9 @@
   function renderChart(list) {
     var box = $('#chart');
     if (!box) return;
-    box.hidden = !f.graph;
-    if (!f.graph) { box.innerHTML = ''; return; }
+    box.hidden = f.view !== 'graph';
+    if (box.hidden) { box.innerHTML = ''; return; }
 
-    chartOffered = offerings(list);
     var cols = columns(list);
     var byYear = f.graphBy === 'year';
     var head = '<div class="cg-ctop">'
@@ -846,10 +861,10 @@
       + '</span>'
       + '<button class="lb-add cg-dl" id="cgDown" type="button">Download PNG</button>'
       + '</div>'
-      + picker(chartOffered);
+
 
     if (!cols.length) {
-      var tight = chartOffered.seasons.length || chartOffered.years.length;
+      var tight = offers.seasons.length || offers.years.length;
       box.innerHTML = head
         + '<p class="cg-empty">' + (tight
           ? 'Nothing is left to draw. Tick something back on above.'
@@ -863,7 +878,6 @@
     // rather than a half-empty card sitting beside an empty one. Unticking
     // one does the same.
     var kinds = (D.kinds || []).map(function (k) { return k.key; })
-      .filter(function (k) { return !f.kind || f.kind === k; })
       .filter(function (k) { return !f.off.kind[k]; });
     var aim = kinds.length > 1 ? AIM_HALF : AIM;
 
@@ -876,10 +890,6 @@
   }
 
   var chartCols = [];
-  // What the picker last offered. chartSub() is called by the export too,
-  // which has no list to work from, and a count that disagrees with the
-  // boxes on screen is worse than no count.
-  var chartOffered = { seasons: [], years: [], kinds: [] };
 
   // Labels come off the sheet, so they go in as text rather than as markup.
   //
@@ -932,6 +942,108 @@
     if (tip) tip.hidden = true;
   }
 
+  // ── By year ───────────────────────────────────────────────────────────
+  //
+  // The sheet turned on its side: years down the left, one column per line
+  // across the top, and each row adds up to what that year costs. The sheet
+  // answers "what does SP27 cost"; this answers "what do we pay in 2027",
+  // which is the cash question and the reason the year columns exist at all.
+  //
+  // Read-only. It is as wide as there are lines, and making it editable
+  // would mean answering where a new line goes and where its note lives in
+  // a layout with no good answer to either. Those belong on the Sheet.
+
+  function byYearOrder(list) {
+    return list.slice().sort(function (a, b) {
+      var wa = seasonWhen(a.season);
+      var wb = seasonWhen(b.season);
+      if (wa != null && wb != null && wa !== wb) return wa - wb;
+      if (wa != null && wb == null) return -1;
+      if (wa == null && wb != null) return 1;
+      var la = String(a.seasonLabel || a.season);
+      var lb = String(b.seasonLabel || b.season);
+      if (la !== lb) return la.localeCompare(lb);
+      // Bulk before SMS, the way the sheet and the charts already read.
+      return String(a.kind).localeCompare(String(b.kind));
+    });
+  }
+
+  function renderByYear(list) {
+    var box = $('#byYear');
+    if (!box) return;
+    box.hidden = f.view !== 'year';
+    if (box.hidden) { box.innerHTML = ''; return; }
+
+    var years = (D.years || []).map(String)
+      .filter(function (y) { return !f.off.year[y]; });
+
+    // Only lines that carry money in the years on screen. This view is
+    // about what a year costs, and a column of blanks is a column of
+    // nothing -- the Sheet is where an uncosted line is meant to be
+    // noticed, and it says how many there are.
+    var all = byYearOrder(list);
+    var lines = all.filter(function (r) {
+      return years.some(function (y) { return Number((r.years || {})[y]); });
+    });
+    var blank = all.length - lines.length;
+
+    if (!lines.length || !years.length) {
+      // eslint-disable-next-line no-unused-expressions
+      box.innerHTML = '<p class="cg-empty">'
+        + (anyOff() || f.q || f.show !== 'all'
+          ? 'Nothing is left to show. Loosen the filter above.'
+          : 'Nothing on the sheet yet.')
+        + '</p>';
+      return;
+    }
+
+    var money0 = function (n) { return n ? money(n) : ''; };
+    var cellOf = function (r, y) {
+      var v = Number((r.years || {})[y]);
+      return isFinite(v) ? v : 0;
+    };
+
+    var head = '<tr><th class="cg-yh">Year</th>'
+      + lines.map(function (r) {
+        return '<th class="bd-n cg-lh"><span>' + esc(r.seasonLabel || r.season)
+          + '</span><i class="' + esc(KIND_CLASS[r.kind] || '') + '"></i>'
+          + '<em>' + esc(kindLabel(r.kind)) + '</em></th>';
+      }).join('')
+      + '<th class="bd-n cg-yt">Total</th></tr>';
+
+    var body = years.map(function (y) {
+      var sum = 0;
+      var cells = lines.map(function (r) {
+        var v = cellOf(r, y);
+        sum += v;
+        return '<td class="bd-n">' + money0(v) + '</td>';
+      }).join('');
+      return '<tr' + (Number(y) === D.year ? ' class="is-budget"' : '') + '>'
+        + '<th class="cg-yh" scope="row">' + esc(y) + '</th>'
+        + cells
+        + '<td class="bd-n cg-yt">' + money0(sum) + '</td></tr>';
+    }).join('');
+
+    // The line totals across the bottom, so the two readings meet in the
+    // corner: every year added up, and every line added up, agreeing.
+    var grand = 0;
+    var foot = '<tr class="lb-foot"><th class="cg-yh" scope="row">Every year</th>'
+      + lines.map(function (r) {
+        var n = years.reduce(function (a, y) { return a + cellOf(r, y); }, 0);
+        grand += n;
+        return '<td class="bd-n">' + money0(n) + '</td>';
+      }).join('')
+      + '<td class="bd-n cg-yt">' + money0(grand) + '</td></tr>';
+
+    box.innerHTML = '<table class="bd-t cg-t cg-yt-t">'
+      + '<thead>' + head + '</thead>'
+      + '<tbody>' + body + foot + '</tbody></table>'
+      + (blank ? '<p class="cg-note">' + blank
+          + (blank === 1 ? ' line has' : ' lines have')
+          + ' nothing costed in these years, so they are not columns here.'
+          + ' They are on the Sheet.</p>' : '');
+  }
+
   function render() {
     var list = shown();
     var body = (list.length
@@ -940,13 +1052,18 @@
         + (filtered() ? ' matches that' : ' yet') + '.</td></tr>')
       + addRow()
       + (list.length ? footRow(list) : '');
+    offers = offerings();
     renderChart(list);
     $('#t').innerHTML = '<thead>' + head() + '</thead><tbody>' + body + '</tbody>'
       + '<datalist id="cgSeasons">'
       + (D.seasons || []).map(function (x) {
         return '<option value="' + esc(x.label) + '"></option>';
       }).join('') + '</datalist>';
-    $('#wrap').hidden = false;
+    // One view at a time. The sheet is still built either way -- it is
+    // cheap, and the entry row keeping its state matters more than the
+    // handful of rows not drawn.
+    $('#wrap').hidden = f.view !== 'sheet';
+    renderByYear(list);
     renderBar();
     chrome();
   }
@@ -973,12 +1090,26 @@
       }
       yr.innerHTML = opts.join('');
     }
-    fill($('#fSeason'), D.seasons || [], f.season, 'Any season');
-    fill($('#fKind'), D.kinds || [], f.kind, 'Bulk and SMS');
     fill($('#filter'), (D.shows || []).filter(function (x) { return x.key !== 'all'; }),
          f.show === 'all' ? '' : f.show, 'Every line');
     $('#clr').hidden = !filtered();
     if ($('#q').value !== f.q) $('#q').value = f.q;
+
+    [].forEach.call(document.querySelectorAll('[data-view]'), function (b) {
+      b.setAttribute('aria-pressed', b.dataset.view === f.view ? 'true' : 'false');
+    });
+
+    var body = $('#fBody');
+    if (body) body.innerHTML = picker(offers);
+    var sum = $('#fSum');
+    if (sum) {
+      var words = narrowWords();
+      // Shut, it still has to say whether anything is being held back --
+      // a filter you cannot see is how a figure goes missing.
+      sum.textContent = words.length ? words.join(' \u00b7 ') : 'Every line';
+    }
+    var det = $('#filters');
+    if (det) det.classList.toggle('is-on', anyOff());
   }
 
   function chrome() {
@@ -1284,39 +1415,43 @@
     });
 
     var narrow = function (field, value) { f[field] = value; render(); };
-    $('#fSeason').addEventListener('change', function (e) { narrow('season', e.target.value); });
-    $('#fKind').addEventListener('change', function (e) { narrow('kind', e.target.value); });
     $('#filter').addEventListener('change', function (e) {
       narrow('show', e.target.value || 'all');
     });
     $('#q').addEventListener('input', function (e) { narrow('q', e.target.value); });
 
-    $('#graph').addEventListener('click', function (e) {
-      f.graph = !f.graph;
-      e.currentTarget.setAttribute('aria-pressed', f.graph ? 'true' : 'false');
-      try { localStorage.setItem('jetty-cogs-graph', f.graph ? '1' : ''); }
+    // The view switcher. Sheet is where figures get typed, so it is where
+    // the page opens and where it goes back to.
+    $('#bar').addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-view]') : null;
+      if (!b) return;
+      f.view = b.dataset.view;
+      try { localStorage.setItem('jetty-cogs-view', f.view); }
       catch (err) { /* private mode */ }
       render();
     });
 
-    var box = $('#chart');
-    box.addEventListener('change', function (e) {
+    // Season, kind and year, in the one place they are now asked about.
+    var filters = $('#filters');
+    filters.addEventListener('change', function (e) {
       var tick = e.target.closest ? e.target.closest('[data-off]') : null;
       if (!tick) return;
-      var kind = tick.dataset.off;
-      if (tick.checked) delete f.off[kind][tick.value];
-      else f.off[kind][tick.value] = true;
+      if (tick.checked) delete f.off[tick.dataset.off][tick.value];
+      else f.off[tick.dataset.off][tick.value] = true;
       saveOff();
       render();
     });
+    filters.addEventListener('click', function (e) {
+      var all = e.target.closest ? e.target.closest('[data-all]') : null;
+      if (!all) return;
+      f.off[all.dataset.all] = {};
+      saveOff();
+      render();
+    });
+
+    var box = $('#chart');
     box.addEventListener('click', function (e) {
       if (e.target.closest && e.target.closest('#cgDown')) return downloadChart();
-      var all = e.target.closest ? e.target.closest('[data-all]') : null;
-      if (all) {
-        f.off[all.dataset.all] = {};
-        saveOff();
-        return render();
-      }
       var b = e.target.closest ? e.target.closest('[data-by]') : null;
       if (!b) return;
       f.graphBy = b.dataset.by;
@@ -1342,8 +1477,8 @@
       load();
     });
     $('#clr').addEventListener('click', function () {
-      f = { q: '', season: '', kind: '', show: 'all', year: f.year, off: OFF(),
-            graph: f.graph, graphBy: f.graphBy };
+      f = { q: '', show: 'all', year: f.year, off: OFF(),
+            view: f.view, graphBy: f.graphBy };
       saveOff();
       $('#q').value = '';
       render();
@@ -1370,7 +1505,7 @@
         f.year = D.year;
         $('#dl').href = '/api/cogs.csv?year=' + encodeURIComponent(f.year);
         $('#bar').hidden = false;
-        $('#graph').setAttribute('aria-pressed', f.graph ? 'true' : 'false');
+        // The view buttons are set by renderBar(), which render() calls.
         $('#notice').innerHTML = '';
         render();
       });
@@ -1380,7 +1515,8 @@
     var kept = Number(localStorage.getItem('jetty-cogs-year'));
     if (kept >= 2015 && kept <= 2100) f.year = kept;
     f.off = loadOff();
-    f.graph = Boolean(localStorage.getItem('jetty-cogs-graph'));
+    var v = localStorage.getItem('jetty-cogs-view');
+    if (v === 'sheet' || v === 'year' || v === 'graph') f.view = v;
     var by = localStorage.getItem('jetty-cogs-graph-by');
     if (by === 'year' || by === 'season') f.graphBy = by;
   } catch (err) { /* private mode */ }

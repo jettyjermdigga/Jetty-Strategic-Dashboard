@@ -35,13 +35,20 @@
 
     <input id="q" class="lb-q" type="search" placeholder="Find a line&hellip;"
            autocomplete="off" aria-label="Search by season or note">
-    <select id="fSeason" class="bd-sel" aria-label="Which season"></select>
-    <select id="fKind" class="bd-sel" aria-label="Bulk or SMS"></select>
     <select id="filter" class="bd-sel" aria-label="Which lines to show"></select>
     <button class="lb-clr" id="clr" type="button" hidden>Clear</button>
 
     <button class="lb-add" id="add" type="button">+ Add a line</button>
-    <button class="lb-add" id="graph" type="button" aria-pressed="false">Graph</button>
+
+    <!-- One view at a time. Typing costs in and reading a chart are not the
+         same job and were never done in the same breath; stacking them put
+         both sets of controls on screen for whichever one you were not
+         doing. -->
+    <span class="cg-views" role="group" aria-label="Which view">
+      <button type="button" data-view="sheet" aria-pressed="true">Sheet</button>
+      <button type="button" data-view="year" aria-pressed="false">By year</button>
+      <button type="button" data-view="graph" aria-pressed="false">Graph</button>
+    </span>
 
     <span class="bd-grow"></span>
 
@@ -49,12 +56,27 @@
     <a class="bd-dl" id="dl" href="/api/cogs.csv" download>Download CSV</a>
   </div>
 
+  <!-- Season, kind and year, in ONE place, narrowing every view. They used
+       to be two dropdowns up in the bar that picked one at a time, plus a
+       second set of tick boxes on the chart that picked any subset -- two
+       mechanisms for the same question, both on screen at once. Shut by
+       default, because the job this page is open for is typing figures in,
+       and that wants every line showing. -->
+  <details class="cg-filter" id="filters">
+    <summary><span id="fSum">Every line</span></summary>
+    <div id="fBody"></div>
+  </details>
+
   <div class="lb-vs" id="vs" hidden></div>
 
-  <!-- The chart reads whatever the filters leave behind, and the sheet below
-       it is the table view: every figure on the chart is in a cell you can
-       read without hovering over anything. -->
   <section class="cg-chart" id="chart" hidden aria-labelledby="chartTitle"></section>
+
+  <!-- Years down the side, season and kind across, each row totalling what
+       that year costs. Read-only on purpose: it is twenty-odd columns wide,
+       and making it editable would mean answering "where does a new line
+       go" and "where does the note live" in a layout that has no good
+       answer to either. The Sheet is where those happen. -->
+  <div class="bd-wrap cg-wrap" id="byYear" hidden></div>
 
   <div class="bd-wrap cg-wrap" id="wrap" hidden><table class="bd-t cg-t" id="t"></table></div>
 </main>

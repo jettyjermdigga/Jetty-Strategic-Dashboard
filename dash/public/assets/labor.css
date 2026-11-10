@@ -235,6 +235,37 @@
 .cg-cby button[aria-pressed="true"]{background:var(--primary);color:#fff;border-color:var(--primary)}
 .cg-dl{margin-left:10px;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;padding:4px 9px}
 
+/* One view at a time. */
+.cg-views{display:inline-flex;gap:4px;margin-left:4px}
+.cg-views button{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  padding:6px 11px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--surface-alt);background:transparent;color:var(--ink);
+}
+.cg-views button[aria-pressed="true"]{
+  background:var(--primary);color:#fff;border-color:var(--primary);
+}
+
+/* The one filter, shut by default: the job this page is open for is typing
+   figures in, and that wants every line showing. */
+.cg-filter{
+  border:1px solid var(--surface-alt);border-radius:9px;
+  margin:0 0 14px;background:var(--card);
+}
+.cg-filter summary{
+  cursor:pointer;padding:9px 13px;list-style:none;
+  font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  display:flex;align-items:center;gap:9px;
+}
+.cg-filter summary::-webkit-details-marker{display:none}
+.cg-filter summary::before{content:'FILTER';opacity:.62}
+.cg-filter summary::after{content:'▸';margin-left:auto;opacity:.6;font-size:11px}
+.cg-filter[open] summary::after{content:'▾'}
+/* Shut, it still has to say that something is being held back. */
+.cg-filter.is-on summary{color:var(--primary)}
+.cg-filter.is-on summary::before{opacity:1}
+.cg-filter > div{padding:0 13px 12px}
+
 /* Which kinds, which years, which seasons the chart draws.
    Tick boxes rather than another dropdown, because the question is "these
    four of the nine" and a one-at-a-time control cannot ask it. They are
@@ -317,3 +348,43 @@
 .cg-tip .r i.bulk{background:var(--s-bulk)}
 .cg-tip .r i.sms{background:var(--s-sms)}
 .cg-empty{font-family:var(--body);font-size:13.5px;opacity:.75;padding:16px 2px}
+
+
+/* ── By year ────────────────────────────────────────────────────────────
+   Years down the side, one column per line across. Wide by nature, so the
+   year label and the row total both stay put while the middle scrolls. */
+.cg-yt-t{min-width:100%}
+.cg-yt-t th.cg-yh{
+  position:sticky;left:0;z-index:2;background:var(--card);
+  font-family:var(--mono);font-size:11.5px;text-align:left;
+  padding:8px 12px;white-space:nowrap;
+}
+/* --wash is translucent. On a sticky cell that scrolls over other cells
+   it has to sit ON the card colour, not instead of it, or the column
+   underneath reads straight through. */
+.cg-yt-t tr.is-budget td{background:var(--wash)}
+.cg-yt-t tr.is-budget th.cg-yh,
+.cg-yt-t tr.is-budget td.cg-yt{
+  background:linear-gradient(var(--wash),var(--wash)) var(--card);
+}
+.cg-lh{min-width:94px}
+.cg-lh span{display:block;font-family:var(--mono);font-size:10.5px}
+.cg-lh i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}
+.cg-lh i.bulk{background:var(--s-bulk)}
+.cg-lh i.sms{background:var(--s-sms)}
+.cg-lh em{font-style:normal;font-family:var(--mono);font-size:9px;opacity:.72;
+  letter-spacing:.06em;text-transform:uppercase}
+/* The year total is the reason this view exists, so it stays put at the
+   right-hand edge the way the year label stays put at the left. A total
+   that scrolls off is a total nobody reads. */
+.cg-yt{font-weight:600}
+.cg-yt-t th.cg-yt,
+.cg-yt-t td.cg-yt{
+  position:sticky;right:0;z-index:2;background:var(--card);
+  border-left:1px solid var(--surface-alt);
+}
+
+.cg-note{
+  font-family:var(--body);font-size:12.5px;opacity:.75;margin:10px 2px 0;
+}
+.cg-yt-t tbody tr:last-child{border-top:2px solid var(--surface-alt)}
