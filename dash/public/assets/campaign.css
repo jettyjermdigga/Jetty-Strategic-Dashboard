@@ -52,7 +52,12 @@
 .cp-pflag.due{color:var(--cp-due)}
 
 .cp-task{
-  display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;
+  display:flex;align-items:baseline;gap:11px;
+  /* NOT wrap. With wrap, a task name longer than its share does not
+     shrink -- the row breaks and carries the executors onto a second
+     line, at a different x from every other row, which is the one thing
+     the column was for. It wraps on a narrow screen and nowhere else. */
+  flex-wrap:nowrap;
   padding:6px 0;border-top:1px solid var(--surface-alt);
 }
 .cp-task:first-of-type{border-top:0}
@@ -67,11 +72,7 @@
      not a quieter label, it is a missing one. */
   text-transform:uppercase;opacity:.74;font-weight:400;
 }
-/* Wider apart than the row's own gap, so two labels read as two labels
-   rather than one long one. Executors has no fixed column of its own --
-   the pills follow the task text -- so its label sits beside it. */
-.cp-hrow .cp-mid{display:flex;gap:26px}
-.cp-exh{flex:0 0 auto}
+.cp-hrow .cp-exs{display:block}
 /* Left to right: date, how late, campaign, what it is, who else is on it.
    Every one of the first three is a FIXED width, so they read as columns
    you can run an eye down rather than five ragged edges. */
@@ -90,9 +91,21 @@
 }
 .cp-late.late{color:var(--cp-late);font-weight:600}
 .cp-late.due{color:var(--cp-due);font-weight:600}
-/* Does NOT grow. Left to expand it pushed the executor pills out to the
-   right-hand edge, which is the column they were just taken out of. */
-.cp-what{font-family:var(--body);font-size:14px;flex:0 1 auto;min-width:0}
+/* Takes whatever is left between the campaign and the executors. A name
+   longer than that clips, with the full one on its title -- the executors
+   hold a fixed column and a long task name is not allowed to shove it. */
+.cp-what{
+  font-family:var(--body);font-size:14px;flex:1 1 auto;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+/* Executors in a column of their own, over to the right, with room in
+   front of it. Flowing straight after the task text put them at a
+   different x on every row, which is not a column -- you could not run an
+   eye down it to see who was carrying what. */
+.cp-exs{
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;
+  flex:0 0 300px;min-width:0;margin-left:14px;
+}
 /* The campaign sits BEFORE the task name and holds a fixed column, so the
    list reads "this date, this late, this campaign, this task". A long
    name is clipped rather than allowed to push the task text around --
@@ -102,16 +115,6 @@
   flex:0 0 216px;min-width:0;max-width:216px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-/* Who it is on. Right-aligned into a column of its own so the names line
-   up down the card rather than trailing whatever length the task name
-   happened to be. */
-.cp-who{
-  font-family:var(--mono);font-size:10px;opacity:.78;letter-spacing:.03em;
-  text-align:right;min-width:150px;
-}
-/* Nobody assigned is not a blank. A deadline with no name on it is the
-   thing this board should make you look at, not the thing it hides. */
-.cp-who.none{color:var(--cp-due);opacity:1}
 .cp-div{
   font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;
   border:1px solid var(--surface-alt);border-radius:999px;padding:2px 8px;opacity:.8;
@@ -131,10 +134,13 @@
 
 @media (max-width:760px){
   /* Narrow: the columns stop being columns and the row wraps instead. */
+  .cp-task{flex-wrap:wrap}
   .cp-when{flex:0 0 auto;min-width:0}
   .cp-late{flex:0 0 auto;min-width:0}
   .cp-camp{flex:1 1 auto;max-width:none}
-  .cp-who{min-width:0;text-align:left;flex-basis:100%}
+  /* The executors drop under the task rather than squeezing it. */
+  .cp-exs{flex-basis:100%;margin-left:0}
+  .cp-what{white-space:normal;overflow:visible}
   .cp-strip{gap:16px}
 }
 
@@ -300,14 +306,8 @@
   :root:not([data-theme="light"]) .flt-status.none .fs-count{color:#E0A566}
 }
 
-/* ── Executors, on the row ──────────────────────────────────────────────
-   The same colour-coded pill as the filter chips, sitting beside the task
-   rather than right-aligned in a column of its own: who is doing a thing
-   is part of reading the thing, not a separate lookup. */
-.cp-mid{
-  display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;
-  flex:1 1 260px;min-width:0;
-}
+/* ── Executors, in a column ───────────────────────────────────
+   The same colour-coded pill the filter chips use. */
 .cp-ex{
   display:inline-flex;align-items:center;gap:5px;
   font-family:var(--body);font-size:11.5px;line-height:1;white-space:nowrap;

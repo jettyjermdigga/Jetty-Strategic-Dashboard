@@ -234,13 +234,20 @@
   // What the five columns are. Once per card and once per list, because
   // "4d" in a column of its own needs saying, and a card that is read on
   // its own should not need the one above it to be legible.
-  function headRow() {
+  // What the five columns are. Once per card and once per list, because
+  // "4d" in a column of its own needs saying, and a card read on its own
+  // should not need the one above it to be legible.
+  //
+  // On a person's own list the last column is not the people doing the
+  // work -- it is already theirs -- it is whoever is on it WITH them. So
+  // there it reads Supporters, and everywhere else Executors.
+  function headRow(mine) {
     return '<div class="cp-task cp-hrow">'
       + '<span class="cp-when">Date</span>'
       + '<span class="cp-late">Days late</span>'
       + '<span class="cp-camp">Campaign</span>'
-      + '<span class="cp-mid"><span class="cp-what">Task description</span>'
-      + '<span class="cp-exh">Executors</span></span>'
+      + '<span class="cp-what">Task description</span>'
+      + '<span class="cp-exs">' + (mine ? 'Supporters' : 'Executors') + '</span>'
       + '</div>';
   }
 
@@ -271,10 +278,8 @@
       + '<span class="cp-late ' + c + '">' + esc(lateWords(t.deadline)) + '</span>'
       + '<span class="cp-camp" title="' + esc(t.campaign || '') + '">'
       + esc(t.campaign || '') + '</span>'
-      + '<span class="cp-mid">'
-      + '<span class="cp-what">' + esc(t.name) + '</span>'
-      + pills
-      + '</span>'
+      + '<span class="cp-what" title="' + esc(t.name) + '">' + esc(t.name) + '</span>'
+      + '<span class="cp-exs">' + pills + '</span>'
       + (t.review ? '<span class="cp-rev">Out for review</span>' : '')
       + '</div>';
   }
@@ -304,7 +309,7 @@
       + (late && late < rows.length
           ? '<span class="cp-pflag late">' + late + ' late</span>' : '')
       + '</div>'
-      + headRow()
+      + headRow(mine)
       + rows.map(function (t) { return taskRow(t, mine, hueFor); }).join('')
       + '</section></div>';
   }
@@ -360,7 +365,7 @@
         + (r.late ? '<span class="cp-pflag late">' + r.late + ' late</span>' : '')
         + (r.due ? '<span class="cp-pflag due">' + r.due + ' this week</span>' : '')
         + '</div>'
-        + headRow()
+        + headRow('')
         + r.tasks.map(function (t) { return taskRow(t, '', hueFor); }).join('')
         + '</section>';
     }).join('') + '</div>';

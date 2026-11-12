@@ -2742,7 +2742,8 @@ describe('campaign board', () => {
     const html = taskRow(Object.assign(task('Staff web fixes', '2026-11-05', [kate]),
                                        { campaign: 'Datmos Website Re-Launch (2026)' }), '');
     const order = [...html.matchAll(/class="(cp-[a-z]+)/g)].map((m) => m[1]);
-    eq(order.join(' > '), 'cp-task > cp-when > cp-late > cp-camp > cp-mid > cp-what > cp-ex',
+    eq(order.join(' > '),
+       'cp-task > cp-when > cp-late > cp-camp > cp-what > cp-exs > cp-ex',
        'the columns are not in the order they were asked for');
     const cell = (c) => (new RegExp('class="' + c + '[^"]*"[^>]*>([^<]*)<').exec(html) || [])[1];
     eq(cell('cp-when'), '5 Nov', 'the date column is carrying something other than the date');
@@ -2829,21 +2830,28 @@ describe('campaign board', () => {
   it('labels its columns everywhere', () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
-    const head = page.slice(page.indexOf('function headRow()'), page.indexOf('function exPill('));
-    for (const label of ['Date', 'Days late', 'Campaign', 'Task description', 'Executors']) {
+    const head = page.slice(page.indexOf('function headRow('), page.indexOf('function exPill('));
+    for (const label of ['Date', 'Days late', 'Campaign', 'Task description']) {
       ok(head.includes('>' + label + '<'), 'the header row does not name ' + label);
     }
     // The labels must sit in the same column classes as the data, or they
     // line up with nothing.
     eq([...head.matchAll(/class="(cp-[a-z]+)"/g)].map((m) => m[1]).join(' '),
-       'cp-when cp-late cp-camp cp-mid cp-what cp-exh',
+       'cp-when cp-late cp-camp cp-what cp-exs',
        'the labels are not in the columns they label');
+    // On your own list the last column is not the people doing the work --
+    // it is already yours -- it is whoever is on it WITH you.
+    ok(/mine \? 'Supporters' : 'Executors'/.test(head),
+       'the last column does not change its name on a person\u2019s own list');
+    const flatCall = page.slice(page.indexOf('function drawFlat('), page.indexOf('function drawBoard('));
+    ok(/headRow\(mine\)/.test(flatCall),
+       'a person\u2019s list does not tell the header whose list it is');
+    const boardCall = page.slice(page.indexOf('function drawBoard('), page.indexOf('function drawStrip('));
+    ok(/headRow\(''\)/.test(boardCall), 'Overview is labelling its column Supporters');
     // Called by the grouped view AND the flat one, not just whichever was
     // looked at last.
-    const board = page.slice(page.indexOf('function drawBoard('), page.indexOf('function drawStrip('));
-    const flat = page.slice(page.indexOf('function drawFlat('), page.indexOf('function drawBoard('));
-    ok(/headRow\(\)/.test(board), 'Overview has no column labels');
-    ok(/headRow\(\)/.test(flat), 'a person\u2019s list has no column labels');
+    ok(/headRow\(/.test(boardCall), 'Overview has no column labels');
+    ok(/headRow\(/.test(flatCall), 'a person\u2019s list has no column labels');
   });
 
   // Every id the page reaches for has to exist in the markup. This is here

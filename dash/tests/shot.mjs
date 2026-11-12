@@ -162,6 +162,20 @@ const CAMPAIGN_RECS = [
   ['Longform feature draft', '2026-12-08', [['Jon Coen', 'joncoen@comcast.net']], 'recB', 'JRF'],
   ['Store signage proof', '2026-12-10',
    [['Colleen Foster', 'colleen@jettylife.com']], 'recD', 'RETAIL'],
+  // The longest real task names in the base, and two executors on each,
+  // because that is the row where the task text runs closest to the
+  // executor column. A fixture of short names never tests the squeeze.
+  ['Thank You from the CEO - Top customer segment email', '2026-11-21',
+   [['John Clifford', 'john@jettylife.com'],
+    ['David Bachowski', 'd.bachowski@jettylife.com']], 'recA', 'BRAND'],
+  ['Email - Nov 21 - Resend Nov 19 Black Friday', '2026-11-22',
+   [['John Clifford', 'john@jettylife.com'],
+    ['David Bachowski', 'd.bachowski@jettylife.com']], 'recA', 'BRAND'],
+  // Long enough to FILL its column and clip. That is the only row where
+  // the gap in front of the executors is the margin and nothing else, so
+  // it is the only row that can catch the margin going missing.
+  ['Email - Nov 28 - Cyber Monday Extended Resend to Non-Openers and Early Access Segment',
+   '2026-11-28', [['David Bachowski', 'd.bachowski@jettylife.com']], 'recA', 'BRAND'],
 ];
 const CAMPAIGN_NAMES = { recA: 'Datmos Website Re-Launch (2026)', recB: 'Clam Jam (2026)',
                          recC: 'Wholesale General Tasks (2026)',
@@ -880,52 +894,67 @@ for (const c of CASES) {
   // they were just taken out of, and nothing else would notice.
   if (c.rowLayout) {
     const got = await page.evaluate(() => {
-      const row = [...document.querySelectorAll('.cp-task:not(.cp-hrow)')]
-        .find((r) => r.querySelector('.cp-ex'));
-      if (!row) return null;
-      const box = (sel) => {
-        const el = row.querySelector(sel);
-        return el ? el.getBoundingClientRect() : null;
+      const rows = [...document.querySelectorAll('.cp-task:not(.cp-hrow)')]
+        .filter((r) => r.querySelector('.cp-ex'));
+      if (!rows.length) return null;
+      const left = (el) => Math.round(el.getBoundingClientRect().left);
+      // To where the TEXT ends, not where its box ends -- the box is a
+      // fixed column now and its right edge says nothing about whether the
+      // words inside it are about to collide with the pills.
+      const textEnd = (r) => {
+        const el = r.querySelector('.cp-what');
+        const rng = document.createRange();
+        rng.selectNodeContents(el);
+        // A Range reports the text's FULL width, clipping and all, so a
+        // name wider than its column reads as hundreds of pixels past the
+        // executors when on screen it simply ends in an ellipsis. What is
+        // visible is whichever comes first.
+        return Math.min(rng.getBoundingClientRect().right,
+                        el.getBoundingClientRect().right);
       };
-      const pill = box('.cp-ex');
-      // To where the TEXT ends, not where its box ends. The box grows with
-      // flex-grow and the gap to its right edge stays 8px however far the
-      // pill has actually been flung -- which is how the first version of
-      // this check passed the very mutation it was written for.
-      const rng = document.createRange();
-      rng.selectNodeContents(row.querySelector('.cp-what'));
-      const textRight = rng.getBoundingClientRect().right;
-      const cols = ['.cp-when', '.cp-late', '.cp-camp', '.cp-what', '.cp-ex']
-        .map((sel) => { const b = box(sel); return b ? Math.round(b.left) : -1; });
-      // A column is a column only ACROSS rows. Measured on one row, a
-      // content-width campaign cell looks identical to a fixed one; it is
-      // the next row down that gives it away.
-      const lefts = (sel) => [...new Set([...document.querySelectorAll(
-        '.cp-task:not(.cp-hrow) ' + sel)].map((e) => Math.round(
-          e.getBoundingClientRect().left)))];
-      return { gap: Math.round(pill.left - textRight), cols,
-               whatLefts: lefts('.cp-what').length,
-               campLefts: lefts('.cp-camp').length,
-               rowRight: Math.round(row.getBoundingClientRect().right) };
+      const lefts = (sel) => [...new Set(rows.map((r) => left(r.querySelector(sel))))];
+      const first = rows[0];
+      return {
+        cols: ['.cp-when', '.cp-late', '.cp-camp', '.cp-what', '.cp-exs']
+          .map((sel) => left(first.querySelector(sel))),
+        exLefts: lefts('.cp-exs').length,
+        whatLefts: lefts('.cp-what').length,
+        campLefts: lefts('.cp-camp').length,
+        // The tightest row on the page: if ANY task name runs up against
+        // the executors, the column is too narrow.
+        room: Math.round(Math.min(...rows.map((r) =>
+          left(r.querySelector('.cp-exs')) - textEnd(r)))),
+        // Geometry cannot see this one: without clipping a long name does
+        // not move the pills, it paints straight over them, and every box
+        // still measures exactly where it should.
+        clipped: rows.every((r) => ['.cp-what', '.cp-camp'].every((sel) =>
+          getComputedStyle(r.querySelector(sel)).overflow === 'hidden')),
+        rows: rows.length,
+      };
     });
     if (!got) {
       console.log('  deadline row: NO ROW WITH AN EXECUTOR PILL TO MEASURE');
       process.exitCode = 1;
     } else {
-      // Beside the text, not flung to the edge. 8px gap by design; the
-      // broken version measured hundreds.
-      const beside = got.gap >= 0 && got.gap <= 40;
       const ordered = got.cols.every((x, i) => i === 0 || x > got.cols[i - 1]);
-      const lined = got.whatLefts === 1 && got.campLefts === 1;
-      console.log('  deadline row: '
-        + (beside ? 'pills sit beside the task (' + got.gap + 'px)'
-                  : 'PILLS FLUNG TO THE EDGE: ' + got.gap + 'px from the task')
+      // A column is a column only ACROSS rows. On one row a content-width
+      // cell looks identical to a fixed one; the next row gives it away.
+      const lined = got.exLefts === 1 && got.whatLefts === 1 && got.campLefts === 1;
+      // 18, not 10. The tightest real row measures 25px; the 14px margin
+      // in front of the column is most of that, and a floor of 10 let the
+      // margin be deleted without a word.
+      const roomy = got.room >= 18;
+      console.log('  deadline row: ' + got.rows + ' rows'
         + ', ' + (ordered ? 'five columns left to right'
                           : 'COLUMNS OUT OF ORDER: ' + got.cols.join(','))
-        + ', ' + (lined ? 'every row starts its columns at the same x'
-                        : 'COLUMNS RAGGED ACROSS ROWS: ' + got.campLefts
-                          + ' campaign starts, ' + got.whatLefts + ' task starts'));
-      if (!beside || !ordered || !lined) process.exitCode = 1;
+        + ', ' + (lined ? 'executors hold one column'
+                        : 'RAGGED ACROSS ROWS: ' + got.exLefts + ' executor starts, '
+                          + got.whatLefts + ' task starts, ' + got.campLefts + ' campaign starts')
+        + ', ' + (roomy ? 'room before them (' + got.room + 'px at the tightest)'
+                        : 'TASK TEXT RUNS INTO THE EXECUTORS: ' + got.room + 'px'));
+      if (!got.clipped) console.log('  deadline row: A COLUMN DOES NOT CLIP '
+        + '-- a long name will paint over the one beside it');
+      if (!ordered || !lined || !roomy || !got.clipped) process.exitCode = 1;
     }
   }
 
