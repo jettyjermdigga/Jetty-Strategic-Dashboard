@@ -543,6 +543,70 @@ describe('linkCats', () => {
 });
 
 // Alphabetical, and a link in two categories reachable from both.
+// The dash page: links and forms used to be a column of their own with a
+// filter of their own. They are pills under the department they belong to
+// now, which is the same question the row along the top already answers.
+describe('the dash page: links under their department', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const page = fs.readFileSync(path.join(HERE, '..', 'public/assets/dash.js'), 'utf8');
+  const html = fs.readFileSync(path.join(HERE, '..', 'public/index.html'), 'utf8');
+
+  // Runs the page's own linkPills(), so the ordering is the shipped one.
+  const pills = (() => {
+    const cut = (a, b) => page.slice(page.indexOf(a), page.indexOf(b));
+    const src = cut('function esc(', '  var ICONS')
+      + "var OUT = '';\n"
+      + cut('function linkPills(', '  // Below the row:');
+    return new Function(src + ';return linkPills;')();
+  })();
+
+  const L = (name) => ({ name, url: 'https://l.test/' + name });
+
+  it('puts them in ABC order, whatever order they were added in', () => {
+    const out = pills({ links: [L('Model Inquiry Form'), L('Benefits Portal'),
+                                L('brand guidelines'), L('IT Help')] });
+    eq([...out.matchAll(/class="lk"[^>]*>([^<]*)</g)].map((m) => m[1]).join(' | '),
+       'Benefits Portal | brand guidelines | IT Help | Model Inquiry Form',
+       'the links are not in alphabetical order');
+  });
+
+  it('draws them as pills, not as tools', () => {
+    const out = pills({ links: [L('IT Help')] });
+    ok(/class="lk"/.test(out), 'a link is not drawn as a pill');
+    ok(!/class="tl"/.test(out), 'a link is being drawn as a tool');
+    ok(!/tl-blurb|tile-ico/.test(out), 'a link borrowed a tool\u2019s furniture');
+    ok(/lk-head/.test(out), 'nothing says what the pills are');
+    // Everything here leaves the dash; the arrow is the only warning.
+    ok(/lk-out/.test(out), 'the pills do not say they open somewhere else');
+  });
+
+  it('has nothing to draw when a department holds no links', () => {
+    eq(pills({ links: [] }), '');
+    eq(pills({}), '');
+  });
+
+  // A category can be open on its links alone -- that is the case the whole
+  // design turns on, and the pane has to say why it has no tools.
+  it('still explains a department that has links but no tools', () => {
+    const pane = page.slice(page.indexOf('function paneHtml('), page.indexOf('function noticeHtml('));
+    ok(/cat\.tiles\.length/.test(pane), 'the pane no longer checks for tools');
+    ok(/are assigned to you/.test(pane), 'it stopped saying why there are no tools');
+    ok(/pills \? ', but its links and forms are below\.'/.test(pane),
+       'it still points at a column that is not there any more');
+    ok(/'<div class="cat">' \+ body \+ pills/.test(pane),
+       'the pills are not inside the category card with the tools');
+  });
+
+  it('has no second column left anywhere', () => {
+    ok(!/id="links"/.test(html), 'the links aside is still in the markup');
+    ok(!/linksHtml|LFILTER|lkfilter/.test(page), 'the old links column is still in the script');
+    const css = fs.readFileSync(path.join(HERE, '..', 'public/assets/dash.css'), 'utf8');
+    ok(!/\.shell\.split/.test(css), 'the split grid is still styled');
+    ok(!/\.lk-filter|\.lk-list|\.links-head/.test(css), 'the old column is still styled');
+    ok(/\.lk-row\{/.test(css) && /\.lk-head\{/.test(css), 'the pills are not styled');
+  });
+});
+
 describe('dashCategories: order and multi-category links', () => {
   const cats = [{ key: 'wholesale', label: 'Wholesale', icon: 'box' },
                 { key: 'finance', label: 'Finance', icon: 'chart' },

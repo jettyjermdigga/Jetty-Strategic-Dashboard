@@ -59,7 +59,8 @@
   // Finance -- so the row is the same shape for everybody, and what differs
   // is which of them open.
   //
-  // Clicking one shows its tiles below and its links on the right.
+  // Clicking one shows everything filed under it: its tools, then its
+  // links and forms.
 
   var SEL = '';
 
@@ -107,77 +108,44 @@
       + '</span></a>';
   }
 
-  // Below the row: the tiles of whichever category is selected.
-  function paneHtml(cat) {
-    if (!cat) return '';
-    if (!cat.tiles.length) {
-      // A category can be open on its links alone. Saying so is the
-      // difference between "you have no tools here" and "this is broken".
-      return '<div class="pane-empty">No tools in ' + esc(cat.label)
-        + ' are assigned to you' + (cat.links.length ? ', but its links are on the right.' : '.')
-        + '</div>';
-    }
-    return '<div class="cat"><div class="cat-body">'
-      + cat.tiles.map(tileLine).join('') + '</div></div>';
+  // Links and forms, as pills under the category they belong to.
+  //
+  // They were a column of their own with a filter of their own, which asked
+  // somebody to learn a second way of narrowing the same page. They belong
+  // to a department as much as a tool does, so they sit under it -- and
+  // they are drawn as pills rather than rows because they are NOT tools:
+  // an address with nothing of ours behind it, and nothing to assign.
+  //
+  // Alphabetical. The order they were added in is a fact about Setup, not
+  // about the person looking for one.
+  function linkPills(cat) {
+    var links = (cat.links || []).slice().sort(function (a, b) {
+      return String(a.name || '').localeCompare(String(b.name || ''), 'en');
+    });
+    if (!links.length) return '';
+    return '<div class="lk-wrap">'
+      + '<div class="lk-head">Links &amp; forms</div>'
+      + '<div class="lk-row">'
+      + links.map(function (l) {
+          return '<a class="lk"' + OUT + ' href="' + esc(l.url) + '">'
+            + esc(l.name)
+            + '<span class="lk-out" aria-hidden="true">\u2197</span></a>';
+        }).join('')
+      + '</div></div>';
   }
 
-  // The right column. Links are bookmarks rather than tools -- an address
-  // with nothing of ours behind it -- so everybody gets all of them and the
-  // category is only a way to narrow the list.
-  //
-  // Its filter is deliberately its own, not the row along the top. That row
-  // is about tiles, and a category you hold no tile in leaves its chip shut
-  // -- so following it would make those links unreachable for precisely the
-  // people links exist to serve.
-  var LFILTER = '';
-
-  function linksHtml(me) {
-    var all = me.links || [];
-    if (!all.length) {
-      if (!me.isAdmin) return '';
-      return head('')
-        + '<div class="lk-empty">No links yet. They are bookmarks and forms rather'
-        + ' than tools \u2014 a form, a doc, a vendor portal \u2014 and everybody'
-        + ' sees them. Add them under Links in Setup.</div>';
-    }
-
-    // Only categories that actually hold a link, so the filter never offers
-    // a choice that empties the list.
-    var used = {};
-    all.forEach(function (l) { (l.cats || []).forEach(function (k) { used[k] = true; }); });
-    var opts = (me.cats || []).filter(function (c) { return used[c.key]; });
-
-    var shown = LFILTER
-      ? all.filter(function (l) { return (l.cats || []).indexOf(LFILTER) !== -1; })
-      : all;
-
-    return head(opts)
-      + '<div class="lk-list">'
-      + (shown.length
-          ? shown.map(function (l) {
-              return '<a class="lk"' + OUT + ' href="' + esc(l.url) + '">'
-                + esc(l.name) + '</a>';
-            }).join('')
-          : '<div class="lk-empty">Nothing filed under that one.</div>')
-      + '</div>';
-
-    function head(options) {
-      var sel = '';
-      if (options && options.length) {
-        sel = '<select class="lk-filter" id="lkfilter" aria-label="Filter links by category">'
-          + '<option value="">All (' + all.length + ')</option>'
-          + options.map(function (c) {
-              var n = all.filter(function (l) {
-                return (l.cats || []).indexOf(c.key) !== -1;
-              }).length;
-              return '<option value="' + esc(c.key) + '"'
-                + (c.key === LFILTER ? ' selected' : '') + '>'
-                + esc(c.label) + ' (' + n + ')</option>';
-            }).join('')
-          + '</select>';
-      }
-      return '<div class="links-head">Links &amp; Forms</div>' + sel;
-    }
+  // Below the row: whatever the selected category holds.
+  function paneHtml(cat) {
+    if (!cat) return '';
+    var pills = linkPills(cat);
+    var body = cat.tiles.length
+      ? '<div class="cat-body">' + cat.tiles.map(tileLine).join('') + '</div>'
+      // A category can be open on its links alone. Saying so is the
+      // difference between "you have no tools here" and "this is broken".
+      : '<div class="pane-empty">No tools in ' + esc(cat.label)
+        + ' are assigned to you'
+        + (pills ? ', but its links and forms are below.' : '.') + '</div>';
+    return '<div class="cat">' + body + pills + '</div>';
   }
 
   function noticeHtml(me) {
@@ -224,10 +192,6 @@
     var cat = cats.filter(function (c) { return c.key === SEL; })[0];
     $('#catbar').innerHTML = catbarHtml(cats, SEL);
     $('#pane').innerHTML = paneHtml(cat);
-    var links = linksHtml(STATE);
-    $('#links').innerHTML = links;
-    $('#links').hidden = !links;
-    $('#shell').classList.toggle('split', Boolean(links));
   }
 
   function render(me) {
@@ -253,20 +217,14 @@
     if (shutOut) {
       $('#catbar').innerHTML = '';
       $('#pane').innerHTML = '';
-      $('#links').hidden = true;
-      $('#shell').classList.remove('split');
       return;
     }
     if (!openOnes.length) {
-      // Holding no tiles does not mean an empty page any more. Links go to
-      // everybody, so the column still stands -- it is the one thing on
-      // here a brand new person can use on their first morning.
+      // Nothing at all now, rather than "no tiles". A category opens on its
+      // links alone, so somebody holding no tools but reachable links still
+      // has a lit chip to click -- this branch is the genuinely empty page.
       $('#catbar').innerHTML = catbarHtml(cats, '');
       $('#pane').innerHTML = emptyHtml(me);
-      var only = linksHtml(me);
-      $('#links').innerHTML = only;
-      $('#links').hidden = !only;
-      $('#shell').classList.toggle('split', Boolean(only));
       return;
     }
     // Land on the first one that has something in it. Opening on an empty
@@ -297,16 +255,6 @@
     if (!t) return;
     SEL = t.dataset.cat;
     paint();
-  });
-
-  // Narrowing the links does not touch the tiles, and repainting the whole
-  // page would throw away which category is open above.
-  document.addEventListener('change', function (e) {
-    if (!e.target || e.target.id !== 'lkfilter') return;
-    LFILTER = e.target.value;
-    var el = $('#links');
-    el.innerHTML = linksHtml(STATE);
-    el.hidden = !el.innerHTML;
   });
 
   fetch('/api/me', { headers: { accept: 'application/json' } })

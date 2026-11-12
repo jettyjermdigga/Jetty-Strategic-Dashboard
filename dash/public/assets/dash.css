@@ -155,8 +155,6 @@ button,select,input{font-family:inherit;color:inherit}
 .back:hover{color:#fff;border-bottom-color:#fff}
 
 .shell{display:grid;grid-template-columns:minmax(0,1fr);gap:26px;align-items:start}
-.shell.split{grid-template-columns:minmax(0,1fr) 300px}
-@media (max-width:980px){ .shell.split{grid-template-columns:minmax(0,1fr)} }
 
 /* ── The category row ────────────────────────────────────────────────────
    Every category, always, alphabetical, one line.
@@ -213,7 +211,7 @@ button,select,input{font-family:inherit;color:inherit}
 .cat-body{display:flex;flex-direction:column}
 .pane-empty{
   font-family:var(--body);font-size:14px;line-height:1.6;
-  padding:20px 2px;opacity:.8;
+  padding:18px 15px;opacity:.8;
 }
 
 /* A tile: one line, icon, name, and what it is. */
@@ -230,32 +228,27 @@ button,select,input{font-family:inherit;color:inherit}
 .tl-name{font-family:var(--display);font-weight:700;font-size:14.5px}
 .tl-blurb{font-family:var(--body);font-size:13px;line-height:1.5;opacity:.78}
 
-/* ── Links ───────────────────────────────────────────────────────────────
-   Bookmarks, not tools: an address with nothing of ours behind it. Compact,
-   and shown to everybody. */
-.links{
-  background:var(--card);border:1px solid var(--edge);border-radius:10px;
-  overflow:hidden;position:sticky;top:16px;
-}
-.links[hidden]{display:none}
-.links-head{
+/* ── Links and forms ────────────────────────────────────────────────────
+   Filed under the same department as the tools, but deliberately NOT drawn
+   like them. A tool is a row with an icon and a line saying what it does,
+   because it is ours and it is assigned to you. A link is a pill: an
+   address with nothing of ours behind it, given to everybody, and the only
+   thing worth reading is its name. */
+.lk-wrap{border-top:1px solid var(--edge);padding:13px 15px 15px}
+.cat-body + .lk-wrap{border-top:1px solid var(--edge)}
+.lk-head{
   font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-  font-weight:600;opacity:.75;padding:13px 15px 11px;
+  font-weight:600;opacity:.75;margin-bottom:10px;
 }
-.lk-filter{
-  display:block;width:calc(100% - 30px);margin:0 15px 12px;
-  font-family:var(--body);font-size:13px;
-  padding:7px 9px;border-radius:7px;
-  border:1px solid var(--field-line);background:var(--field);color:var(--ink);
-}
-.lk-list{border-top:1px solid var(--edge);max-height:60vh;overflow-y:auto}
-.lk-empty{
-  font-family:var(--body);font-size:12.5px;line-height:1.55;
-  padding:12px 15px;opacity:.8;border-top:1px solid var(--edge);
-}
+.lk-row{display:flex;flex-wrap:wrap;gap:7px}
 .lk{
-  display:block;font-family:var(--body);font-size:13.5px;line-height:1.4;
-  color:inherit;text-decoration:none;padding:10px 15px;
-  border-bottom:1px solid var(--edge);
+  display:inline-flex;align-items:center;gap:6px;
+  font-family:var(--body);font-size:13px;line-height:1;
+  color:inherit;text-decoration:none;white-space:nowrap;
+  border:1px solid var(--edge);border-radius:999px;
+  padding:8px 12px;transition:border-color .12s,background .12s;
 }
-.lk:hover{border-bottom-color:currentColor}
+.lk:hover{border-color:var(--primary);background:var(--card-hover)}
+/* Everything here leaves the dash, and the arrow is the only warning the
+   pill gives before a new tab opens. */
+.lk-out{font-size:10px;opacity:.55}
