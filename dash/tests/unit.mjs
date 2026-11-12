@@ -2802,6 +2802,53 @@ describe('campaign board', () => {
        'the Overview count still includes the overdue it does not show');
   });
 
+  // The column order was asked for explicitly: date, how late, campaign,
+  // what it is, who else. Pinned, because a refactor can shuffle five
+  // string concatenations without anything else noticing.
+  it('lays the row out in the order it was asked for', () => {
+    const taskRow = rowMaker();
+    const kate = { name: 'Katie Hehl', email: 'k@j.com' };
+    const kyle = { name: 'Kyle G', email: 'kyle@j.com' };
+    const html = taskRow(Object.assign(task('Staff web fixes', '2026-11-05', [kate, kyle]),
+                                       { campaign: 'Datmos Website Re-Launch (2026)' }), true, '');
+    const order = [...html.matchAll(/class="(cp-[a-z]+)/g)].map((m) => m[1]);
+    eq(order.join(' > '), 'cp-task > cp-when > cp-late > cp-camp > cp-what > cp-who',
+       'the columns are not in the order they were asked for');
+    // Each column holds its own thing and only its own thing.
+    const cell = (c) => (new RegExp('class="' + c + '[^"]*"[^>]*>([^<]*)<').exec(html) || [])[1];
+    eq(cell('cp-when'), '5 Nov', 'the date column is carrying something other than the date');
+    eq(cell('cp-late'), '7d late', 'how late it is did not get its own column');
+    eq(cell('cp-camp'), 'Datmos Website Re-Launch (2026)');
+    eq(cell('cp-what'), 'Staff web fixes');
+    eq(cell('cp-who'), 'Katie Hehl, Kyle G');
+  });
+
+  it('writes lateness only where there is something to act on', () => {
+    const taskRow = rowMaker();
+    const late = (ymd) => (/class="cp-late[^"]*"[^>]*>([^<]*)</.exec(
+      taskRow(task('t', ymd, []), false, '')) || [])[1];
+    eq(late('2026-10-26'), '17d late');
+    eq(late('2026-11-11'), '1d late');
+    eq(late('2026-11-12'), 'today');
+    eq(late('2026-11-18'), '6d');
+    eq(late('2026-11-19'), '7d');
+    // Past a week there is nothing to act on, so the column stays empty --
+    // "49d" on every December row is noise in the column that exists to
+    // make lateness jump out.
+    eq(late('2026-11-20'), '', 'the lateness column is filling up with slack time');
+    eq(late('2026-12-31'), '');
+  });
+
+  // Anything late is marked on the row itself, not just in its date, so
+  // the stylesheet can reach the whole row if it ever needs to.
+  it('marks an overdue row as overdue', () => {
+    const taskRow = rowMaker();
+    ok(/class="cp-task isLate"/.test(taskRow(task('t', '2026-10-01', []), false, '')));
+    ok(!/isLate/.test(taskRow(task('t', '2026-12-01', []), false, '')));
+    ok(!/isLate/.test(taskRow(task('t', '2026-11-12', []), false, '')),
+       'work due today is being marked as already late');
+  });
+
   // Every id the page reaches for has to exist in the markup. This is here
   // because it did not: the Clear button was dropped from the bar during a
   // rewrite, $('#clr') came back null, and the TypeError was swallowed by

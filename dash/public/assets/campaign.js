@@ -77,15 +77,21 @@
     return Number(p[2]) + ' ' + MONTH[Number(p[1]) - 1];
   }
 
-  // How late, in words. "11 days late" is the thing somebody acts on; the
-  // date alone makes them do the subtraction.
-  function whenWords(deadline) {
+  // How late, in words, in a column of its own. "244d late" is the thing
+  // somebody acts on; the date alone makes them do the subtraction. It is
+  // a separate column rather than appended to the date so the dates line
+  // up as dates and the lateness lines up as lateness -- you can run an
+  // eye down either without reading the other.
+  //
+  // Blank past a week out. "49d" against every December task is noise in
+  // the one column whose job is to make lateness jump out.
+  function lateWords(deadline) {
     var n = days(D.asOf, deadline);
-    if (n == null) return pretty(deadline);
-    if (n < 0) return pretty(deadline) + ' · ' + (-n) + 'd late';
-    if (n === 0) return pretty(deadline) + ' · today';
-    if (n <= 7) return pretty(deadline) + ' · ' + n + 'd';
-    return pretty(deadline);
+    if (n == null) return '';
+    if (n < 0) return (-n) + 'd late';
+    if (n === 0) return 'today';
+    if (n <= 7) return n + 'd';
+    return '';
   }
 
   function cls(st) {
@@ -231,10 +237,13 @@
     var show = mine ? all.filter(function (p) { return keyOf(p) !== mine; }) : all;
     var who = show.map(function (p) { return p.name; }).join(', ');
     if (mine && !who) who = all.length ? '' : 'Nobody assigned';
-    return '<div class="cp-task">'
-      + '<span class="cp-when ' + c + '">' + esc(whenWords(t.deadline)) + '</span>'
+    // Date, how late, campaign, what it is, who else is on it.
+    return '<div class="cp-task' + (c === 'late' ? ' isLate' : '') + '">'
+      + '<span class="cp-when ' + c + '">' + esc(pretty(t.deadline)) + '</span>'
+      + '<span class="cp-late ' + c + '">' + esc(lateWords(t.deadline)) + '</span>'
+      + (showCamp ? '<span class="cp-camp" title="' + esc(t.campaign || '') + '">'
+                    + esc(t.campaign || '') + '</span>' : '')
       + '<span class="cp-what">' + esc(t.name) + '</span>'
-      + (showCamp ? '<span class="cp-camp">' + esc(t.campaign || '') + '</span>' : '')
       + '<span class="cp-who' + (who && who !== 'Nobody assigned' ? '' : ' none') + '">'
       + esc(mine ? who : (who || 'Nobody assigned')) + '</span>'
       + (t.review ? '<span class="cp-rev">Out for review</span>' : '')

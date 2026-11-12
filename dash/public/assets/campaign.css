@@ -56,18 +56,33 @@
   padding:6px 0;border-top:1px solid var(--surface-alt);
 }
 .cp-task:first-of-type{border-top:0}
-/* The date leads: this is a deadline list, and the date is what it is for.
-   Fixed width so the dates form a column rather than a ragged edge. */
-.cp-when{font-family:var(--mono);font-size:11px;min-width:104px;white-space:nowrap}
+/* Left to right: date, how late, campaign, what it is, who else is on it.
+   Every one of the first three is a FIXED width, so they read as columns
+   you can run an eye down rather than five ragged edges. */
+.cp-when{
+  font-family:var(--mono);font-size:11px;white-space:nowrap;
+  flex:0 0 58px;min-width:58px;
+}
 .cp-when.late{color:var(--cp-late);font-weight:600}
 .cp-when.due{color:var(--cp-due);font-weight:600}
+/* Lateness in its own column. Empty for anything more than a week out, so
+   the column is blank where there is nothing to act on and the eye goes
+   straight to the rows that have something in it. */
+.cp-late{
+  font-family:var(--mono);font-size:11px;white-space:nowrap;
+  flex:0 0 72px;min-width:72px;
+}
+.cp-late.late{color:var(--cp-late);font-weight:600}
+.cp-late.due{color:var(--cp-due);font-weight:600}
 .cp-what{font-family:var(--body);font-size:14px;flex:1 1 230px;min-width:0}
-/* Right-aligned with a floor under it so the campaigns form a column of
-   their own in a flat list, rather than drifting with the length of
-   whatever task name happens to sit in front of them. */
+/* The campaign sits BEFORE the task name and holds a fixed column, so the
+   list reads "this date, this late, this campaign, this task". A long
+   name is clipped rather than allowed to push the task text around --
+   the full one is on the element's title. */
 .cp-camp{
   font-family:var(--mono);font-size:10px;opacity:.7;letter-spacing:.04em;
-  text-align:right;min-width:200px;
+  flex:0 0 216px;min-width:0;max-width:216px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 /* Who it is on. Right-aligned into a column of its own so the names line
    up down the card rather than trailing whatever length the task name
@@ -97,8 +112,10 @@
 .cp-why code{font-family:var(--mono);font-size:12.5px}
 
 @media (max-width:760px){
-  .cp-when{min-width:0}
-  .cp-camp{min-width:0;text-align:left}
+  /* Narrow: the columns stop being columns and the row wraps instead. */
+  .cp-when{flex:0 0 auto;min-width:0}
+  .cp-late{flex:0 0 auto;min-width:0}
+  .cp-camp{flex:1 1 auto;max-width:none}
   .cp-who{min-width:0;text-align:left;flex-basis:100%}
   .cp-strip{gap:16px}
 }
