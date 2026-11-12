@@ -325,15 +325,10 @@
     tasks.forEach(function (t) {
       var key = t.campaign || 'No campaign';
       if (!by[key]) {
-        by[key] = { name: key, division: t.division || '', tasks: [], late: 0, due: 0 };
+        by[key] = { name: key, tasks: [] };
         order.push(key);
       }
-      var r = by[key];
-      if (!r.division && t.division) r.division = t.division;
-      r.tasks.push(t);
-      var st = state(t.deadline);
-      if (st === 'overdue') r.late += 1;
-      else if (st === 'today' || st === 'week') r.due += 1;
+      by[key].tasks.push(t);
     });
 
     var rows = order.map(function (k) {
@@ -359,14 +354,13 @@
     }
 
     box.innerHTML = '<div class="cp-people">' + rows.map(function (r) {
+      // The campaign's name and nothing else. The division chip, the task
+      // count and the "N this week" badge were all carried over from
+      // Airtable because they were there, not because anybody reads them
+      // off this board -- the rows underneath say all three.
       return '<section class="cp-person">'
         + '<div class="cp-phead">'
         + '<span class="cp-pname">' + esc(r.name) + '</span>'
-        + (r.division ? '<span class="cp-div">' + esc(r.division) + '</span>' : '')
-        + '<span class="cp-pcount">' + r.tasks.length
-        + (r.tasks.length === 1 ? ' task' : ' tasks') + '</span>'
-        + (r.late ? '<span class="cp-pflag late">' + r.late + ' late</span>' : '')
-        + (r.due ? '<span class="cp-pflag due">' + r.due + ' this week</span>' : '')
         + '</div>'
         + headRow('')
         + r.tasks.map(function (t) { return taskRow(t, '', hueFor); }).join('')

@@ -2864,6 +2864,54 @@ describe('campaign board', () => {
     ok(/headRow\(/.test(flatCall), 'a person\u2019s list has no column labels');
   });
 
+  // The campaign card header carries the campaign's name and nothing else.
+  // The division chip, the task count and the "N this week" badge came over
+  // from Airtable because they were there, not because they were read.
+  it('keeps the campaign card header to the campaign', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const board = page.slice(page.indexOf('function drawBoard('), page.indexOf('function drawStrip('));
+    const head = board.slice(board.indexOf('cp-phead'), board.indexOf('headRow('));
+    ok(/cp-pname/.test(head), 'the card lost its name too');
+    for (const [cls, what] of [['cp-div', 'the division chip'],
+                               ['cp-pcount', 'the task count'],
+                               ['cp-pflag', 'the this-week badge']]) {
+      ok(!head.includes(cls), what + ' is still on the campaign card');
+    }
+    // And nothing is still being counted for a badge that is not drawn.
+    ok(!/r\.late|r\.due|r\.division/.test(board),
+       'drawBoard still works out figures nothing shows');
+    // A person's own list keeps its count and late flag -- different header,
+    // and the one place that summary is the point.
+    const flat = page.slice(page.indexOf('function drawFlat('), page.indexOf('function drawBoard('));
+    ok(/cp-pcount/.test(flat), 'a person\u2019s list lost its task count');
+  });
+
+  // Overdue used to be a colour you had to already be looking for.
+  it('puts a wash behind an overdue date, not just a colour on it', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const css = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.css'), 'utf8');
+    const block = css.slice(css.indexOf('.cp-task.isLate .cp-when,'));
+    ok(/background:color-mix\(in srgb, var\(--cp-late\)/.test(block),
+       'the overdue cells have no wash behind them');
+    // The two cells are separate columns; without closing the row gap the
+    // wash is two boxes with a stripe of card showing between them.
+    ok(/margin-left:-11px;padding-left:11px/.test(block),
+       'the two halves of the wash do not join up');
+    // The wash is made OF --cp-late, so --cp-late ON it measured 4.28:1.
+    // Pinned to the BASE rule, not just somewhere in the file -- the
+    // light-theme override further down also names it, and matching that
+    // let the base rule be reverted without a word.
+    ok(/\.cp-task\.isLate \.cp-when,\s*\.cp-task\.isLate \.cp-late\{color:#9C3A24\}/.test(css),
+       'the overdue text was left at the colour the wash is made of');
+    ok(/:root\[data-theme="dark"\][\s\S]{0,200}isLate/.test(css)
+       || /data-theme="dark"\] \.cp-task\.isLate/.test(css),
+       'the dark theme has no overdue ink of its own');
+    // Due-this-week is NOT washed: the box is what marks a thing as late.
+    ok(!/\.cp-when\.due\{[^}]*background/.test(css),
+       'work that is merely due soon is being washed as if it were late');
+  });
+
   // Every id the page reaches for has to exist in the markup. This is here
   // because it did not: the Clear button was dropped from the bar during a
   // rewrite, $('#clr') came back null, and the TypeError was swallowed by

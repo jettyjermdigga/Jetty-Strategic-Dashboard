@@ -78,7 +78,10 @@
    you can run an eye down rather than five ragged edges. */
 .cp-when{
   font-family:var(--mono);font-size:11px;white-space:nowrap;
-  flex:0 0 58px;min-width:58px;
+  flex:0 0 64px;min-width:64px;
+  /* On every row, late or not, so the overdue wash has somewhere to sit
+     without the dates stepping right on the rows that have one. */
+  padding-left:6px;
 }
 .cp-when.late{color:var(--cp-late);font-weight:600}
 .cp-when.due{color:var(--cp-due);font-weight:600}
@@ -122,10 +125,6 @@
   font-family:var(--mono);font-size:10px;opacity:.7;letter-spacing:.04em;
   flex:0 0 216px;min-width:0;max-width:216px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-.cp-div{
-  font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;
-  border:1px solid var(--surface-alt);border-radius:999px;padding:2px 8px;opacity:.8;
 }
 .cp-rev{
   font-family:var(--mono);font-size:9px;letter-spacing:.07em;text-transform:uppercase;
@@ -332,3 +331,40 @@
   color:var(--cp-due);
 }
 .cp-ex.none .fdot{background:var(--cp-due)}
+
+
+/* ── Overdue ────────────────────────────────────────────────────────────
+   A wash behind the date and how late it is, rather than a colour you
+   have to already be looking for. The two cells are separate columns, so
+   the second one pulls left over the row's gap to close it and pads the
+   same amount back -- the box becomes one box and the text does not move
+   an inch. */
+.cp-task.isLate .cp-when,
+.cp-task.isLate .cp-late{
+  background:color-mix(in srgb, var(--cp-late) 16%, transparent);
+  padding-top:3px;padding-bottom:3px;
+}
+/* Darker than --cp-late, because the wash is made OF --cp-late and sitting
+   the one on the other measured 4.28:1. #9C3A24 reads 5.50 on the wash and
+   6.90 on the plain card. The dark step needs no change: #F2B0A0 on its own
+   wash is 5.87. */
+.cp-task.isLate .cp-when,
+.cp-task.isLate .cp-late{color:#9C3A24}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .cp-task.isLate .cp-when,
+  :root:not([data-theme="light"]) .cp-task.isLate .cp-late{color:var(--cp-late)}
+}
+:root[data-theme="dark"] .cp-task.isLate .cp-when,
+:root[data-theme="dark"] .cp-task.isLate .cp-late{color:var(--cp-late)}
+:root[data-theme="light"] .cp-task.isLate .cp-when,
+:root[data-theme="light"] .cp-task.isLate .cp-late{color:#9C3A24}
+.cp-task.isLate .cp-when{border-radius:5px 0 0 5px}
+.cp-task.isLate .cp-late{
+  margin-left:-11px;padding-left:11px;padding-right:9px;
+  border-radius:0 5px 5px 0;
+}
+@media (max-width:760px){
+  /* The row wraps here, so the two halves would be a box on two lines. */
+  .cp-task.isLate .cp-late{margin-left:0;padding-left:6px;border-radius:5px}
+  .cp-task.isLate .cp-when{border-radius:5px}
+}
