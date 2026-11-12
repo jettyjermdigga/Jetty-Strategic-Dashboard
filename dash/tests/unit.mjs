@@ -2652,8 +2652,12 @@ describe('campaign board', () => {
     ok(/drawChips\(all, hits\)/.test(render), 'render hands drawChips the wrong list');
     // A person's list has to know whose it is, and Past deadline has to know
     // it is nobody's -- otherwise it would strip a name it should be showing.
-    ok(/drawFlat\(show, pickName\(\), f\.pick === 'late' \? '' : f\.pick\)/.test(render),
+    ok(/drawFlat\(show, pickName\(\), f\.pick === 'late' \? '' : f\.pick, hueFor\)/.test(render),
        'render does not tell drawFlat whose list it is');
+    // Every pill on every row has to agree with the chip above it, so the
+    // lookup is built once here and handed down rather than re-derived.
+    ok(/var keys = peopleRows\(all\)/.test(render) && /drawBoard\(show, hueFor\)/.test(render),
+       'the rows colour their pills from a different list than the chips');
   });
 
   it('dresses a lit chip so you can see which one it is', () => {
@@ -2694,133 +2698,62 @@ describe('campaign board', () => {
     const src = cut('function esc(', '  function api(')
       + cut('function days(', '  // \u2500\u2500 filtering')
       + cut('function keyOf', '  function chip(')
-      + cut('function taskRow(', '  // One flat list');
-    return new Function('D', src + ';return taskRow;')({ asOf: '2026-11-12' });
+      + cut('function exPill(', '  // One flat list');
+    const made = new Function('D', src + ';return {taskRow,exPill};')({ asOf: '2026-11-12' });
+    // A stand-in for the real lookup: enough to prove the pill carries
+    // whatever hue it is handed, keyed by the person.
+    const hueFor = (k) => 'var(--ph'
+      + (([...k].reduce((n, c) => n + c.charCodeAt(0), 0) % 8) + 1) + ')';
+    return (t, mine) => made.taskRow(t, mine, hueFor);
   }
 
   it('takes your own name off your own list, and nobody else\u2019s', () => {
     const taskRow = rowMaker();
     const kate = { name: 'Katie Hehl', email: 'k.hehl@jettylife.com' };
     const kyle = { name: 'Kyle G', email: 'kyle@jettyrockfoundation.org' };
-    const who = (html) => (html.match(/class="cp-who[^"]*">([^<]*)</) || [])[1];
+    const pills = (html) => [...html.matchAll(/class="cp-ex[^"]*"[^>]*>(?:<[^>]*>)*([^<]*)</g)]
+      .map((m) => m[1]);
 
-    // Her own list: her name is the heading, so it comes off the rows.
-    eq(who(taskRow(task('a', '2026-11-20', [kate]), true, kate.email)), '');
+    // Her own list: her name is the heading, so her pill comes off the rows.
+    eq(pills(taskRow(task('a', '2026-11-20', [kate]), kate.email)).join(','), '');
     // But a task she shares still says who with.
-    eq(who(taskRow(task('b', '2026-11-20', [kate, kyle]), true, kate.email)), 'Kyle G');
+    eq(pills(taskRow(task('b', '2026-11-20', [kate, kyle]), kate.email)).join(','), 'Kyle G');
     // And work with nobody on it keeps saying so, in any view.
-    const orphan = taskRow(task('c', '2026-11-20', []), true, kate.email);
-    eq(who(orphan), 'Nobody assigned');
-    ok(/cp-who none/.test(orphan), 'unassigned work lost its colour');
+    const orphan = taskRow(task('c', '2026-11-20', []), kate.email);
+    eq(pills(orphan).join(','), 'Nobody assigned');
+    ok(/cp-ex none/.test(orphan), 'unassigned work lost its colour');
     // Past deadline is not one person's list, so it names everybody.
-    eq(who(taskRow(task('d', '2026-11-20', [kate, kyle]), true, '')), 'Katie Hehl, Kyle G');
-    eq(who(taskRow(task('e', '2026-11-20', []), true, '')), 'Nobody assigned');
-    // The campaign rides along on a flat row and stays off the grouped one.
-    ok(/cp-camp/.test(taskRow(task('f', '2026-11-20', [kate]), true, '')));
-    ok(!/cp-camp/.test(taskRow(task('g', '2026-11-20', [kate]), false, '')),
-       'the campaign is repeated inside its own campaign card');
-  });
-
-  it('does not count the same thing twice in a heading', () => {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
-    const flat = page.slice(page.indexOf('function drawFlat('), page.indexOf('function drawBoard('));
-    ok(/late && late < rows\.length/.test(flat),
-       '"2 tasks \u00b7 2 late" is still printed over a list that is all late');
-  });
-
-  // Colour follows the ENTITY, never its rank. The chip row reorders every
-  // time a deadline moves; a colour keyed to position would repaint
-  // everybody on a day somebody finished something early.
-  it('gives a person the same colour wherever their chip lands', () => {
-    const P = chipParts({ pick: 'overview', q: '' });
-    const keys = ['cory@j.com', 'arlynn@j.com', 'katie@j.com', '(unassigned)'];
-    const mine = P.hueOf('katie@j.com', keys);
-    // Same people, handed over in a different order -- as the row does.
-    eq(P.hueOf('katie@j.com', ['arlynn@j.com', '(unassigned)', 'katie@j.com', 'cory@j.com']),
-       mine, 'a person\u2019s colour moved when the row reordered');
-    eq(P.hueOf('katie@j.com', keys.slice().reverse()), mine);
-    // Everyone present gets a different slot, up to the eight that exist.
-    const got = keys.filter((k) => k !== '(unassigned)').map((k) => P.hueOf(k, keys));
-    eq(new Set(got).size, got.length, 'two people were handed the same hue inside eight');
-    // Unassigned is not a person and never takes a person\u2019s colour.
-    eq(P.hueOf('(unassigned)', keys), 'var(--ph-none)');
-    ok(!got.includes('var(--ph-none)'), 'a person was given the unassigned grey');
-  });
-
-  it('wraps past eight rather than inventing a ninth token', () => {
-    const P = chipParts({ pick: 'overview', q: '' });
-    const many = [];
-    for (let i = 0; i < 11; i++) many.push('p' + String(i).padStart(2, '0') + '@j.com');
-    const hues = many.map((k) => P.hueOf(k, many));
-    for (const h of hues) {
-      ok(/^var\(--ph[1-8]\)$/.test(h), 'produced a token that is not declared: ' + h);
-    }
-    // The ninth wraps onto the first, deliberately and predictably.
-    eq(hues[8], hues[0]);
-    eq(hues[P.HUES], hues[0], 'the wrap does not match the declared slot count');
-    // A key that is not in the list cannot silently become somebody else.
-    eq(P.hueOf('stranger@j.com', many), 'var(--ph-none)');
-  });
-
-  it('declares every hue token it hands out, in all three theme scopes', () => {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const css = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.css'), 'utf8');
-    for (let i = 1; i <= 8; i++) {
-      const n = (css.match(new RegExp('--ph' + i + ':', 'g')) || []).length;
-      ok(n >= 4, '--ph' + i + ' is declared ' + n + ' times, needs light, media-dark, '
-         + 'data-dark and data-light');
-    }
-    ok((css.match(/--ph-none:/g) || []).length >= 4, '--ph-none is not declared per theme');
-    // A chip tinted with a token the stylesheet never defines paints nothing
-    // at all -- an unknown var voids the whole declaration.
-    const used = new Set((css.match(/var\(--ph[^)]*\)/g) || []));
-    for (const u of used) {
-      const name = u.slice(4, -1).split(',')[0].trim();
-      ok(css.includes(name + ':'), 'campaign.css uses ' + name + ' but never declares it');
-    }
-  });
-
-  // Overview hides the overdue, so Overview has to say so. A filter you
-  // cannot see is how a figure goes missing.
-  it('says out loud what Overview is holding back', () => {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
-    const render = page.slice(page.indexOf('function render() {'), page.indexOf('function stamp('));
-    ok(/#held/.test(render), 'nothing tells you the overdue work is being held back');
-    ok(/f\.pick === 'overview' && late/.test(render),
-       'the note is not tied to Overview being the view that hides them');
-    ok(/data-pick="late"/.test(render), 'there is no way through to what was hidden');
-    // And the headline count must not be called "open tasks" when it is
-    // only the forward-looking slice of them.
-    ok(/due from today/.test(render),
-       'the header still calls a trimmed count the number of open tasks');
-    // And the count on the chip must match what Overview actually draws,
-    // or the chip says 14 over a board of 12 and nobody trusts either.
-    const draw = page.slice(page.indexOf('function drawChips('), page.indexOf('function filtered('));
-    ok(/chip\('overview'[\s\S]{0,120}?!overdue\(/.test(draw),
-       'the Overview count still includes the overdue it does not show');
+    eq(pills(taskRow(task('d', '2026-11-20', [kate, kyle]), '')).join(','),
+       'Katie Hehl,Kyle G');
+    eq(pills(taskRow(task('e', '2026-11-20', []), '')).join(','), 'Nobody assigned');
+    // Each pill carries its own person's hue, not one hue for the row.
+    const two = taskRow(task('f', '2026-11-20', [kate, kyle]), '');
+    const hues = [...two.matchAll(/--who:(var\(--ph\d\))/g)].map((m) => m[1]);
+    eq(hues.length, 2, 'the pills are not individually coloured');
+    ok(hues[0] !== hues[1], 'both executors were painted the same colour');
   });
 
   // The column order was asked for explicitly: date, how late, campaign,
   // what it is, who else. Pinned, because a refactor can shuffle five
   // string concatenations without anything else noticing.
-  it('lays the row out in the order it was asked for', () => {
+  it('lays the row out in the order it was asked for, in every view', () => {
     const taskRow = rowMaker();
     const kate = { name: 'Katie Hehl', email: 'k@j.com' };
-    const kyle = { name: 'Kyle G', email: 'kyle@j.com' };
-    const html = taskRow(Object.assign(task('Staff web fixes', '2026-11-05', [kate, kyle]),
-                                       { campaign: 'Datmos Website Re-Launch (2026)' }), true, '');
+    const html = taskRow(Object.assign(task('Staff web fixes', '2026-11-05', [kate]),
+                                       { campaign: 'Datmos Website Re-Launch (2026)' }), '');
     const order = [...html.matchAll(/class="(cp-[a-z]+)/g)].map((m) => m[1]);
-    eq(order.join(' > '), 'cp-task > cp-when > cp-late > cp-camp > cp-what > cp-who',
+    eq(order.join(' > '), 'cp-task > cp-when > cp-late > cp-camp > cp-mid > cp-what > cp-ex',
        'the columns are not in the order they were asked for');
-    // Each column holds its own thing and only its own thing.
     const cell = (c) => (new RegExp('class="' + c + '[^"]*"[^>]*>([^<]*)<').exec(html) || [])[1];
     eq(cell('cp-when'), '5 Nov', 'the date column is carrying something other than the date');
     eq(cell('cp-late'), '7d late', 'how late it is did not get its own column');
     eq(cell('cp-camp'), 'Datmos Website Re-Launch (2026)');
     eq(cell('cp-what'), 'Staff web fixes');
-    eq(cell('cp-who'), 'Katie Hehl, Kyle G');
+    // The campaign is on the row in EVERY view now, grouped or flat -- the
+    // rows line up instead of having to be re-learnt per view.
+    const page = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)),
+                                           '..', 'public/assets/campaign.js'), 'utf8');
+    ok(!/showCamp/.test(page), 'the campaign column is still conditional on the view');
   });
 
   it('writes lateness only where there is something to act on', () => {
@@ -2847,6 +2780,70 @@ describe('campaign board', () => {
     ok(!/isLate/.test(taskRow(task('t', '2026-12-01', []), false, '')));
     ok(!/isLate/.test(taskRow(task('t', '2026-11-12', []), false, '')),
        'work due today is being marked as already late');
+  });
+
+  // The Showing row, the way the calendar carries it: which filters are
+  // on, what they leave, and a way out of EACH one -- a single Clear is no
+  // use when two are on and you only wanted rid of one.
+  it('says which filters are on and lets each one off separately', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const fn = page.slice(page.indexOf('function drawShowing('), page.indexOf('function render() {'));
+    ok(fn.length > 200, 'drawShowing was not found');
+    ok(/f\.pick !== 'overview'/.test(fn), 'the picked view is not shown as a filter');
+    ok(/f\.q \|\| ''\)\.trim\(\)/.test(fn), 'the search is not shown as a filter');
+    ok(/data-drop="/.test(fn), 'the tokens cannot be taken off one at a time');
+    ok(/of ' \+ all\.length \+ ' tasks/.test(fn), 'it does not say how many of how many');
+    ok(/nothing matches all of these/.test(fn), 'an empty result says nothing');
+    ok(/fltReset/.test(fn), 'there is no Clear all');
+    // With no filters on there is nothing to say, and an empty row would
+    // sit above the board taking space and meaning nothing.
+    ok(/if \(!on\.length\)[\s\S]{0,80}innerHTML = ''/.test(fn),
+       'the Showing row is drawn even when nothing is filtered');
+
+    // Each token has to actually remove its own filter and nothing else.
+    const h = page.slice(page.indexOf("$('#showing').addEventListener"),
+                         page.indexOf("$('#filters').addEventListener"));
+    ok(/data-drop'\) === 'q'[\s\S]{0,60}f\.q = ''/.test(h),
+       'dropping the search token does not clear the search');
+    ok(/else f\.pick = 'overview'/.test(h),
+       'dropping the view token does not return to Overview');
+    ok(/fltReset[\s\S]{0,160}f\.q = ''/.test(h), 'Clear all does not clear the search');
+  });
+
+  it('matches the calendar\u2019s Showing row rather than inventing one', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const css = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.css'), 'utf8');
+    const cal = fs.readFileSync(path.join(here, '..', '..', 'calendar/public/assets/calendar.css'), 'utf8');
+    for (const c of ['.flt-status', '.fs-lead', '.fs-tok', '.fs-x', '.fs-count', '.fs-clear']) {
+      ok(css.includes(c + '{'), 'campaign.css is missing ' + c);
+      ok(cal.includes(c + '{'), c + ' is not what the calendar actually uses');
+    }
+    // The "nothing matches" state is the one that has to be read rather
+    // than glanced at, and it is easy to leave behind when copying.
+    ok(/\.flt-status\.none \.fs-count\{/.test(css), 'the no-matches state was not carried over');
+  });
+
+  // The columns are labelled, in both views. A card read on its own should
+  // not need the one above it to be legible.
+  it('labels its columns everywhere', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const head = page.slice(page.indexOf('function headRow()'), page.indexOf('function exPill('));
+    for (const label of ['Date', 'Days late', 'Campaign', 'Task description', 'Executors']) {
+      ok(head.includes('>' + label + '<'), 'the header row does not name ' + label);
+    }
+    // The labels must sit in the same column classes as the data, or they
+    // line up with nothing.
+    eq([...head.matchAll(/class="(cp-[a-z]+)"/g)].map((m) => m[1]).join(' '),
+       'cp-when cp-late cp-camp cp-mid cp-what cp-exh',
+       'the labels are not in the columns they label');
+    // Called by the grouped view AND the flat one, not just whichever was
+    // looked at last.
+    const board = page.slice(page.indexOf('function drawBoard('), page.indexOf('function drawStrip('));
+    const flat = page.slice(page.indexOf('function drawFlat('), page.indexOf('function drawBoard('));
+    ok(/headRow\(\)/.test(board), 'Overview has no column labels');
+    ok(/headRow\(\)/.test(flat), 'a person\u2019s list has no column labels');
   });
 
   // Every id the page reaches for has to exist in the markup. This is here

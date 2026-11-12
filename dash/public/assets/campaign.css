@@ -56,6 +56,22 @@
   padding:6px 0;border-top:1px solid var(--surface-alt);
 }
 .cp-task:first-of-type{border-top:0}
+/* The column labels. Quiet enough to read past, present enough that "4d"
+   in a column of its own does not need guessing at. */
+.cp-hrow{
+  padding:2px 0 5px;border-top:0;
+}
+.cp-hrow span{
+  font-family:var(--mono)!important;font-size:9px;letter-spacing:.08em;
+  /* .55 measured 3.49:1 on the light card. A label nobody can read is
+     not a quieter label, it is a missing one. */
+  text-transform:uppercase;opacity:.74;font-weight:400;
+}
+/* Wider apart than the row's own gap, so two labels read as two labels
+   rather than one long one. Executors has no fixed column of its own --
+   the pills follow the task text -- so its label sits beside it. */
+.cp-hrow .cp-mid{display:flex;gap:26px}
+.cp-exh{flex:0 0 auto}
 /* Left to right: date, how late, campaign, what it is, who else is on it.
    Every one of the first three is a FIXED width, so they read as columns
    you can run an eye down rather than five ragged edges. */
@@ -74,7 +90,9 @@
 }
 .cp-late.late{color:var(--cp-late);font-weight:600}
 .cp-late.due{color:var(--cp-due);font-weight:600}
-.cp-what{font-family:var(--body);font-size:14px;flex:1 1 230px;min-width:0}
+/* Does NOT grow. Left to expand it pushed the executor pills out to the
+   right-hand edge, which is the column they were just taken out of. */
+.cp-what{font-family:var(--body);font-size:14px;flex:0 1 auto;min-width:0}
 /* The campaign sits BEFORE the task name and holds a fixed column, so the
    list reads "this date, this late, this campaign, this task". A long
    name is clipped rather than allowed to push the task text around --
@@ -240,3 +258,68 @@
   border:1px solid var(--cp-late);border-radius:999px;padding:4px 9px;
 }
 .cp-jump:hover{background:color-mix(in srgb, var(--cp-late) 12%, transparent)}
+
+
+/* ── What is showing ────────────────────────────────────────────────────
+   Lifted from the calendar, where it answers the same question: which
+   filters are on, what they leave, and how to get out. Each one comes off
+   on its own -- a single Clear is no use when two are on and you only
+   wanted rid of one. */
+.flt-status{
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+  font-family:var(--body);font-size:13px;margin:0 0 13px;
+}
+.flt-status:empty{display:none}
+.fs-lead{
+  font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  opacity:.72;margin-right:2px;
+}
+.fs-tok{
+  display:inline-flex;align-items:center;gap:6px;
+  font-family:var(--body);font-size:12.5px;line-height:1;
+  background:var(--primary);color:#fff;border:0;border-radius:999px;
+  padding:5px 8px 5px 11px;cursor:pointer;
+}
+.fs-tok:hover{opacity:.85}
+.fs-x{font-size:15px;line-height:1;opacity:.7}
+.fs-count{font-family:var(--mono);font-size:11px;opacity:.72;margin-left:4px}
+.fs-clear{
+  background:transparent;border:0;padding:0;margin-left:2px;cursor:pointer;
+  font-family:var(--display);font-weight:600;font-size:12.5px;
+  color:var(--primary);text-decoration:underline;
+}
+:root[data-theme="dark"] .fs-clear{color:#8fb3c4}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .fs-clear{color:#8fb3c4} }
+/* Nothing matches the combination: the one case where this row has to be
+   read rather than glanced at, so it stops being a quiet grey figure. */
+.flt-status.none .fs-count{
+  opacity:1;color:#8A5A20;font-family:var(--body);font-size:13px;font-weight:600;
+}
+:root[data-theme="dark"] .flt-status.none .fs-count{color:#E0A566}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .flt-status.none .fs-count{color:#E0A566}
+}
+
+/* ── Executors, on the row ──────────────────────────────────────────────
+   The same colour-coded pill as the filter chips, sitting beside the task
+   rather than right-aligned in a column of its own: who is doing a thing
+   is part of reading the thing, not a separate lookup. */
+.cp-mid{
+  display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;
+  flex:1 1 260px;min-width:0;
+}
+.cp-ex{
+  display:inline-flex;align-items:center;gap:5px;
+  font-family:var(--body);font-size:11.5px;line-height:1;white-space:nowrap;
+  border:1px solid color-mix(in srgb, var(--who,var(--ph-none)) 48%, transparent);
+  background:color-mix(in srgb, var(--who,var(--ph-none)) 11%, transparent);
+  border-radius:999px;padding:3px 8px;
+}
+.cp-ex .fdot{width:7px;height:7px;flex:0 0 7px}
+/* Nobody on it is not a blank. It is the row this board should make you
+   look at, so it gets a pill of its own rather than an empty space. */
+.cp-ex.none{
+  border-color:color-mix(in srgb, var(--cp-due) 45%, transparent);
+  color:var(--cp-due);
+}
+.cp-ex.none .fdot{background:var(--cp-due)}

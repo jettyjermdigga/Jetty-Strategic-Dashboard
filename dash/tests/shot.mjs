@@ -252,6 +252,10 @@ const CASES = [
   { file: 'campaign-person', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'campaign.html', wait: '#fWho .fchip',
     click: '#fWho .fchip', after: '#fWho .fchip.on' },
+  // Measured rather than eyeballed: the five columns in order, and the
+  // executor pills beside the task text rather than on the right edge.
+  { file: 'campaign-rowcheck', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'campaign.html', wait: '.cp-ex', rowLayout: true },
   { file: 'campaign-late', scheme: 'dark', who: full('jeremy@jettylife.com'),
     path: 'campaign.html', wait: '.fchip.late',
     click: '.fchip.late', after: '.fchip.late.on' },
@@ -868,6 +872,63 @@ for (const c of CASES) {
   // It reads whatever the filters leave behind, which is the whole request.
   // The things worth driving: that filtering changes it, that the scale
   // covers the tallest column, and that one axis never mixes its units.
+  // ── The deadline row ──────────────────────────────────────────────────
+  //
+  // A layout check, because the unit tests cannot see one. The executor
+  // pills were asked to sit NEXT TO the task description; a single CSS
+  // flex-grow puts them back on the right-hand edge, which is the column
+  // they were just taken out of, and nothing else would notice.
+  if (c.rowLayout) {
+    const got = await page.evaluate(() => {
+      const row = [...document.querySelectorAll('.cp-task:not(.cp-hrow)')]
+        .find((r) => r.querySelector('.cp-ex'));
+      if (!row) return null;
+      const box = (sel) => {
+        const el = row.querySelector(sel);
+        return el ? el.getBoundingClientRect() : null;
+      };
+      const pill = box('.cp-ex');
+      // To where the TEXT ends, not where its box ends. The box grows with
+      // flex-grow and the gap to its right edge stays 8px however far the
+      // pill has actually been flung -- which is how the first version of
+      // this check passed the very mutation it was written for.
+      const rng = document.createRange();
+      rng.selectNodeContents(row.querySelector('.cp-what'));
+      const textRight = rng.getBoundingClientRect().right;
+      const cols = ['.cp-when', '.cp-late', '.cp-camp', '.cp-what', '.cp-ex']
+        .map((sel) => { const b = box(sel); return b ? Math.round(b.left) : -1; });
+      // A column is a column only ACROSS rows. Measured on one row, a
+      // content-width campaign cell looks identical to a fixed one; it is
+      // the next row down that gives it away.
+      const lefts = (sel) => [...new Set([...document.querySelectorAll(
+        '.cp-task:not(.cp-hrow) ' + sel)].map((e) => Math.round(
+          e.getBoundingClientRect().left)))];
+      return { gap: Math.round(pill.left - textRight), cols,
+               whatLefts: lefts('.cp-what').length,
+               campLefts: lefts('.cp-camp').length,
+               rowRight: Math.round(row.getBoundingClientRect().right) };
+    });
+    if (!got) {
+      console.log('  deadline row: NO ROW WITH AN EXECUTOR PILL TO MEASURE');
+      process.exitCode = 1;
+    } else {
+      // Beside the text, not flung to the edge. 8px gap by design; the
+      // broken version measured hundreds.
+      const beside = got.gap >= 0 && got.gap <= 40;
+      const ordered = got.cols.every((x, i) => i === 0 || x > got.cols[i - 1]);
+      const lined = got.whatLefts === 1 && got.campLefts === 1;
+      console.log('  deadline row: '
+        + (beside ? 'pills sit beside the task (' + got.gap + 'px)'
+                  : 'PILLS FLUNG TO THE EDGE: ' + got.gap + 'px from the task')
+        + ', ' + (ordered ? 'five columns left to right'
+                          : 'COLUMNS OUT OF ORDER: ' + got.cols.join(','))
+        + ', ' + (lined ? 'every row starts its columns at the same x'
+                        : 'COLUMNS RAGGED ACROSS ROWS: ' + got.campLefts
+                          + ' campaign starts, ' + got.whatLefts + ' task starts'));
+      if (!beside || !ordered || !lined) process.exitCode = 1;
+    }
+  }
+
   // ── By year ───────────────────────────────────────────────────────────
   //
   // The one thing this view must get right: the year rows have to add up to

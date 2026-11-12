@@ -33,7 +33,6 @@
   <div class="bd-bar" id="bar" hidden>
     <input id="q" class="lb-q" type="search" placeholder="Find a task&hellip;"
            autocomplete="off" aria-label="Search by task, campaign or person">
-    <button class="lb-clr" id="clr" type="button" hidden>Clear</button>
     <span class="bd-grow"></span>
     <span class="cp-stamp" id="stamp"></span>
     <button class="lb-add" id="refresh" type="button">Refresh</button>
@@ -52,6 +51,10 @@
       <span class="fchips" id="fWho"></span>
     </div>
   </div>
+
+  <!-- What is being filtered, what it leaves, and the way out of it --
+       the same row the calendar carries under its filter bar. -->
+  <div id="showing"></div>
 
   <div class="cp-strip" id="strip" hidden></div>
   <p class="cp-held" id="held"></p>

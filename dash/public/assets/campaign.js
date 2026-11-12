@@ -231,21 +231,50 @@
   // every row: it is already the heading, and repeated down the right-hand
   // side it crowds out the one thing that column is worth reading for --
   // who ELSE is on the task with them.
-  function taskRow(t, showCamp, mine) {
+  // What the five columns are. Once per card and once per list, because
+  // "4d" in a column of its own needs saying, and a card that is read on
+  // its own should not need the one above it to be legible.
+  function headRow() {
+    return '<div class="cp-task cp-hrow">'
+      + '<span class="cp-when">Date</span>'
+      + '<span class="cp-late">Days late</span>'
+      + '<span class="cp-camp">Campaign</span>'
+      + '<span class="cp-mid"><span class="cp-what">Task description</span>'
+      + '<span class="cp-exh">Executors</span></span>'
+      + '</div>';
+  }
+
+  // One executor, as the same colour-coded pill the filter chips use.
+  function exPill(p, hueFor) {
+    return '<span class="cp-ex" style="--who:' + hueFor(keyOf(p)) + '">'
+      + '<span class="fdot" aria-hidden="true"></span>' + esc(p.name) + '</span>';
+  }
+
+  // Date, how late, campaign, what it is, who is doing it -- the same five
+  // in every view, so a row read on Overview and the same row read on a
+  // person's list line up rather than needing to be re-learnt.
+  //
+  // `mine` is the person whose list this is, if any. Their own pill comes
+  // off their own rows: it is already the heading, and repeated down every
+  // line it crowds out the one thing worth reading there -- who ELSE is on
+  // the task with them.
+  function taskRow(t, mine, hueFor) {
     var c = cls(state(t.deadline));
     var all = t.assignees || [];
-    var show = mine ? all.filter(function (p) { return keyOf(p) !== mine; }) : all;
-    var who = show.map(function (p) { return p.name; }).join(', ');
-    if (mine && !who) who = all.length ? '' : 'Nobody assigned';
-    // Date, how late, campaign, what it is, who else is on it.
+    var others = mine ? all.filter(function (p) { return keyOf(p) !== mine; }) : all;
+    var pills = all.length
+      ? others.map(function (p) { return exPill(p, hueFor); }).join('')
+      : '<span class="cp-ex none"><span class="fdot" aria-hidden="true"></span>'
+        + 'Nobody assigned</span>';
     return '<div class="cp-task' + (c === 'late' ? ' isLate' : '') + '">'
       + '<span class="cp-when ' + c + '">' + esc(pretty(t.deadline)) + '</span>'
       + '<span class="cp-late ' + c + '">' + esc(lateWords(t.deadline)) + '</span>'
-      + (showCamp ? '<span class="cp-camp" title="' + esc(t.campaign || '') + '">'
-                    + esc(t.campaign || '') + '</span>' : '')
+      + '<span class="cp-camp" title="' + esc(t.campaign || '') + '">'
+      + esc(t.campaign || '') + '</span>'
+      + '<span class="cp-mid">'
       + '<span class="cp-what">' + esc(t.name) + '</span>'
-      + '<span class="cp-who' + (who && who !== 'Nobody assigned' ? '' : ' none') + '">'
-      + esc(mine ? who : (who || 'Nobody assigned')) + '</span>'
+      + pills
+      + '</span>'
       + (t.review ? '<span class="cp-rev">Out for review</span>' : '')
       + '</div>';
   }
@@ -254,7 +283,7 @@
   // No campaign grouping here on purpose: the question a person chip asks
   // is "what do I do next", and that is one sequence, not a set of piles.
   // The campaign moves onto the row instead, so nothing is lost by it.
-  function drawFlat(tasks, head, mine) {
+  function drawFlat(tasks, head, mine, hueFor) {
     var rows = tasks.slice().sort(function (a, b) {
       return a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0;
     });
@@ -275,11 +304,12 @@
       + (late && late < rows.length
           ? '<span class="cp-pflag late">' + late + ' late</span>' : '')
       + '</div>'
-      + rows.map(function (t) { return taskRow(t, true, mine); }).join('')
+      + headRow()
+      + rows.map(function (t) { return taskRow(t, mine, hueFor); }).join('')
       + '</section></div>';
   }
 
-  function drawBoard(tasks) {
+  function drawBoard(tasks, hueFor) {
     var box = $('#board');
 
     var by = {};
@@ -330,7 +360,8 @@
         + (r.late ? '<span class="cp-pflag late">' + r.late + ' late</span>' : '')
         + (r.due ? '<span class="cp-pflag due">' + r.due + ' this week</span>' : '')
         + '</div>'
-        + r.tasks.map(function (t) { return taskRow(t, false); }).join('')
+        + headRow()
+        + r.tasks.map(function (t) { return taskRow(t, '', hueFor); }).join('')
         + '</section>';
     }).join('') + '</div>';
   }
@@ -382,6 +413,34 @@
     f.pick = 'overview';
   }
 
+  // Which filters are on, what they leave, and the way out of each one.
+  // A single Clear is no use when two are on and you only wanted rid of
+  // one, so every token comes off by itself.
+  function drawShowing(all, show) {
+    var on = [];
+    if (f.pick !== 'overview') {
+      on.push({ what: 'pick', label: pickName() });
+    }
+    if ((f.q || '').trim()) {
+      on.push({ what: 'q', label: '\u201c' + f.q.trim() + '\u201d' });
+    }
+    if (!on.length) { $('#showing').innerHTML = ''; return; }
+
+    $('#showing').innerHTML = '<div class="flt-status' + (show.length ? '' : ' none') + '">'
+      + '<span class="fs-lead">Showing</span>'
+      + on.map(function (o) {
+          return '<button type="button" class="fs-tok" data-drop="' + o.what + '"'
+            + ' title="Remove this filter">' + esc(o.label)
+            + '<span class="fs-x">\u00d7</span></button>';
+        }).join('')
+      + '<span class="fs-count">'
+      + (show.length ? show.length + ' of ' + all.length + ' tasks'
+                     : 'nothing matches all of these')
+      + '</span>'
+      + '<button type="button" class="fs-clear" id="fltReset">Clear all</button>'
+      + '</div>';
+  }
+
   function render() {
     settle();
     var all = D.tasks || [];
@@ -390,13 +449,18 @@
 
     var show = picked(hits);
     var late = hits.filter(overdue).length;
+    // One lookup, built once per draw and handed down, so every pill on
+    // every row agrees with the chip above it.
+    var keys = peopleRows(all).map(function (r) { return r.key; });
+    var hueFor = function (k) { return hueOf(k, keys); };
+    drawShowing(all, show);
     // The strip counts everything the search left, not the picked slice --
     // it is the headline for the board, and a headline that changes every
     // time you click a name is not one.
     drawStrip(hits);
 
-    if (f.pick === 'overview') drawBoard(show);
-    else drawFlat(show, pickName(), f.pick === 'late' ? '' : f.pick);
+    if (f.pick === 'overview') drawBoard(show, hueFor);
+    else drawFlat(show, pickName(), f.pick === 'late' ? '' : f.pick, hueFor);
 
     // Overview hides what is already late, so Overview says so. A filter
     // you cannot see is how a figure goes missing -- and the thing being
@@ -407,7 +471,6 @@
         + ' data-pick="late">Show them</button>'
       : '';
 
-    $('#clr').hidden = !filtered();
     // "12 open tasks" over a board that is holding 2 back is a wrong
     // number. On Overview with work hidden, say which 12 these are.
     $('#sub').textContent = show.length
@@ -444,6 +507,7 @@
         $('#sub').textContent = 'Not open to you';
         $('#strip').hidden = true;
         $('#filters').hidden = true;
+        $('#showing').innerHTML = '';
         say('The Campaign Board is not open to this address. It shows every '
           + 'person\u2019s deadlines, including who is behind, so it sits behind '
           + 'a list of its own. Ask Jeremy to add you to CAMPAIGN_USERS.');
@@ -452,6 +516,7 @@
       $('#sub').textContent = 'Could not load';
       $('#strip').hidden = true;
       $('#filters').hidden = true;
+      $('#showing').innerHTML = '';
       say(msg || 'The board did not load.');
     });
   }
@@ -461,12 +526,20 @@
       $('#stamp').textContent = 'reading\u2026';
       return load(true);
     }
-    if (e.target.closest && e.target.closest('#clr')) {
+  });
+
+  $('#showing').addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('#fltReset')) {
       f.pick = 'overview';
       f.q = '';
       $('#q').value = '';
       return render();
     }
+    var tok = e.target.closest && e.target.closest('.fs-tok');
+    if (!tok) return;
+    if (tok.getAttribute('data-drop') === 'q') { f.q = ''; $('#q').value = ''; }
+    else f.pick = 'overview';
+    render();
   });
 
   // One handler on the bar rather than one per chip: the chips are redrawn
