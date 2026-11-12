@@ -2602,10 +2602,17 @@ describe('campaign board', () => {
       task('soon', '2026-11-14', ['Cory']),
       task('orphan', '2026-11-03', []),
     ];
-    eq(P.picked(all).length, 3, 'Overview dropped something');
+    // Overview looks forward: today onward, nothing already late.
+    eq(P.picked(all).map((t) => t.name).join(','), 'soon',
+       'Overview is still leading with work whose date has gone');
     f.pick = 'late';
     eq(P.picked(all).map((t) => t.name).sort().join(','), 'late one,orphan',
        'Past deadline is not showing exactly what is overdue');
+    // A person's own list is NOT trimmed -- what they owe late is the
+    // first thing they need to see, and theirs is the view that says so.
+    f.pick = 'arlynn@jettylife.com';
+    eq(P.picked(all).map((t) => t.name).join(','), 'late one',
+       'a person\u2019s own overdue work was hidden from their own list');
     f.pick = 'cory@jettylife.com';
     eq(P.picked(all).map((t) => t.name).join(','), 'soon');
     f.pick = '(unassigned)';
@@ -2772,6 +2779,27 @@ describe('campaign board', () => {
       const name = u.slice(4, -1).split(',')[0].trim();
       ok(css.includes(name + ':'), 'campaign.css uses ' + name + ' but never declares it');
     }
+  });
+
+  // Overview hides the overdue, so Overview has to say so. A filter you
+  // cannot see is how a figure goes missing.
+  it('says out loud what Overview is holding back', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const render = page.slice(page.indexOf('function render() {'), page.indexOf('function stamp('));
+    ok(/#held/.test(render), 'nothing tells you the overdue work is being held back');
+    ok(/f\.pick === 'overview' && late/.test(render),
+       'the note is not tied to Overview being the view that hides them');
+    ok(/data-pick="late"/.test(render), 'there is no way through to what was hidden');
+    // And the headline count must not be called "open tasks" when it is
+    // only the forward-looking slice of them.
+    ok(/due from today/.test(render),
+       'the header still calls a trimmed count the number of open tasks');
+    // And the count on the chip must match what Overview actually draws,
+    // or the chip says 14 over a board of 12 and nobody trusts either.
+    const draw = page.slice(page.indexOf('function drawChips('), page.indexOf('function filtered('));
+    ok(/chip\('overview'[\s\S]{0,120}?!overdue\(/.test(draw),
+       'the Overview count still includes the overdue it does not show');
   });
 
   // Every id the page reaches for has to exist in the markup. This is here

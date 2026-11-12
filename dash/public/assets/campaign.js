@@ -120,8 +120,18 @@
   function overdue(t) { return state(t.deadline) === 'overdue'; }
 
   // Which tasks the picked chip is asking for.
+  //
+  // Overview looks FORWARD: today onward. Work whose date has gone sits
+  // behind the Past deadline chip instead of leading a board that is meant
+  // to answer "what is coming". The count on that chip is always on screen
+  // beside this one, so nothing has quietly disappeared -- and the Overdue
+  // figure in the strip above still counts the whole board.
+  //
+  // A person's own list is NOT trimmed that way. "What do I do next" has
+  // to start with the thing that was due last week, and theirs is the one
+  // view where that is their problem to see.
   function picked(tasks) {
-    if (f.pick === 'overview') return tasks;
+    if (f.pick === 'overview') return tasks.filter(function (t) { return !overdue(t); });
     if (f.pick === 'late') return tasks.filter(overdue);
     return tasks.filter(function (t) { return tagged(t, f.pick); });
   }
@@ -191,7 +201,7 @@
     // with any ink in it.
     if (!all.length) { $('#filters').hidden = true; return; }
     $('#fView').innerHTML =
-      chip('overview', 'Overview', hits.length)
+      chip('overview', 'Overview', hits.filter(function (t) { return !overdue(t); }).length)
       + chip('late', 'Past deadline', hits.filter(overdue).length, 'late');
 
     var rows = peopleRows(all);
@@ -370,6 +380,7 @@
     drawChips(all, hits);
 
     var show = picked(hits);
+    var late = hits.filter(overdue).length;
     // The strip counts everything the search left, not the picked slice --
     // it is the headline for the board, and a headline that changes every
     // time you click a name is not one.
@@ -378,9 +389,21 @@
     if (f.pick === 'overview') drawBoard(show);
     else drawFlat(show, pickName(), f.pick === 'late' ? '' : f.pick);
 
+    // Overview hides what is already late, so Overview says so. A filter
+    // you cannot see is how a figure goes missing -- and the thing being
+    // held back here is the overdue work.
+    $('#held').innerHTML = (f.pick === 'overview' && late)
+      ? esc(late + (late === 1 ? ' task is' : ' tasks are') + ' past deadline and not'
+            + ' shown here.') + ' <button type="button" class="cp-jump"'
+        + ' data-pick="late">Show them</button>'
+      : '';
+
     $('#clr').hidden = !filtered();
+    // "12 open tasks" over a board that is holding 2 back is a wrong
+    // number. On Overview with work hidden, say which 12 these are.
     $('#sub').textContent = show.length
-      + (show.length === 1 ? ' open task' : ' open tasks')
+      + (f.pick === 'overview' && late ? ' due from today'
+         : (show.length === 1 ? ' open task' : ' open tasks'))
       + (filtered() ? ' shown' : '');
   }
 
@@ -440,6 +463,13 @@
   // One handler on the bar rather than one per chip: the chips are redrawn
   // on every render, and listeners bound to them would be thrown away with
   // them each time.
+  $('#held').addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-pick]');
+    if (!b) return;
+    f.pick = b.getAttribute('data-pick');
+    render();
+  });
+
   $('#filters').addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('.fchip');
     if (!b) return;
