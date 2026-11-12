@@ -47,7 +47,7 @@ import { noticeBody, summarise, countUnread, isAutomatic,
 import { aov, netOfFee, hasReport, readyToPost, money, salesMessage, deliver,
          RESULTS_SLOT } from '../worker/sales.js';
 import SOCIAL_BACKFILL from '../backfill/social.json' with { type: 'json' };
-import { buildIcs } from '../worker/ics.js';
+import { buildIcs, pinned } from '../worker/ics.js';
 import { retailWeek, retailWeekStart } from '../worker/retail.js';
 import {
   DEPARTMENTS, DEPARTMENT_KEYS, DIVISIONS, EVENT_TYPE_KEYS, SUB_TYPES, NEEDS, VEHICLES,
@@ -755,6 +755,60 @@ const feedItem = (o) => Object.assign({
 
 describe('buildIcs', () => {
   const lines = (t) => t.split('\r\n');
+  // A campaign as ONE multi-day VEVENT is a bar straight across every week
+  // of a subscriber's Google Calendar, which buries the days underneath it.
+  // The month grid here was pinned to fix exactly that; the feed now is too.
+  const camp = (o) => feedItem(Object.assign({
+    id: 'c1', title: 'BFCM', sub_types: 'campaign-promotion',
+    start_date: '2026-11-19', end_date: '2026-12-02',
+  }, o));
+
+  it('writes a long campaign as its two ends, not a fortnight-wide bar', () => {
+    const out = buildIcs([camp()], {});
+    eq((out.match(/BEGIN:VEVENT/g) || []).length, 2, 'the campaign is still one long event');
+    const ev = out.split('BEGIN:VEVENT').slice(1);
+    // Each end is ONE day: DTEND on an all-day event is exclusive.
+    ok(ev[0].includes('DTSTART;VALUE=DATE:20261119'), 'the first marker is not on the start date');
+    ok(ev[0].includes('DTEND;VALUE=DATE:20261120'), 'the first marker is longer than a day');
+    ok(ev[1].includes('DTSTART;VALUE=DATE:20261202'), 'the second marker is not on the end date');
+    ok(ev[1].includes('DTEND;VALUE=DATE:20261203'), 'the second marker is longer than a day');
+    ok(/SUMMARY:Starts: BFCM/.test(out) && /SUMMARY:Ends: BFCM/.test(out),
+       'the markers do not say which end they are');
+    // Two halves of one campaign are two events, not one event written
+    // twice -- a client keeps whichever it saw last otherwise.
+    const uids = [...out.matchAll(/UID:([^\r]+)/g)].map((m) => m[1]);
+    eq(new Set(uids).size, uids.length, 'both markers were given the same UID');
+    // How long it runs is the one fact the bar carried, so it is kept.
+    ok((out.match(/Runs: 2026-11-19 to 2026-12-02/g) || []).length === 2,
+       'the run dates were dropped along with the bar');
+  });
+
+  it('leaves everything that is not a long campaign whole', () => {
+    // A one-day campaign has no two ends to pin.
+    const oneDay = buildIcs([camp({ end_date: '2026-11-19' })], {});
+    eq((oneDay.match(/BEGIN:VEVENT/g) || []).length, 1, 'a one-day campaign was split in two');
+    ok(!/Starts:|Ends:/.test(oneDay), 'a one-day campaign was labelled an end');
+    // A long run that is NOT a campaign still runs the whole way -- a
+    // week-long festival is a week-long thing, not two days.
+    const fest = buildIcs([feedItem({ start_date: '2026-09-26', end_date: '2026-10-03' })], {});
+    eq((fest.match(/BEGIN:VEVENT/g) || []).length, 1, 'a non-campaign run got pinned');
+    ok(fest.includes('DTSTART;VALUE=DATE:20260926') && fest.includes('DTEND;VALUE=DATE:20261004'),
+       'the festival lost its span');
+  });
+
+  it('pins the same way the month grid does', () => {
+    // pinWord() in public/assets/calendar.js is the rule this mirrors; the
+    // two disagreeing is how the grid and the feed drift apart.
+    const page = fs.readFileSync(path.join(HERE, '..', 'public/assets/calendar.js'), 'utf8');
+    const fn = page.slice(page.indexOf('function pinWord('), page.indexOf('function itemsOn('));
+    ok(/it\.start_date === it\.end_date\) return 'all'/.test(fn),
+       'the grid no longer treats a one-day campaign as whole');
+    ok(/CAMPAIGN = 'campaign-promotion'/.test(page), 'the grid pins a different sub-type');
+    eq(pinned(camp()).length, 2);
+    eq(pinned(camp({ end_date: '2026-11-19' })).length, 1);
+    eq(pinned(feedItem({ end_date: '2026-10-03' })).length, 1);
+  });
+
   it('uses CRLF throughout, as RFC 5545 requires', () => {
     const out = buildIcs([feedItem()], {});
     ok(!/[^\r]\n/.test(out), 'a bare newline got in');

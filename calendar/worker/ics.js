@@ -81,6 +81,37 @@ function dayAfter(dateStr) {
   return dt.toISOString().slice(0, 10);
 }
 
+/** The sub-type the month grid pins, and now the feed too. */
+const CAMPAIGN = 'campaign-promotion';
+
+function isCampaign(it) {
+  return String(it.sub_types || '').split(',')
+    .map((k) => k.trim()).indexOf(CAMPAIGN) >= 0;
+}
+
+/**
+ * The days a campaign is written on.
+ *
+ * A campaign runs for weeks. As one VEVENT that is a bar straight across
+ * every week of a subscriber's Google Calendar, and three of them stack up
+ * and bury the day's actual events -- the same thing the month grid here
+ * was pinned to fix. The grid shows one chip where a campaign starts and
+ * one where it ends; this does the same, as two one-day events.
+ *
+ * Mirrors pinWord() in public/assets/calendar.js: anything that is not a
+ * campaign, and any campaign that begins and ends on one day, is written
+ * once and whole.
+ */
+export function pinned(it) {
+  if (!isCampaign(it) || it.start_date === it.end_date) {
+    return [{ uid: '', from: it.start_date, to: it.end_date, word: '' }];
+  }
+  return [
+    { uid: '-starts', from: it.start_date, to: it.start_date, word: 'Starts' },
+    { uid: '-ends', from: it.end_date, to: it.end_date, word: 'Ends' },
+  ];
+}
+
 function stamp() {
   return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 }
@@ -110,24 +141,35 @@ export function buildIcs(items, opts) {
 
   const now = stamp();
   for (const it of feed) {
+   for (const mark of pinned(it)) {
     lines.push('BEGIN:VEVENT');
-    lines.push('UID:' + esc(it.id) + '@jetty-calendar');
+    // Each marker needs a UID of its own, or the two halves of a campaign
+    // are the same event twice and a client keeps whichever it saw last.
+    lines.push('UID:' + esc(it.id + mark.uid) + '@jetty-calendar');
     lines.push('DTSTAMP:' + now);
 
     if (it.all_day) {
-      lines.push('DTSTART;VALUE=DATE:' + compact(it.start_date));
-      lines.push('DTEND;VALUE=DATE:' + compact(dayAfter(it.end_date)));
+      lines.push('DTSTART;VALUE=DATE:' + compact(mark.from));
+      lines.push('DTEND;VALUE=DATE:' + compact(dayAfter(mark.to)));
     } else {
       const s = (it.start_time || '09:00').replace(':', '') + '00';
       const e = (it.end_time || it.start_time || '10:00').replace(':', '') + '00';
-      lines.push('DTSTART;TZID=' + TZID + ':' + compact(it.start_date) + 'T' + s);
-      lines.push('DTEND;TZID=' + TZID + ':' + compact(it.end_date) + 'T' + e);
+      lines.push('DTSTART;TZID=' + TZID + ':' + compact(mark.from) + 'T' + s);
+      lines.push('DTEND;TZID=' + TZID + ':' + compact(mark.to) + 'T' + e);
     }
 
     const prefix = it.status === 'Booked' ? '' : '[' + it.status + '] ';
-    lines.push('SUMMARY:' + esc(prefix + it.title));
+    const word = mark.word ? mark.word + ': ' : '';
+    lines.push('SUMMARY:' + esc(prefix + word + it.title));
 
     const descParts = [];
+    // The long bar did carry one real fact -- how long the thing runs --
+    // and pinning it to two days would throw that away. So the dates go in
+    // the description, where "what is live on the 14th" is still answerable
+    // from either marker.
+    if (mark.word) {
+      descParts.push('Runs: ' + it.start_date + ' to ' + it.end_date);
+    }
     const names = (list, csv) => (csv || '').split(',')
       .map((k) => label(list, k.trim())).filter(Boolean).join(', ');
     const dept = label(DEPARTMENTS, it.department);
@@ -163,6 +205,7 @@ export function buildIcs(items, opts) {
       : it.status === 'Cancelled' ? 'CANCELLED' : 'TENTATIVE'));
     lines.push('TRANSP:TRANSPARENT');
     lines.push('END:VEVENT');
+   }
   }
 
   lines.push('END:VCALENDAR');

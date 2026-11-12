@@ -312,9 +312,15 @@
   // long campaigns can push a day's actual events out of sight entirely.
   //
   // So in the month grid a campaign is pinned: one chip where it starts, one
-  // where it ends, nothing in between. Everywhere else it still runs the
-  // whole way. "What is live on the 14th" is a real question, and the day
-  // panel, the week, the agenda and the feed are where it gets asked.
+  // where it ends, nothing in between. The day panel, the week and the
+  // agenda still run it the whole way -- "what is live on the 14th" is a
+  // real question and those are where it gets asked.
+  //
+  // The ICS feed USED to be in that second list. It is not any more: a
+  // subscriber's Google Calendar draws a multi-day event as a bar across
+  // every week it touches, which is the exact clutter this pinning was for,
+  // and it was burying their actual days. worker/ics.js pins the same way
+  // now and puts the run dates in the description instead.
   var CAMPAIGN = 'campaign-promotion';
 
   function isCampaign(it) { return subsOf(it).indexOf(CAMPAIGN) >= 0; }
