@@ -12,7 +12,7 @@
   var SIGNED_OUT = 'Your sign-in expired. Reload the page.';
 
   var D = null;
-  var f = { view: 'people', div: '', q: '' };
+  var f = { div: '', q: '' };
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -105,83 +105,44 @@
 
   function filtered() { return Boolean(f.div || (f.q || '').trim()); }
 
-  // ── by person ───────────────────────────────────────────────────────────
-  function drawPeople(tasks) {
-    var box = $('#people');
-    box.hidden = f.view !== 'people';
-    if (box.hidden) { box.innerHTML = ''; return; }
+  // ── deadlines by campaign ───────────────────────────────────────────────
+  //
+  // One card per campaign, its open work underneath in date order, soonest
+  // campaign first. The assignees sit on the row rather than in a view of
+  // their own: who owes a thing is a property of the thing, and splitting
+  // them apart meant reading two pages to answer one question.
+  function drawBoard(tasks) {
+    var box = $('#board');
 
-    // Regrouped here rather than reusing D.people, because the filters cut
-    // the task list and a person's count has to follow what is on screen.
     var by = {};
     var order = [];
-    var put = function (key, name, t) {
-      if (!by[key]) { by[key] = { name: name, tasks: [], late: 0, due: 0 }; order.push(key); }
-      by[key].tasks.push(t);
-      var st = state(t.deadline);
-      if (st === 'overdue') by[key].late += 1;
-      else if (st === 'today' || st === 'week') by[key].due += 1;
-    };
     tasks.forEach(function (t) {
-      if (!t.assignees.length) { put('(unassigned)', 'Nobody assigned', t); return; }
-      t.assignees.forEach(function (p) { put(p.email || p.name, p.name, t); });
+      var key = t.campaign || 'No campaign';
+      if (!by[key]) {
+        by[key] = { name: key, division: t.division || '', tasks: [], late: 0, due: 0 };
+        order.push(key);
+      }
+      var r = by[key];
+      if (!r.division && t.division) r.division = t.division;
+      r.tasks.push(t);
+      var st = state(t.deadline);
+      if (st === 'overdue') r.late += 1;
+      else if (st === 'today' || st === 'week') r.due += 1;
     });
 
-    var rows = order.map(function (k) { return by[k]; }).sort(function (a, b) {
-      return b.late - a.late || b.due - a.due || b.tasks.length - a.tasks.length
-        || String(a.name).localeCompare(String(b.name));
-    });
-
-    if (!rows.length) {
-      box.innerHTML = '<p class="cp-empty">' + (filtered()
-        ? 'Nothing matches that.' : 'Nothing is open.') + '</p>';
-      return;
-    }
-
-    box.innerHTML = '<div class="cp-people">' + rows.map(function (r) {
-      var tasks = r.tasks.slice().sort(function (a, b) {
+    var rows = order.map(function (k) {
+      var r = by[k];
+      r.tasks.sort(function (a, b) {
         return a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0;
       });
-      return '<section class="cp-person">'
-        + '<div class="cp-phead">'
-        + '<span class="cp-pname">' + esc(r.name) + '</span>'
-        + '<span class="cp-pcount">' + r.tasks.length
-        + (r.tasks.length === 1 ? ' task' : ' tasks') + '</span>'
-        + (r.late ? '<span class="cp-pflag late">' + r.late + ' late</span>' : '')
-        + (r.due ? '<span class="cp-pflag due">' + r.due + ' this week</span>' : '')
-        + '</div>'
-        + tasks.map(function (t) {
-          var c = cls(state(t.deadline));
-          return '<div class="cp-task">'
-            + '<span class="cp-when ' + c + '">' + esc(whenWords(t.deadline)) + '</span>'
-            + '<span class="cp-what">' + esc(t.name) + '</span>'
-            + (t.campaign ? '<span class="cp-camp">' + esc(t.campaign) + '</span>' : '')
-            + (t.review ? '<span class="cp-rev">Out for review</span>' : '')
-            + '</div>';
-        }).join('')
-        + '</section>';
-    }).join('') + '</div>';
-  }
-
-  // ── timeline ────────────────────────────────────────────────────────────
-  function drawTimeline(tasks) {
-    var box = $('#timeline');
-    box.hidden = f.view !== 'timeline';
-    if (box.hidden) { box.innerHTML = ''; return; }
-
-    var by = {};
-    var order = [];
-    tasks.forEach(function (t) {
-      var key = t.campaign || '(no campaign)';
-      if (!by[key]) { by[key] = { name: key, from: t.deadline, to: t.deadline, n: 0, late: 0 }; order.push(key); }
-      var r = by[key];
-      if (t.deadline < r.from) r.from = t.deadline;
-      if (t.deadline > r.to) r.to = t.deadline;
-      r.n += 1;
-      if (state(t.deadline) === 'overdue') r.late += 1;
-    });
-    var rows = order.map(function (k) { return by[k]; }).sort(function (a, b) {
-      return a.from < b.from ? -1 : a.from > b.from ? 1
+      r.next = r.tasks[0].deadline;
+      return r;
+    }).sort(function (a, b) {
+      // Soonest next deadline first. This is a deadline board: what is
+      // closest to being due is what belongs at the top, and sorting by
+      // how late a campaign already is buries the thing due on Friday
+      // under something that slipped in March.
+      return a.next < b.next ? -1 : a.next > b.next ? 1
         : String(a.name).localeCompare(String(b.name));
     });
 
@@ -191,59 +152,29 @@
       return;
     }
 
-    // The window has to cover today as well as the work, or the today line
-    // sits off the end and the reader cannot place anything against it.
-    var lo = D.asOf;
-    var hi = D.asOf;
-    rows.forEach(function (r) {
-      if (r.from < lo) lo = r.from;
-      if (r.to > hi) hi = r.to;
-    });
-    var total = Math.max(1, days(lo, hi));
-    var pct = function (d) { return (days(lo, d) / total) * 100; };
-
-    // Month ticks across the window, so a bar can be placed without a
-    // tooltip.
-    var ticks = [];
-    var cur = new Date(lo + 'T00:00:00Z');
-    cur.setUTCDate(1);
-    for (var i = 0; i < 36; i++) {
-      var ds = cur.toISOString().slice(0, 10);
-      if (ds > hi) break;
-      // Apostrophe-year, so "Nov '26" cannot be read as the 26th of
-      // November on a page that is entirely about dates.
-      if (ds >= lo) {
-        ticks.push({ at: pct(ds), label: MONTH[cur.getUTCMonth()]
-          + ' \u2019' + String(cur.getUTCFullYear()).slice(2) });
-      }
-      cur.setUTCMonth(cur.getUTCMonth() + 1);
-    }
-
-    var todayAt = pct(D.asOf);
-    box.innerHTML = '<div class="cp-tl">'
-      + '<div class="cp-tl-axis"><span class="cp-tl-name"></span>'
-      + '<span class="cp-tl-scale">' + ticks.map(function (t) {
-        return '<span class="cp-tl-tick" style="left:' + t.at.toFixed(2) + '%">'
-          + esc(t.label) + '</span>';
-      }).join('') + '</span><span class="cp-tl-n"></span></div>'
-      + rows.map(function (r) {
-        var a = pct(r.from);
-        var b = pct(r.to);
-        var w = Math.max(0, b - a);
-        var point = r.from === r.to;
-        var c = r.late ? 'late' : (state(r.from) === 'today' || state(r.from) === 'week' ? 'due' : '');
-        return '<div class="cp-tl-row">'
-          + '<span class="cp-tl-name" title="' + esc(r.name) + '">' + esc(r.name) + '</span>'
-          + '<span class="cp-tl-track">'
-          + '<span class="cp-today" style="left:' + todayAt.toFixed(2) + '%"></span>'
-          + '<span class="cp-tl-bar ' + c + (point ? ' point' : '') + '" style="left:'
-          + a.toFixed(2) + '%;' + (point ? '' : 'width:' + w.toFixed(2) + '%')
-          + '" title="' + esc(r.name + ' · ' + r.from + ' to ' + r.to) + '"></span>'
-          + '</span>'
-          + '<span class="cp-tl-n">' + r.n + (r.late ? ' · ' + r.late + ' late' : '') + '</span>'
-          + '</div>';
-      }).join('')
-      + '</div>';
+    box.innerHTML = '<div class="cp-people">' + rows.map(function (r) {
+      return '<section class="cp-person">'
+        + '<div class="cp-phead">'
+        + '<span class="cp-pname">' + esc(r.name) + '</span>'
+        + (r.division ? '<span class="cp-div">' + esc(r.division) + '</span>' : '')
+        + '<span class="cp-pcount">' + r.tasks.length
+        + (r.tasks.length === 1 ? ' task' : ' tasks') + '</span>'
+        + (r.late ? '<span class="cp-pflag late">' + r.late + ' late</span>' : '')
+        + (r.due ? '<span class="cp-pflag due">' + r.due + ' this week</span>' : '')
+        + '</div>'
+        + r.tasks.map(function (t) {
+          var c = cls(state(t.deadline));
+          var who = (t.assignees || []).map(function (p) { return p.name; }).join(', ');
+          return '<div class="cp-task">'
+            + '<span class="cp-when ' + c + '">' + esc(whenWords(t.deadline)) + '</span>'
+            + '<span class="cp-what">' + esc(t.name) + '</span>'
+            + '<span class="cp-who' + (who ? '' : ' none') + '">'
+            + esc(who || 'Nobody assigned') + '</span>'
+            + (t.review ? '<span class="cp-rev">Out for review</span>' : '')
+            + '</div>';
+        }).join('')
+        + '</section>';
+    }).join('') + '</div>';
   }
 
   function drawStrip(tasks) {
@@ -273,12 +204,7 @@
   function render() {
     var tasks = (D.tasks || []).filter(keep);
     drawStrip(tasks);
-    drawPeople(tasks);
-    drawTimeline(tasks);
-
-    [].forEach.call(document.querySelectorAll('[data-view]'), function (b) {
-      b.setAttribute('aria-pressed', b.dataset.view === f.view ? 'true' : 'false');
-    });
+    drawBoard(tasks);
     $('#clr').hidden = !filtered();
     $('#sub').textContent = tasks.length + (tasks.length === 1 ? ' open task' : ' open tasks')
       + (filtered() ? ' shown' : '');
@@ -335,12 +261,6 @@
   }
 
   $('#bar').addEventListener('click', function (e) {
-    var b = e.target.closest ? e.target.closest('[data-view]') : null;
-    if (b) {
-      f.view = b.dataset.view;
-      try { localStorage.setItem('jetty-campaign-view', f.view); } catch (err) { /* private */ }
-      return render();
-    }
     if (e.target.closest && e.target.closest('#refresh')) {
       $('#stamp').textContent = 'reading…';
       return load(true);
@@ -355,11 +275,6 @@
   });
   $('#fDiv').addEventListener('change', function (e) { f.div = e.target.value; render(); });
   $('#q').addEventListener('input', function (e) { f.q = e.target.value; render(); });
-
-  try {
-    var v = localStorage.getItem('jetty-campaign-view');
-    if (v === 'people' || v === 'timeline') f.view = v;
-  } catch (err) { /* private mode */ }
 
   load(false);
 }());

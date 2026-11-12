@@ -234,8 +234,6 @@ const CASES = [
     path: 'campaign.html', wait: '.cp-person' },
   { file: 'campaign-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
     path: 'campaign.html', wait: '.cp-person' },
-  { file: 'campaign-timeline', scheme: 'light', who: full('jeremy@jettylife.com'),
-    path: 'campaign.html', wait: '.cp-tl-bar', campaignView: 'timeline' },
   // What it looks like before the secret is set: a page that explains
   // itself rather than one that is broken.
   { file: 'campaign-nokey', scheme: 'light', who: full('jeremy@jettylife.com'),
@@ -485,11 +483,6 @@ for (const c of CASES) {
   });
   // The chart is off until somebody presses Graph, so a case that wants it
   // in the shot -- and in the contrast sweep -- says so here.
-  if (c.campaignView) {
-    await page.addInitScript((v) => {
-      try { localStorage.setItem('jetty-campaign-view', v); } catch (err) { /* private */ }
-    }, c.campaignView);
-  }
   if (c.graph || c.byYear) {
     const view = c.byYear ? 'year' : 'graph';
     await page.addInitScript((v) => {

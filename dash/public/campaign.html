@@ -31,12 +31,6 @@
   <div id="notice"></div>
 
   <div class="bd-bar" id="bar" hidden>
-    <!-- One view at a time: who owes what, or when it all lands. -->
-    <span class="cp-views" role="group" aria-label="Which view">
-      <button type="button" data-view="people" aria-pressed="true">By person</button>
-      <button type="button" data-view="timeline" aria-pressed="false">Timeline</button>
-    </span>
-
     <select id="fDiv" class="bd-sel" aria-label="Which part of the business"></select>
     <input id="q" class="lb-q" type="search" placeholder="Find a task&hellip;"
            autocomplete="off" aria-label="Search by task, campaign or person">
@@ -49,8 +43,10 @@
 
   <div class="cp-strip" id="strip" hidden></div>
 
-  <div id="people"></div>
-  <div id="timeline" hidden></div>
+  <!-- Deadlines by campaign, and only that. One view, because one view is
+       what gets used -- the by-person and timeline cuts were built and taken
+       back out rather than left on screen for whoever was not using them. -->
+  <div id="board"></div>
 </main>
 
 <script src="/assets/campaign.js"></script>

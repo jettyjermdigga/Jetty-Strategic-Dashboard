@@ -21,13 +21,6 @@
 :root[data-theme="dark"]{ --cp-late:#F2B0A0; --cp-due:#E8B765; --cp-calm:#9DA4AE; }
 :root[data-theme="light"]{ --cp-late:#B4482F; --cp-due:#8A5A00; --cp-calm:#586D72; }
 
-.cp-views{display:inline-flex;gap:4px}
-.cp-views button{
-  font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
-  padding:6px 11px;border-radius:7px;cursor:pointer;
-  border:1px solid var(--surface-alt);background:transparent;color:var(--ink);
-}
-.cp-views button[aria-pressed="true"]{background:var(--primary);color:#fff;border-color:var(--primary)}
 .cp-stamp{font-family:var(--mono);font-size:9.5px;opacity:.7;letter-spacing:.05em}
 
 /* The headline counts. */
@@ -70,39 +63,24 @@
 .cp-when.due{color:var(--cp-due);font-weight:600}
 .cp-what{font-family:var(--body);font-size:14px;flex:1 1 230px;min-width:0}
 .cp-camp{font-family:var(--mono);font-size:10px;opacity:.7;letter-spacing:.04em}
+/* Who it is on. Right-aligned into a column of its own so the names line
+   up down the card rather than trailing whatever length the task name
+   happened to be. */
+.cp-who{
+  font-family:var(--mono);font-size:10px;opacity:.78;letter-spacing:.03em;
+  text-align:right;min-width:150px;
+}
+/* Nobody assigned is not a blank. A deadline with no name on it is the
+   thing this board should make you look at, not the thing it hides. */
+.cp-who.none{color:var(--cp-due);opacity:1}
+.cp-div{
+  font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+  border:1px solid var(--surface-alt);border-radius:999px;padding:2px 8px;opacity:.8;
+}
 .cp-rev{
   font-family:var(--mono);font-size:9px;letter-spacing:.07em;text-transform:uppercase;
   border:1px solid var(--surface-alt);border-radius:999px;padding:2px 7px;opacity:.85;
 }
-
-/* ── Timeline ──────────────────────────────────────────────────────────── */
-.cp-tl{
-  background:var(--card);border:1px solid var(--surface-alt);border-radius:10px;
-  padding:15px 16px 18px;overflow-x:auto;
-}
-.cp-tl-row{display:flex;align-items:center;gap:12px;padding:4px 0}
-.cp-tl-name{
-  font-family:var(--body);font-size:13px;width:230px;flex-shrink:0;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
-.cp-tl-track{position:relative;flex:1 1 auto;height:20px;min-width:360px}
-.cp-tl-bar{
-  position:absolute;top:5px;height:10px;border-radius:5px;
-  background:var(--cp-calm);min-width:10px;
-}
-.cp-tl-bar.late{background:var(--cp-late)}
-.cp-tl-bar.due{background:var(--cp-due)}
-/* A campaign whose work all lands on one day is a marker, not a bar of no
-   width -- 31 December is used across this base as "sometime this year". */
-.cp-tl-bar.point{width:10px;border-radius:50%}
-.cp-tl-n{font-family:var(--mono);font-size:10px;opacity:.72;width:84px;text-align:right;flex-shrink:0;white-space:nowrap}
-.cp-tl-axis{
-  display:flex;gap:12px;align-items:center;margin:0 0 6px;
-  font-family:var(--mono);font-size:9px;letter-spacing:.07em;opacity:.7;
-}
-.cp-tl-scale{position:relative;flex:1 1 auto;height:14px;min-width:360px}
-.cp-tl-tick{position:absolute;transform:translateX(-50%);white-space:nowrap}
-.cp-today{position:absolute;top:0;bottom:0;width:1px;background:var(--cp-late);opacity:.55}
 
 .cp-empty{font-family:var(--body);font-size:14px;opacity:.75;padding:22px 2px}
 .cp-why{
@@ -113,7 +91,7 @@
 .cp-why code{font-family:var(--mono);font-size:12.5px}
 
 @media (max-width:760px){
-  .cp-tl-name{width:140px}
   .cp-when{min-width:0}
+  .cp-who{min-width:0;text-align:left;flex-basis:100%}
   .cp-strip{gap:16px}
 }
