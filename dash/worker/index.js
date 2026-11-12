@@ -33,6 +33,10 @@ import {
   ROLLUPS, FULL_TIME_HOURS, FT_TYPES, DIVISIONS, PAYROLL_TAX_RATE,
 } from './labor.js';
 import {
+  fetchBoard, canFetch as canFetchCampaign,
+  whyNotFetching as whyNotFetchingCampaign, CACHE_MS as CAMPAIGN_CACHE_MS,
+} from './campaign.js';
+import {
   rows as cogsRows, summary as cogsSummary, duplicates as cogsDuplicates,
   seasonOptions as cogsSeasons, csv as cogsCsv, lineId as cogsLineId,
   yearsAround as cogsYearsAround,
@@ -83,6 +87,22 @@ function budgetList(env) {
   return own.length ? own : adminList(env);
 }
 
+const CAMPAIGN_KEY = 'campaign-board';
+
+// Who may open the board. Its own list rather than the budget's: what is on
+// Marketing's plate is not next year's margin, and the people who need it
+// are a different set.
+function campaignList(env) {
+  return String((env && env.CAMPAIGN_USERS) || '').split(',')
+    .map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+function canSeeCampaign(env, who) {
+  const list = campaignList(env);
+  if (!list.length) return false;
+  return Boolean(who.email) && who.verified && list.includes(who.email.toLowerCase());
+}
+
 function canBudget(env, who) {
   return Boolean(who.email) && who.verified
     && budgetList(env).includes(who.email.toLowerCase());
@@ -129,6 +149,7 @@ export default {
       if (url.pathname.startsWith('/api/budget')) return await budget(request, env, url, who);
       if (url.pathname.startsWith('/api/labor')) return await labor(request, env, url, who);
       if (url.pathname.startsWith('/api/cogs')) return await cogs(request, env, url, who);
+      if (url.pathname === '/api/campaign') return await campaign(request, env, who);
       if (url.pathname.startsWith('/api/admin/')) return await admin(request, env, url, who);
       return json({ error: 'No such endpoint.' }, 404);
     } catch (err) {
@@ -399,6 +420,79 @@ async function cogs(request, env, url, who) {
   }
 
   return json({ error: 'No such endpoint.' }, 404);
+}
+
+// ── The campaign board ────────────────────────────────────────────────────
+//
+// Read live from Airtable rather than baked in at build time: the dashboard
+// rebuilds when the Google workbook is saved, which has nothing to do with
+// when somebody moves a deadline. Cached a few minutes in meta so a page
+// everybody has open does not become a rate limit.
+async function campaign(request, env, who) {
+  if (!canSeeCampaign(env, who)) return json({ error: 'No such endpoint.' }, 404);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const fresh = new URL(request.url).searchParams.get('fresh') === '1';
+
+  if (!canFetchCampaign(env)) {
+    // Said rather than failed. Until the secret is set this is a page that
+    // explains itself, not a page that is broken.
+    return json({ ok: false, why: whyNotFetchingCampaign(env), asOf: today,
+                  tasks: [], people: [], campaigns: [],
+                  totals: { tasks: 0, overdue: 0, today: 0, week: 0,
+                            unassigned: 0, campaigns: 0 } });
+  }
+
+  const db = env.DB;
+  if (!fresh) {
+    try {
+      const row = await db.prepare('SELECT value, applied_at FROM meta WHERE key = ?')
+        .bind(CAMPAIGN_KEY).first();
+      if (row && row.value) {
+        const at = Date.parse(row.applied_at || '');
+        if (Number.isFinite(at) && Date.now() - at < CAMPAIGN_CACHE_MS) {
+          const body = JSON.parse(row.value);
+          body.cached = true;
+          body.cachedAt = row.applied_at;
+          return json(body);
+        }
+      }
+    } catch (err) {
+      // A cache that cannot be read is not a reason to serve nothing.
+    }
+  }
+
+  let board;
+  try {
+    board = await fetchBoard(env.AIRTABLE_API_KEY, fetch, today);
+  } catch (err) {
+    // The last good board beats an error page: a deadline list from five
+    // minutes ago is still true, and Airtable rate-limits.
+    try {
+      const row = await db.prepare('SELECT value, applied_at FROM meta WHERE key = ?')
+        .bind(CAMPAIGN_KEY).first();
+      if (row && row.value) {
+        const body = JSON.parse(row.value);
+        body.cached = true;
+        body.cachedAt = row.applied_at;
+        body.why = String((err && err.message) || err) + ' Showing the last good read.';
+        return json(body);
+      }
+    } catch (e2) { /* nothing cached either */ }
+    return json({ ok: false, why: String((err && err.message) || err), asOf: today,
+                  tasks: [], people: [], campaigns: [],
+                  totals: { tasks: 0, overdue: 0, today: 0, week: 0,
+                            unassigned: 0, campaigns: 0 } }, 502);
+  }
+
+  board.ok = true;
+  try {
+    await db.prepare('INSERT OR REPLACE INTO meta (key, value, applied_at) VALUES (?, ?, ?)')
+      .bind(CAMPAIGN_KEY, JSON.stringify(board), new Date().toISOString()).run();
+  } catch (err) {
+    // Failing to cache must never fail the answer.
+  }
+  return json(board);
 }
 
 async function labor(request, env, url, who) {

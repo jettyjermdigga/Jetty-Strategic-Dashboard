@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { visibleTiles, dashCategories, linkCats, greeting, TILES, CATEGORIES } from '../worker/tiles.js';
 import { PEOPLE } from '../worker/people.js';
 import { PICKS } from '../worker/music-seed.js';
+import { shapeAll as cShapeAll, byPerson as cByPerson,
+         timeline as cTimeline, totals as cTotals } from '../worker/campaign.js';
 import {
   rows as budgetRows, calendar as budgetCalendar, WEEK_CURVE, CURVE_IS_PLACEHOLDER,
   GROUPS as BUDGET_GROUPS, BASES, CADENCES, BASELINE_YEAR, FIRST_YEAR,
@@ -126,6 +128,52 @@ const SHUT_OUT = {
   tilesHeld: null, greeting: greeting(''), tiles: [], cats: [],
 };
 
+// ── Campaign board fixture ────────────────────────────────────────────────
+//
+// Shaped the way worker/campaign.js hands it over, built through that
+// module so the fixture cannot drift from what the Worker actually sends.
+const CAMPAIGN_TODAY = '2026-11-12';
+const CAMPAIGN_WHY = 'The AIRTABLE_API_KEY secret is not set on this Worker, so '
+  + 'the board cannot be read. Set it with: cd dash && npx wrangler secret put '
+  + 'AIRTABLE_API_KEY';
+const CAMPAIGN_RECS = [
+  ['Scrub B Corp copy from site', '2026-10-26', [['Katie Hehl', 'k.hehl@jettylife.com']],
+   'recA', 'BRAND', true],
+  ['Staff web fixes', '2026-11-05', [['Katie Hehl', 'k.hehl@jettylife.com']], 'recA', 'BRAND'],
+  ['GovX page', '2026-11-16', [['Katie Hehl', 'k.hehl@jettylife.com']], 'recA', 'BRAND'],
+  ['Oak Leaf commercials', '2026-11-12', [['Kyle Gronostajski', 'kyle@jettyrockfoundation.org']],
+   'recB', 'JRF'],
+  ['The Oyster Shooter Float', '2026-12-04',
+   [['Jessica Petty', 'jessica@jettyrockfoundation.org'],
+    ['Kyle Gronostajski', 'kyle@jettyrockfoundation.org']], 'recB', 'JRF'],
+  ['DYOL capsule', '2026-12-15', [['Cory Higgins', 'cory@jettylife.com']], 'recC', 'WHSL'],
+  ['Holiday Gift Guide', '2026-12-02', [], 'recD', ''],
+  ['Giving Tuesday', '2026-12-01', [], 'recD', ''],
+  ['Annual photos to Pixieset', '2026-12-31',
+   [['Jeremy DeFilippis', 'jeremy@jettylife.com']], 'recB', 'JRF'],
+];
+const CAMPAIGN_NAMES = { recA: 'Datmos Website Re-Launch (2026)', recB: 'Clam Jam (2026)',
+                         recC: 'Wholesale General Tasks (2026)',
+                         recD: 'Promotions (General) (2026)' };
+function campaignBoard() {
+  const records = CAMPAIGN_RECS.map(([name, deadline, who, camp, div, review], i) => ({
+    id: 'rec' + i,
+    fields: {
+      'Task Name': name, Deadline: deadline, Campaign: [camp],
+      Assignee: who.map(([n, e]) => ({ id: e, name: n, email: e })),
+      'MKG Division': div ? [[div]] : [],
+      'Out for Review': Boolean(review),
+    },
+  }));
+  const tasks = cShapeAll(records, CAMPAIGN_NAMES);
+  return {
+    ok: true, asOf: CAMPAIGN_TODAY, tasks,
+    people: cByPerson(tasks, CAMPAIGN_TODAY),
+    campaigns: cTimeline(tasks, CAMPAIGN_TODAY),
+    totals: cTotals(tasks, CAMPAIGN_TODAY),
+  };
+}
+
 const CASES = [
   { file: 'dash-bare-light', scheme: 'light', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-bare-dark', scheme: 'dark', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
@@ -177,9 +225,21 @@ const CASES = [
   // filters doing what the department bands used to do.
   { file: 'labor-dept', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'labor.html', wait: '.lb-sel',
+
+
     select: ['#fDept', 'Flagship Store'], after: '.lb-foot' },
   // The Sheet, which is what the page opens on: typing figures in is the
   // job it exists for.
+  { file: 'campaign-light', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'campaign.html', wait: '.cp-person' },
+  { file: 'campaign-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    path: 'campaign.html', wait: '.cp-person' },
+  { file: 'campaign-timeline', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'campaign.html', wait: '.cp-tl-bar', campaignView: 'timeline' },
+  // What it looks like before the secret is set: a page that explains
+  // itself rather than one that is broken.
+  { file: 'campaign-nokey', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'campaign.html', wait: '.cp-why', noCampaignKey: true },
   { file: 'cogs-light', scheme: 'light', adds: true,
     who: full('jeremy@jettylife.com'),
     path: 'cogs.html', wait: '.lb-sel' },
@@ -370,6 +430,12 @@ for (const c of CASES) {
     if (p === '/api/me') return route.fulfill({ json: c.who });
     if (p === '/api/admin/all') return route.fulfill({ json: ADMIN });
     if (p === '/api/music') return route.fulfill({ json: { picks: MUSIC } });
+    if (p === '/api/campaign') {
+      return c.noCampaignKey
+        ? route.fulfill({ json: { ok: false, why: CAMPAIGN_WHY, asOf: CAMPAIGN_TODAY,
+                                  tasks: [], people: [], campaigns: [] } })
+        : route.fulfill({ json: campaignBoard() });
+    }
     // Not on the list: the endpoint 404s whatever the People tab says, and
     // the page has to say so rather than render an empty sheet.
     if (p === '/api/budget') {
@@ -411,6 +477,11 @@ for (const c of CASES) {
   });
   // The chart is off until somebody presses Graph, so a case that wants it
   // in the shot -- and in the contrast sweep -- says so here.
+  if (c.campaignView) {
+    await page.addInitScript((v) => {
+      try { localStorage.setItem('jetty-campaign-view', v); } catch (err) { /* private */ }
+    }, c.campaignView);
+  }
   if (c.graph || c.byYear) {
     const view = c.byYear ? 'year' : 'graph';
     await page.addInitScript((v) => {

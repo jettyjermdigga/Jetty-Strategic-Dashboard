@@ -87,3 +87,17 @@ DASH_ADMINS = "jeremy@jettylife.com"
 # line, before any of it is decided. Left empty it falls back to DASH_ADMINS,
 # so it can never be accidentally empty.
 BUDGET_USERS = "jeremy@jettylife.com"
+
+# Who may open the Campaign board. Its own list rather than the budget's:
+# what is on Marketing's plate is not next year's margin, and the people who
+# need it are a different set.
+#
+# Starts with one name on purpose. Everybody added here can see every
+# person's deadlines, which is the point of the board and also a thing to
+# hand out deliberately rather than by default. Comma-separated.
+#
+# An address here has to be one Cloudflare Access will admit. Note that
+# several people are in the Airtable base under a personal address --
+# khehldesign@gmail.com, joncoen@comcast.net -- which is NOT what they sign
+# in to the dash with. Use their jettylife.com address here.
+CAMPAIGN_USERS = "jeremy@jettylife.com"

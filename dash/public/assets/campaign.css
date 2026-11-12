@@ -1,0 +1,119 @@
+/* The campaign board. Shares the dash's chrome and tokens; only the board
+   itself is here.
+
+   Tokens that exist on the DASH -- --card, --wash, --edge, --ink, --surface-alt,
+   --mono, --body, --display, --primary, --watch. NOT --cell, which is the
+   calendar's and silently invalidates the whole declaration here. */
+
+/* Colour carries URGENCY, not division. Which part of the business a task
+   belongs to is a word and a filter; whether it is late is the thing you
+   need to see without reading. Eight division colours would have been eight
+   hues nobody can hold in their head, on a page whose whole job is "what is
+   late".
+
+   Measured against --card in both themes rather than judged by eye:
+     light  overdue #B4482F 5.37:1   due #8A5A00 5.93:1
+     dark   overdue #F2B0A0 8.30:1   due #E8B765 8.23:1 */
+:root{ --cp-late:#B4482F; --cp-due:#8A5A00; --cp-calm:#586D72; }
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){ --cp-late:#F2B0A0; --cp-due:#E8B765; --cp-calm:#9DA4AE; }
+}
+:root[data-theme="dark"]{ --cp-late:#F2B0A0; --cp-due:#E8B765; --cp-calm:#9DA4AE; }
+:root[data-theme="light"]{ --cp-late:#B4482F; --cp-due:#8A5A00; --cp-calm:#586D72; }
+
+.cp-views{display:inline-flex;gap:4px}
+.cp-views button{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  padding:6px 11px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--surface-alt);background:transparent;color:var(--ink);
+}
+.cp-views button[aria-pressed="true"]{background:var(--primary);color:#fff;border-color:var(--primary)}
+.cp-stamp{font-family:var(--mono);font-size:9.5px;opacity:.7;letter-spacing:.05em}
+
+/* The headline counts. */
+.cp-strip{
+  display:flex;gap:28px;flex-wrap:wrap;
+  background:var(--card);border:1px solid var(--surface-alt);border-radius:10px;
+  padding:13px 16px;margin:0 0 14px;
+}
+.cp-strip[hidden]{display:none}
+.cp-k{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.75}
+.cp-v{font-family:var(--mono);font-size:19px;margin-top:3px}
+.cp-v.late{color:var(--cp-late)}
+.cp-v.due{color:var(--cp-due)}
+
+/* ── By person ─────────────────────────────────────────────────────────── */
+.cp-people{display:flex;flex-direction:column;gap:11px}
+.cp-person{
+  background:var(--card);border:1px solid var(--surface-alt);border-radius:10px;
+  padding:13px 15px;
+}
+.cp-phead{display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;margin-bottom:9px}
+.cp-pname{font-family:var(--display);font-weight:600;font-size:14.5px}
+.cp-pcount{font-family:var(--mono);font-size:10px;opacity:.72;letter-spacing:.06em}
+.cp-pflag{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  padding:2px 8px;border-radius:999px;border:1px solid currentColor;
+}
+.cp-pflag.late{color:var(--cp-late)}
+.cp-pflag.due{color:var(--cp-due)}
+
+.cp-task{
+  display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;
+  padding:6px 0;border-top:1px solid var(--surface-alt);
+}
+.cp-task:first-of-type{border-top:0}
+/* The date leads: this is a deadline list, and the date is what it is for.
+   Fixed width so the dates form a column rather than a ragged edge. */
+.cp-when{font-family:var(--mono);font-size:11px;min-width:104px;white-space:nowrap}
+.cp-when.late{color:var(--cp-late);font-weight:600}
+.cp-when.due{color:var(--cp-due);font-weight:600}
+.cp-what{font-family:var(--body);font-size:14px;flex:1 1 230px;min-width:0}
+.cp-camp{font-family:var(--mono);font-size:10px;opacity:.7;letter-spacing:.04em}
+.cp-rev{
+  font-family:var(--mono);font-size:9px;letter-spacing:.07em;text-transform:uppercase;
+  border:1px solid var(--surface-alt);border-radius:999px;padding:2px 7px;opacity:.85;
+}
+
+/* ── Timeline ──────────────────────────────────────────────────────────── */
+.cp-tl{
+  background:var(--card);border:1px solid var(--surface-alt);border-radius:10px;
+  padding:15px 16px 18px;overflow-x:auto;
+}
+.cp-tl-row{display:flex;align-items:center;gap:12px;padding:4px 0}
+.cp-tl-name{
+  font-family:var(--body);font-size:13px;width:230px;flex-shrink:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.cp-tl-track{position:relative;flex:1 1 auto;height:20px;min-width:360px}
+.cp-tl-bar{
+  position:absolute;top:5px;height:10px;border-radius:5px;
+  background:var(--cp-calm);min-width:10px;
+}
+.cp-tl-bar.late{background:var(--cp-late)}
+.cp-tl-bar.due{background:var(--cp-due)}
+/* A campaign whose work all lands on one day is a marker, not a bar of no
+   width -- 31 December is used across this base as "sometime this year". */
+.cp-tl-bar.point{width:10px;border-radius:50%}
+.cp-tl-n{font-family:var(--mono);font-size:10px;opacity:.72;width:84px;text-align:right;flex-shrink:0;white-space:nowrap}
+.cp-tl-axis{
+  display:flex;gap:12px;align-items:center;margin:0 0 6px;
+  font-family:var(--mono);font-size:9px;letter-spacing:.07em;opacity:.7;
+}
+.cp-tl-scale{position:relative;flex:1 1 auto;height:14px;min-width:360px}
+.cp-tl-tick{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.cp-today{position:absolute;top:0;bottom:0;width:1px;background:var(--cp-late);opacity:.55}
+
+.cp-empty{font-family:var(--body);font-size:14px;opacity:.75;padding:22px 2px}
+.cp-why{
+  font-family:var(--body);font-size:14px;line-height:1.55;color:var(--cp-late);
+  background:var(--card);border:1px solid var(--surface-alt);border-radius:10px;
+  padding:14px 16px;margin:0 0 14px;max-width:78ch;
+}
+.cp-why code{font-family:var(--mono);font-size:12.5px}
+
+@media (max-width:760px){
+  .cp-tl-name{width:140px}
+  .cp-when{min-width:0}
+  .cp-strip{gap:16px}
+}

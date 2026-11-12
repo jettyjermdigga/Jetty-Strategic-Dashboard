@@ -60,6 +60,10 @@ function eq(got, want, note) {
 }
 function ok(cond, note) { if (!cond) throw new Error(note || 'expected true'); }
 
+import { shape as cShape, shapeAll as cShapeAll, dueState as cDue,
+         byPerson as cByPerson, timeline as cTimeline, totals as cTotals,
+         NOBODY as cNOBODY, MAX_TASKS as cMAX } from '../worker/campaign.js';
+
 const keys = (groups) => visibleTiles(groups).map((t) => t.key);
 
 describe('visibleTiles', () => {
@@ -2325,6 +2329,161 @@ describe('the COGS years', () => {
     ok(/years = ''/.test(fn), 'it would refile a line that already has years');
     ok(/\['cogs', 'years TEXT/.test(fn),
        'the live table would never get the column');
+  });
+});
+
+describe('campaign board', () => {
+  const TODAY = '2026-11-12';
+  const CAMPS = { recA: 'Datmos Website Re-Launch (2026)', recB: 'Clam Jam (2026)' };
+  const rec = (over) => ({ id: over.id || 'rec1', fields: Object.assign({
+    'Task Name': 'A task', Deadline: '2026-11-20', Campaign: ['recA'],
+  }, over.fields || {}) });
+
+  it('keeps only what is still owed', () => {
+    eq(cShape(rec({ fields: { Complete: true } }), CAMPS), null, 'a ticked task is not active');
+    eq(cShape(rec({ fields: { 'Hide From View': true } }), CAMPS), null, 'a hidden task is not active');
+    eq(cShape(rec({ fields: { Deadline: null } }), CAMPS), null, 'no deadline, nothing to show');
+    eq(cShape(rec({ fields: { Deadline: 'soon' } }), CAMPS), null, 'a deadline that is not a date');
+    ok(cShape(rec({}), CAMPS), 'an open dated task is active');
+  });
+
+  // A linked-record cell is an array of RECORD IDS over the REST API.
+  // Without the join this prints recx3PtJyw3prjmBO at somebody.
+  it('resolves the campaign to its name, never its record id', () => {
+    eq(cShape(rec({}), CAMPS).campaign, 'Datmos Website Re-Launch (2026)');
+    eq(cShape(rec({ fields: { Campaign: ['recUNKNOWN'] } }), CAMPS).campaign, '',
+       'an id with no name is blank, not the id');
+    eq(cShape(rec({ fields: { Campaign: [{ id: 'recZ', name: 'Inline' }] } }), CAMPS).campaign,
+       'Inline', 'a name handed over inline is taken');
+    eq(cShape(rec({ fields: { Campaign: [] } }), CAMPS).campaign, '');
+  });
+
+  // A lookup of a multipleSelects field arrives as an array OF ARRAYS.
+  // Read one level deep it stringifies to [object Object].
+  it('flattens a nested lookup rather than stringifying it', () => {
+    const t = cShape(rec({ fields: { 'MKG Division': [['BRAND']],
+                                     'Task Type': [{ name: 'Website' }, { name: 'Website' },
+                                                   { name: 'Copy' }] } }), CAMPS);
+    eq(t.division, 'BRAND');
+    eq(t.types, ['Website', 'Copy'], 'duplicates collapse');
+    ok(!/object Object/.test(JSON.stringify(t)), 'nothing stringified to [object Object]');
+  });
+
+  it('reads a deadline against today', () => {
+    eq(cDue('2026-11-11', TODAY), 'overdue');
+    eq(cDue('2026-11-12', TODAY), 'today');
+    eq(cDue('2026-11-19', TODAY), 'week');
+    eq(cDue('2026-11-20', TODAY), 'later', 'eight days out is not this week');
+    eq(cDue('', TODAY), 'none');
+  });
+
+  const T = (name, deadline, who, campaign) => ({
+    id: name, name, deadline, assignees: who || [], campaign: campaign || 'C1',
+    division: 'BRAND', types: [], review: false, link: '',
+  });
+  const KATIE = [{ email: 'katie@x.com', name: 'Katie' }];
+  const BOTH = [{ email: 'katie@x.com', name: 'Katie' }, { email: 'jon@x.com', name: 'Jon' }];
+
+  // An unassigned deadline is nobody's, which is the thing this view
+  // exists to surface -- not something to leave out because it has no
+  // column to sit in.
+  it('gives unassigned work a place of its own', () => {
+    const rows = cByPerson([T('a', '2026-11-20'), T('b', '2026-11-20', KATIE)], TODAY);
+    const un = rows.filter((r) => r.key === cNOBODY)[0];
+    ok(un, 'unassigned work vanished');
+    eq(un.tasks.length, 1);
+  });
+
+  it('puts a shared task on everybody it names', () => {
+    const rows = cByPerson([T('a', '2026-11-20', BOTH)], TODAY);
+    eq(rows.length, 2);
+    eq(rows.map((r) => r.tasks.length), [1, 1]);
+  });
+
+  it('leads with whoever is furthest behind', () => {
+    const rows = cByPerson([
+      T('x', '2026-11-20', KATIE), T('y', '2026-11-20', KATIE),
+      T('z', '2026-11-01', [{ email: 'jon@x.com', name: 'Jon' }]),
+    ], TODAY);
+    eq(rows[0].name, 'Jon', 'one overdue outranks two that are merely due');
+    eq(rows[0].overdue, 1);
+  });
+
+  it('spans a campaign across the work still open on it', () => {
+    const rows = cTimeline([
+      T('a', '2026-11-20', KATIE, 'Datmos'), T('b', '2026-12-31', KATIE, 'Datmos'),
+      T('c', '2026-11-01', KATIE, 'Clam Jam'),
+    ], TODAY);
+    eq(rows.map((r) => r.name), ['Clam Jam', 'Datmos'], 'earliest start first');
+    const d = rows.filter((r) => r.name === 'Datmos')[0];
+    eq([d.from, d.to], ['2026-11-20', '2026-12-31']);
+    eq(d.tasks, 2);
+    eq(d.point, false);
+    eq(rows.filter((r) => r.name === 'Clam Jam')[0].overdue, 1);
+  });
+
+  // 31 December is used across this base as "sometime this year". A
+  // campaign whose work is all on one date is a marker, not a bar of no
+  // width -- said in the data so the page does not have to guess.
+  it('marks a campaign whose work all lands on one day', () => {
+    const rows = cTimeline([T('a', '2026-12-31', KATIE, 'Promos'),
+                            T('b', '2026-12-31', KATIE, 'Promos')], TODAY);
+    eq(rows[0].point, true);
+    eq(rows[0].days, 0);
+  });
+
+  it('counts the board the same way everywhere', () => {
+    const got = cTotals([
+      T('a', '2026-11-01', KATIE, 'X'), T('b', '2026-11-12', KATIE, 'X'),
+      T('c', '2026-11-15', [], 'Y'), T('d', '2027-01-01', KATIE, 'Y'),
+    ], TODAY);
+    eq(got.tasks, 4);
+    eq(got.overdue, 1);
+    eq(got.today, 1);
+    eq(got.week, 2, 'today counts as due this week');
+    eq(got.unassigned, 1);
+    eq(got.campaigns, 2);
+  });
+
+  // The page re-reads a deadline per row as it draws -- a round trip per
+  // row is not a thing -- so the rule is in both places. These keep them
+  // honest, the way keep()/matches() are kept honest on the COGS page.
+  it('reads a deadline the same way on the page as in the Worker', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const fn = page.slice(page.indexOf('function state(deadline)'),
+                          page.indexOf('var MONTH'));
+    ok(fn.length > 60, 'state() was not found on the page');
+    for (const [needle, what] of [["'overdue'", 'overdue'], ["'today'", 'today'],
+                                  ["'week'", 'this week'], ["'later'", 'later']]) {
+      ok(fn.includes(needle), 'the page does not know ' + what);
+    }
+    // The boundaries are the part that silently drifts: < 0 and <= 7.
+    ok(/n < 0/.test(fn), 'the page does not treat a past date as overdue');
+    ok(/n <= 7/.test(fn), 'the page does not use the same seven-day window');
+    ok(/n === 0/.test(fn), 'the page does not single out today');
+  });
+
+  // Colour carries urgency on that page, and the two hues have to be
+  // readable in BOTH themes -- the dash flips --card and leaves --watch
+  // alone, which is how a red badge ends up at 2.8:1 on a dark card.
+  it('declares its urgency colours for both themes', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const css = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.css'), 'utf8');
+    ok(!/var\(--cell\)/.test(css), '--cell is the calendar\u2019s token; the dash has --card');
+    for (const sel of ['prefers-color-scheme: dark', '[data-theme="dark"]', '[data-theme="light"]']) {
+      ok(css.includes(sel), 'no urgency colours declared for ' + sel);
+    }
+    for (const v of ['--cp-late', '--cp-due']) {
+      const hits = css.split(v + ':').length - 1;
+      ok(hits >= 3, v + ' is set ' + hits + ' times; it needs light, dark and both explicit themes');
+    }
+  });
+
+  it('refuses to shape an unbounded pile', () => {
+    const many = [];
+    for (let i = 0; i < cMAX + 50; i++) many.push(rec({ id: 'r' + i }));
+    eq(cShapeAll(many, CAMPS).length, cMAX);
   });
 });
 

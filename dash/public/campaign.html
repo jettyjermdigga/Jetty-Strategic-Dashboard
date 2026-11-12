@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Campaign Board</title>
+<link rel="icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/assets/fonts.css">
+<link rel="stylesheet" href="/assets/rc_system.css">
+<link rel="stylesheet" href="/assets/dash.css">
+<link rel="stylesheet" href="/assets/budget.css">
+<link rel="stylesheet" href="/assets/labor.css">
+<link rel="stylesheet" href="/assets/campaign.css">
+<meta name="robots" content="noindex,nofollow">
+</head>
+<body>
+
+<header class="site-top">
+  <div class="brand">
+    <img src="/assets/logo.png" alt="Jetty">
+    <div class="divider"></div>
+    <div>
+      <div class="title-main">Campaign Board</div>
+      <div class="title-sub" id="sub">Loading</div>
+    </div>
+  </div>
+  <div class="site-who"><a class="back" href="/">&larr; Back to the dash</a></div>
+</header>
+
+<main class="dash-shell bd-shell">
+  <div id="notice"></div>
+
+  <div class="bd-bar" id="bar" hidden>
+    <!-- One view at a time: who owes what, or when it all lands. -->
+    <span class="cp-views" role="group" aria-label="Which view">
+      <button type="button" data-view="people" aria-pressed="true">By person</button>
+      <button type="button" data-view="timeline" aria-pressed="false">Timeline</button>
+    </span>
+
+    <select id="fDiv" class="bd-sel" aria-label="Which part of the business"></select>
+    <input id="q" class="lb-q" type="search" placeholder="Find a task&hellip;"
+           autocomplete="off" aria-label="Search by task, campaign or person">
+    <button class="lb-clr" id="clr" type="button" hidden>Clear</button>
+
+    <span class="bd-grow"></span>
+    <span class="cp-stamp" id="stamp"></span>
+    <button class="lb-add" id="refresh" type="button">Refresh</button>
+  </div>
+
+  <div class="cp-strip" id="strip" hidden></div>
+
+  <div id="people"></div>
+  <div id="timeline" hidden></div>
+</main>
+
+<script src="/assets/campaign.js"></script>
+</body>
+</html>

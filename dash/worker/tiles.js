@@ -172,6 +172,20 @@ export const TILES = [
   },
 
   {
+    key: 'campaign',
+    name: 'Campaign Board',
+    blurb: 'Every open marketing task \u2014 what each person owes, and when each campaign lands.',
+    url: '/campaign.html',
+    icon: 'megaphone',
+    category: 'marketing',
+    // Not everyone: it shows every person's deadlines, including who is
+    // behind, which is worth handing out deliberately. CAMPAIGN_USERS in
+    // wrangler.toml is the list.
+    everyone: false,
+    status: 'live',
+  },
+
+  {
     key: 'music-monday',
     name: 'Music Monday',
     blurb: 'Every pick since February 2013 \u2014 this week up top, thirteen years below.',
