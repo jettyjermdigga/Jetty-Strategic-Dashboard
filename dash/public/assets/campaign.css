@@ -95,7 +95,13 @@
    longer than that clips, with the full one on its title -- the executors
    hold a fixed column and a long task name is not allowed to shove it. */
 .cp-what{
-  font-family:var(--body);font-size:14px;flex:1 1 auto;min-width:0;
+  /* Shrinks, never grows. What actually pins the executors is the auto
+     margin on .cp-exs -- an auto margin takes the free space before any
+     flex-grow gets a look in -- so this is a statement of intent rather
+     than the load-bearing part: the text column has no claim on the
+     row's slack, and nothing between it and the executors can move them. */
+  font-family:var(--body);font-size:14px;flex:0 1 auto;min-width:0;
+  margin-right:14px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 /* Executors in a column of their own, over to the right, with room in
@@ -104,7 +110,9 @@
    eye down it to see who was carrying what. */
 .cp-exs{
   display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;
-  flex:0 0 300px;min-width:0;margin-left:14px;
+  /* Pinned to the right edge by the auto margin, so the column starts at
+     the same x on every row whatever sits in front of it. */
+  flex:0 0 300px;min-width:0;margin-left:auto;
 }
 /* The campaign sits BEFORE the task name and holds a fixed column, so the
    list reads "this date, this late, this campaign, this task". A long
@@ -140,6 +148,7 @@
   .cp-camp{flex:1 1 auto;max-width:none}
   /* The executors drop under the task rather than squeezing it. */
   .cp-exs{flex-basis:100%;margin-left:0}
+  .cp-what{margin-right:0}
   .cp-what{white-space:normal;overflow:visible}
   .cp-strip{gap:16px}
 }

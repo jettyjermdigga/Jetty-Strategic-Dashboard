@@ -176,6 +176,12 @@ const CAMPAIGN_RECS = [
   // it is the only row that can catch the margin going missing.
   ['Email - Nov 28 - Cyber Monday Extended Resend to Non-Openers and Early Access Segment',
    '2026-11-28', [['David Bachowski', 'd.bachowski@jettylife.com']], 'recA', 'BRAND'],
+  // Out for review AND still to come. The only reviewed task here was an
+  // overdue one, which Overview does not draw -- so the review badge never
+  // appeared on the view the layout is measured on, and the badge stealing
+  // width from the executor column went unseen.
+  ['A Frame Story Signage', '2026-11-16',
+   [['Jessica Petty', 'jessica@jettyrockfoundation.org']], 'recB', 'JRF', true],
 ];
 const CAMPAIGN_NAMES = { recA: 'Datmos Website Re-Launch (2026)', recB: 'Clam Jam (2026)',
                          recC: 'Wholesale General Tasks (2026)',

@@ -2755,6 +2755,16 @@ describe('campaign board', () => {
     const page = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)),
                                            '..', 'public/assets/campaign.js'), 'utf8');
     ok(!/showCamp/.test(page), 'the campaign column is still conditional on the view');
+
+    // Out for review goes BEFORE the executors. Trailing them it took its
+    // width out of the row and dragged that row's executor column left,
+    // so the one reviewed task had its pills at an x of their own.
+    const reviewed = taskRow(Object.assign(
+      task('A Frame Story Signage', '2026-11-16', [kate]),
+      { campaign: 'Oyster Shooter Campaign (2026)', review: true }), '');
+    eq([...reviewed.matchAll(/class="(cp-[a-z]+)/g)].map((m) => m[1]).join(' > '),
+       'cp-task > cp-when > cp-late > cp-camp > cp-what > cp-rev > cp-exs > cp-ex',
+       'the review badge is not in front of the executors');
   });
 
   it('writes lateness only where there is something to act on', () => {

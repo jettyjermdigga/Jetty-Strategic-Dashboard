@@ -279,8 +279,11 @@
       + '<span class="cp-camp" title="' + esc(t.campaign || '') + '">'
       + esc(t.campaign || '') + '</span>'
       + '<span class="cp-what" title="' + esc(t.name) + '">' + esc(t.name) + '</span>'
-      + '<span class="cp-exs">' + pills + '</span>'
+      // Before the executors, not after. Trailing them it took its width
+      // out of the row and dragged that row's executor column left, so the
+      // one task that was out for review had its pill at its own x.
       + (t.review ? '<span class="cp-rev">Out for review</span>' : '')
+      + '<span class="cp-exs">' + pills + '</span>'
       + '</div>';
   }
 
