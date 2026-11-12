@@ -88,12 +88,13 @@
 /* Lateness in its own column. Empty for anything more than a week out, so
    the column is blank where there is nothing to act on and the eye goes
    straight to the rows that have something in it. */
-.cp-late{
+.cp-status{
   font-family:var(--mono);font-size:11px;white-space:nowrap;
-  flex:0 0 72px;min-width:72px;
+  /* Wide enough for "Due this week", which is the longest thing it says. */
+  flex:0 0 104px;min-width:104px;
 }
-.cp-late.late{color:var(--cp-late);font-weight:600}
-.cp-late.due{color:var(--cp-due);font-weight:600}
+.cp-status.late{color:var(--cp-late);font-weight:600}
+.cp-status.due{color:var(--cp-due);font-weight:600}
 /* Takes whatever is left between the campaign and the executors. A name
    longer than that clips, with the full one on its title -- the executors
    hold a fixed column and a long task name is not allowed to shove it. */
@@ -143,7 +144,7 @@
   /* Narrow: the columns stop being columns and the row wraps instead. */
   .cp-task{flex-wrap:wrap}
   .cp-when{flex:0 0 auto;min-width:0}
-  .cp-late{flex:0 0 auto;min-width:0}
+  .cp-status{flex:0 0 auto;min-width:0}
   .cp-camp{flex:1 1 auto;max-width:none}
   /* The executors drop under the task rather than squeezing it. */
   .cp-exs{flex-basis:100%;margin-left:0}
@@ -340,7 +341,7 @@
    same amount back -- the box becomes one box and the text does not move
    an inch. */
 .cp-task.isLate .cp-when,
-.cp-task.isLate .cp-late{
+.cp-task.isLate .cp-status{
   background:color-mix(in srgb, var(--cp-late) 16%, transparent);
   padding-top:3px;padding-bottom:3px;
 }
@@ -349,22 +350,22 @@
    6.90 on the plain card. The dark step needs no change: #F2B0A0 on its own
    wash is 5.87. */
 .cp-task.isLate .cp-when,
-.cp-task.isLate .cp-late{color:#9C3A24}
+.cp-task.isLate .cp-status{color:#9C3A24}
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]) .cp-task.isLate .cp-when,
-  :root:not([data-theme="light"]) .cp-task.isLate .cp-late{color:var(--cp-late)}
+  :root:not([data-theme="light"]) .cp-task.isLate .cp-status{color:var(--cp-late)}
 }
 :root[data-theme="dark"] .cp-task.isLate .cp-when,
-:root[data-theme="dark"] .cp-task.isLate .cp-late{color:var(--cp-late)}
+:root[data-theme="dark"] .cp-task.isLate .cp-status{color:var(--cp-late)}
 :root[data-theme="light"] .cp-task.isLate .cp-when,
-:root[data-theme="light"] .cp-task.isLate .cp-late{color:#9C3A24}
+:root[data-theme="light"] .cp-task.isLate .cp-status{color:#9C3A24}
 .cp-task.isLate .cp-when{border-radius:5px 0 0 5px}
-.cp-task.isLate .cp-late{
+.cp-task.isLate .cp-status{
   margin-left:-11px;padding-left:11px;padding-right:9px;
   border-radius:0 5px 5px 0;
 }
 @media (max-width:760px){
   /* The row wraps here, so the two halves would be a box on two lines. */
-  .cp-task.isLate .cp-late{margin-left:0;padding-left:6px;border-radius:5px}
+  .cp-task.isLate .cp-status{margin-left:0;padding-left:6px;border-radius:5px}
   .cp-task.isLate .cp-when{border-radius:5px}
 }

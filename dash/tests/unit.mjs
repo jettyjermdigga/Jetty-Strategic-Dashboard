@@ -2743,11 +2743,11 @@ describe('campaign board', () => {
                                        { campaign: 'Datmos Website Re-Launch (2026)' }), '');
     const order = [...html.matchAll(/class="(cp-[a-z]+)/g)].map((m) => m[1]);
     eq(order.join(' > '),
-       'cp-task > cp-when > cp-late > cp-camp > cp-what > cp-exs > cp-ex',
+       'cp-task > cp-when > cp-status > cp-camp > cp-what > cp-exs > cp-ex',
        'the columns are not in the order they were asked for');
     const cell = (c) => (new RegExp('class="' + c + '[^"]*"[^>]*>([^<]*)<').exec(html) || [])[1];
     eq(cell('cp-when'), '5 Nov', 'the date column is carrying something other than the date');
-    eq(cell('cp-late'), '7d late', 'how late it is did not get its own column');
+    eq(cell('cp-status'), '7d late', 'how late it is did not get its own column');
     eq(cell('cp-camp'), 'Datmos Website Re-Launch (2026)');
     eq(cell('cp-what'), 'Staff web fixes');
     // The campaign is on the row in EVERY view now, grouped or flat -- the
@@ -2763,24 +2763,34 @@ describe('campaign board', () => {
       task('A Frame Story Signage', '2026-11-16', [kate]),
       { campaign: 'Oyster Shooter Campaign (2026)', review: true }), '');
     eq([...reviewed.matchAll(/class="(cp-[a-z]+)/g)].map((m) => m[1]).join(' > '),
-       'cp-task > cp-when > cp-late > cp-camp > cp-what > cp-rev > cp-exs > cp-ex',
+       'cp-task > cp-when > cp-status > cp-camp > cp-what > cp-rev > cp-exs > cp-ex',
        'the review badge is not in front of the executors');
   });
 
-  it('writes lateness only where there is something to act on', () => {
+  // The column is headed "Days late". It says days late, and nothing else.
+  // It used to put "4d" on work due in four days, which under that heading
+  // reads as four days LATE -- the exact opposite of what it meant.
+  // One column, one direction. It used to be headed "Days late" and carry
+  // "4d" for work due in four days, which under that heading reads as four
+  // days LATE -- the opposite of what it meant.
+  it('reads the same way round for every value in the status column', () => {
     const taskRow = rowMaker();
-    const late = (ymd) => (/class="cp-late[^"]*"[^>]*>([^<]*)</.exec(
-      taskRow(task('t', ymd, []), false, '')) || [])[1];
-    eq(late('2026-10-26'), '17d late');
-    eq(late('2026-11-11'), '1d late');
-    eq(late('2026-11-12'), 'today');
-    eq(late('2026-11-18'), '6d');
-    eq(late('2026-11-19'), '7d');
-    // Past a week there is nothing to act on, so the column stays empty --
-    // "49d" on every December row is noise in the column that exists to
-    // make lateness jump out.
-    eq(late('2026-11-20'), '', 'the lateness column is filling up with slack time');
-    eq(late('2026-12-31'), '');
+    const st = (ymd) => (/class="cp-status[^"]*"[^>]*>([^<]*)</.exec(
+      taskRow(task('t', ymd, []), '')) || [])[1];
+    eq(st('2026-10-26'), '17d late');
+    eq(st('2026-11-11'), '1d late');
+    eq(st('2026-11-12'), 'Due today');
+    eq(st('2026-11-13'), 'Due this week');
+    eq(st('2026-11-19'), 'Due this week');
+    // Past a week there is no state worth naming, and "49d" in a column
+    // beside "17d late" is the ambiguity this was built to remove.
+    eq(st('2026-11-20'), '');
+    eq(st('2026-12-31'), '');
+    // Nothing in here may be a bare number of days: that is the shape that
+    // reads as lateness whichever end of the deadline it is on.
+    for (const d of ['2026-11-12', '2026-11-13', '2026-11-19']) {
+      ok(!/^\d+d$/.test(st(d)), 'a bare day count is back in the status column');
+    }
   });
 
   // Anything late is marked on the row itself, not just in its date, so
@@ -2841,13 +2851,13 @@ describe('campaign board', () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
     const head = page.slice(page.indexOf('function headRow('), page.indexOf('function exPill('));
-    for (const label of ['Date', 'Days late', 'Campaign', 'Task description']) {
+    for (const label of ['Due date', 'Status', 'Campaign', 'Task description']) {
       ok(head.includes('>' + label + '<'), 'the header row does not name ' + label);
     }
     // The labels must sit in the same column classes as the data, or they
     // line up with nothing.
     eq([...head.matchAll(/class="(cp-[a-z]+)"/g)].map((m) => m[1]).join(' '),
-       'cp-when cp-late cp-camp cp-what cp-exs',
+       'cp-when cp-status cp-camp cp-what cp-exs',
        'the labels are not in the columns they label');
     // On your own list the last column is not the people doing the work --
     // it is already yours -- it is whoever is on it WITH you.
@@ -2902,7 +2912,7 @@ describe('campaign board', () => {
     // Pinned to the BASE rule, not just somewhere in the file -- the
     // light-theme override further down also names it, and matching that
     // let the base rule be reverted without a word.
-    ok(/\.cp-task\.isLate \.cp-when,\s*\.cp-task\.isLate \.cp-late\{color:#9C3A24\}/.test(css),
+    ok(/\.cp-task\.isLate \.cp-when,\s*\.cp-task\.isLate \.cp-status\{color:#9C3A24\}/.test(css),
        'the overdue text was left at the colour the wash is made of');
     ok(/:root\[data-theme="dark"\][\s\S]{0,200}isLate/.test(css)
        || /data-theme="dark"\] \.cp-task\.isLate/.test(css),

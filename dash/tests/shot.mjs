@@ -921,7 +921,7 @@ for (const c of CASES) {
       const lefts = (sel) => [...new Set(rows.map((r) => left(r.querySelector(sel))))];
       const first = rows[0];
       return {
-        cols: ['.cp-when', '.cp-late', '.cp-camp', '.cp-what', '.cp-exs']
+        cols: ['.cp-when', '.cp-status', '.cp-camp', '.cp-what', '.cp-exs']
           .map((sel) => left(first.querySelector(sel))),
         exLefts: lefts('.cp-exs').length,
         whatLefts: lefts('.cp-what').length,
