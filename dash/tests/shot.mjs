@@ -151,6 +151,17 @@ const CAMPAIGN_RECS = [
   ['Giving Tuesday', '2026-12-01', [], 'recD', ''],
   ['Annual photos to Pixieset', '2026-12-31',
    [['Jeremy DeFilippis', 'jeremy@jettylife.com']], 'recB', 'JRF'],
+  // The real roster is ten names, not five, and ten is where the eight
+  // hues run out and start again. A fixture that never reaches the wrap
+  // never shows what the wrap looks like.
+  ['Nov paid briefs', '2026-11-18', [['Arlynn Katz', 'arlynn@jettylife.com']], 'recA', 'BRAND'],
+  ['Flannel ambassador call', '2026-11-25',
+   [['David Bachowski', 'd.bachowski@jettylife.com']], 'recC', 'WHSL'],
+  ['Fixture adjustments round 2', '2026-11-20',
+   [['John Clifford', 'john@jettylife.com']], 'recD', ''],
+  ['Longform feature draft', '2026-12-08', [['Jon Coen', 'joncoen@comcast.net']], 'recB', 'JRF'],
+  ['Store signage proof', '2026-12-10',
+   [['Colleen Foster', 'colleen@jettylife.com']], 'recD', 'RETAIL'],
 ];
 const CAMPAIGN_NAMES = { recA: 'Datmos Website Re-Launch (2026)', recB: 'Clam Jam (2026)',
                          recC: 'Wholesale General Tasks (2026)',

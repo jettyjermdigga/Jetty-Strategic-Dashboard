@@ -42,10 +42,25 @@ let failed = 0;
 let group = '';
 
 function describe(name, fn) { group = name; console.log(name); fn(); }
+// Async tests are collected and awaited before the summary. Before this,
+// it() called fn() and moved on: an async body returned a promise nobody
+// held, process.exit() ran before the rejection landed, and the test
+// printed "ok" whatever it found. Three deliberate breakages sailed
+// through a test written to catch them.
+const pending = [];
 function it(label, fn) {
   ran++;
-  try { fn(); console.log('  ok   ' + label); }
-  catch (err) { failed++; console.log('  FAIL ' + label + '\n         ' + err.message); }
+  const bad = (err) => {
+    failed++;
+    console.log('  FAIL ' + label + '\n         ' + err.message);
+  };
+  let out;
+  try { out = fn(); } catch (err) { return bad(err); }
+  if (out && typeof out.then === 'function') {
+    pending.push(out.then(() => console.log('  ok   ' + label + ' (async)'), bad));
+    return;
+  }
+  console.log('  ok   ' + label);
 }
 // JSON.stringify turns Infinity and NaN into null, so eq(Infinity, null)
 // passes -- and a check that a division guards against zero passes whether
@@ -62,7 +77,9 @@ function ok(cond, note) { if (!cond) throw new Error(note || 'expected true'); }
 
 import { shape as cShape, shapeAll as cShapeAll, dueState as cDue,
          byPerson as cByPerson, timeline as cTimeline, totals as cTotals,
-         NOBODY as cNOBODY, MAX_TASKS as cMAX } from '../worker/campaign.js';
+         NOBODY as cNOBODY, MAX_TASKS as cMAX,
+         fetchBoard as cFetchBoard, TASKS_VIEW as cTASKS_VIEW,
+         TASKS_TABLE as cTASKS_TABLE } from '../worker/campaign.js';
 
 const keys = (groups) => visibleTiles(groups).map((t) => t.key);
 
@@ -2339,12 +2356,41 @@ describe('campaign board', () => {
     'Task Name': 'A task', Deadline: '2026-11-20', Campaign: ['recA'],
   }, over.fields || {}) });
 
-  it('keeps only what is still owed', () => {
-    eq(cShape(rec({ fields: { Complete: true } }), CAMPS), null, 'a ticked task is not active');
-    eq(cShape(rec({ fields: { 'Hide From View': true } }), CAMPS), null, 'a hidden task is not active');
-    eq(cShape(rec({ fields: { Deadline: null } }), CAMPS), null, 'no deadline, nothing to show');
+  // What is active is the VIEW's call, not this file's. shape() asks for a
+  // deadline and nothing else -- a second definition of "active" living
+  // here is how the board ended up showing work from finished campaigns.
+  it('asks only for a deadline, and leaves active to the view', () => {
+    eq(cShape(rec({ fields: { Deadline: null } }), CAMPS), null, 'no deadline, nothing to place');
     eq(cShape(rec({ fields: { Deadline: 'soon' } }), CAMPS), null, 'a deadline that is not a date');
-    ok(cShape(rec({}), CAMPS), 'an open dated task is active');
+    ok(cShape(rec({}), CAMPS), 'a dated task is drawn');
+    // These two used to be re-tested here. Hide From View was never in the
+    // view at all, so applying it hid rows the view shows.
+    ok(cShape(rec({ fields: { Complete: true } }), CAMPS),
+       'shape() is second-guessing the view on Complete');
+    ok(cShape(rec({ fields: { 'Hide From View': true } }), CAMPS),
+       'shape() is applying a filter the view does not have');
+  });
+
+  // The whole fix, pinned: the request must name the view. A formula that
+  // merely resembles it is what put finished campaigns on the board.
+  it('asks Airtable for the view by id, not for a lookalike formula', async () => {
+    const seen = [];
+    const get = async (u) => {
+      seen.push(String(u));
+      return { ok: true, status: 200, json: async () => ({ records: [] }) };
+    };
+    await cFetchBoard('key', get, TODAY);
+    const tasks = seen.filter((u) => u.includes(cTASKS_TABLE));
+    // Pinned to the literal, because asserting the constant against itself
+    // agrees with any view -- including 'DEADLINES - By DATE', which looks
+    // almost identical and is not the one that was asked for.
+    eq(cTASKS_VIEW, 'viw0YplB3wLrLb4R0',
+       'this is not the \u{1F680} DEADLINES - By CAMPAIGN view');
+    ok(tasks.length, 'the tasks table was never asked for');
+    ok(tasks.every((u) => u.includes('view=' + cTASKS_VIEW)),
+       'the task fetch does not name the Deadlines by Campaign view');
+    ok(!/Hide\+From\+View|Hide%20From%20View/.test(tasks.join(' ')),
+       'the old hand-written active filter is still being sent');
   });
 
   // A linked-record cell is an array of RECORD IDS over the REST API.
@@ -2508,7 +2554,7 @@ describe('campaign board', () => {
     const D = { tasks: [], asOf: '2026-11-12' };
     const state = (d) => cDue(d, '2026-11-12');
     const make = new Function('NOBODY', 'f', 'D', 'state',
-      a + b + ';return {keyOf,tagged,overdue,picked,peopleRows,pickName,settle,D};');
+      a + b + ';return {keyOf,tagged,overdue,picked,peopleRows,pickName,settle,hueOf,HUES,D};');
     return make('(unassigned)', f, D, state);
   }
 
@@ -2676,6 +2722,58 @@ describe('campaign board', () => {
        '"2 tasks \u00b7 2 late" is still printed over a list that is all late');
   });
 
+  // Colour follows the ENTITY, never its rank. The chip row reorders every
+  // time a deadline moves; a colour keyed to position would repaint
+  // everybody on a day somebody finished something early.
+  it('gives a person the same colour wherever their chip lands', () => {
+    const P = chipParts({ pick: 'overview', q: '' });
+    const keys = ['cory@j.com', 'arlynn@j.com', 'katie@j.com', '(unassigned)'];
+    const mine = P.hueOf('katie@j.com', keys);
+    // Same people, handed over in a different order -- as the row does.
+    eq(P.hueOf('katie@j.com', ['arlynn@j.com', '(unassigned)', 'katie@j.com', 'cory@j.com']),
+       mine, 'a person\u2019s colour moved when the row reordered');
+    eq(P.hueOf('katie@j.com', keys.slice().reverse()), mine);
+    // Everyone present gets a different slot, up to the eight that exist.
+    const got = keys.filter((k) => k !== '(unassigned)').map((k) => P.hueOf(k, keys));
+    eq(new Set(got).size, got.length, 'two people were handed the same hue inside eight');
+    // Unassigned is not a person and never takes a person\u2019s colour.
+    eq(P.hueOf('(unassigned)', keys), 'var(--ph-none)');
+    ok(!got.includes('var(--ph-none)'), 'a person was given the unassigned grey');
+  });
+
+  it('wraps past eight rather than inventing a ninth token', () => {
+    const P = chipParts({ pick: 'overview', q: '' });
+    const many = [];
+    for (let i = 0; i < 11; i++) many.push('p' + String(i).padStart(2, '0') + '@j.com');
+    const hues = many.map((k) => P.hueOf(k, many));
+    for (const h of hues) {
+      ok(/^var\(--ph[1-8]\)$/.test(h), 'produced a token that is not declared: ' + h);
+    }
+    // The ninth wraps onto the first, deliberately and predictably.
+    eq(hues[8], hues[0]);
+    eq(hues[P.HUES], hues[0], 'the wrap does not match the declared slot count');
+    // A key that is not in the list cannot silently become somebody else.
+    eq(P.hueOf('stranger@j.com', many), 'var(--ph-none)');
+  });
+
+  it('declares every hue token it hands out, in all three theme scopes', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const css = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.css'), 'utf8');
+    for (let i = 1; i <= 8; i++) {
+      const n = (css.match(new RegExp('--ph' + i + ':', 'g')) || []).length;
+      ok(n >= 4, '--ph' + i + ' is declared ' + n + ' times, needs light, media-dark, '
+         + 'data-dark and data-light');
+    }
+    ok((css.match(/--ph-none:/g) || []).length >= 4, '--ph-none is not declared per theme');
+    // A chip tinted with a token the stylesheet never defines paints nothing
+    // at all -- an unknown var voids the whole declaration.
+    const used = new Set((css.match(/var\(--ph[^)]*\)/g) || []));
+    for (const u of used) {
+      const name = u.slice(4, -1).split(',')[0].trim();
+      ok(css.includes(name + ':'), 'campaign.css uses ' + name + ' but never declares it');
+    }
+  });
+
   // Every id the page reaches for has to exist in the markup. This is here
   // because it did not: the Clear button was dropped from the bar during a
   // rewrite, $('#clr') came back null, and the TypeError was swallowed by
@@ -2699,5 +2797,7 @@ describe('campaign board', () => {
   });
 });
 
+// Nothing is reported until every async test has actually finished.
+await Promise.all(pending);
 console.log('\n' + ran + ' checks, ' + (failed ? failed + ' FAILED' : 'all passed'));
 process.exit(failed ? 1 : 0);

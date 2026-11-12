@@ -155,10 +155,33 @@
       });
   }
 
-  function chip(key, label, n, extra) {
+  // ── a colour per person ─────────────────────────────────────────────────
+  //
+  // Eight hues, and the slot is decided by the person, NEVER by where their
+  // chip happens to sit. The row reorders every time a deadline moves; if
+  // colour followed position, everybody's colour would change with it and
+  // the colour would be worth nothing.
+  //
+  // Keys are sorted and indexed, so the assignment is the same on every
+  // load and in every browser. Past eight it wraps -- see campaign.css for
+  // why eight, which is measured rather than assumed.
+  var HUES = 8;
+
+  function hueOf(key, all) {
+    // Unassigned is dropped here rather than special-cased above: it then
+    // falls through the same not-found path as any key with no slot, and
+    // there is only one line deciding what "no colour of its own" means.
+    var keys = all.filter(function (k) { return k !== NOBODY; }).sort();
+    var i = keys.indexOf(key);
+    return i < 0 ? 'var(--ph-none)' : 'var(--ph' + ((i % HUES) + 1) + ')';
+  }
+
+  function chip(key, label, n, extra, hue) {
     return '<button type="button" class="fchip' + (f.pick === key ? ' on' : '')
       + (n ? '' : ' empty') + (extra ? ' ' + extra : '')
-      + '" data-pick="' + esc(key) + '" aria-pressed="' + (f.pick === key) + '">'
+      + '" data-pick="' + esc(key) + '" aria-pressed="' + (f.pick === key) + '"'
+      + (hue ? ' style="--who:' + hue + '"' : '') + '>'
+      + (hue ? '<span class="fdot" aria-hidden="true"></span>' : '')
       + esc(label) + '<span class="fn">' + n + '</span></button>';
   }
 
@@ -171,9 +194,11 @@
       chip('overview', 'Overview', hits.length)
       + chip('late', 'Past deadline', hits.filter(overdue).length, 'late');
 
-    $('#fWho').innerHTML = peopleRows(all).map(function (r) {
+    var rows = peopleRows(all);
+    var keys = rows.map(function (r) { return r.key; });
+    $('#fWho').innerHTML = rows.map(function (r) {
       var n = hits.filter(function (t) { return tagged(t, r.key); }).length;
-      return chip(r.key, r.name, n);
+      return chip(r.key, r.name, n, 'who', hueOf(r.key, keys));
     }).join('');
     $('#filters').hidden = false;
   }

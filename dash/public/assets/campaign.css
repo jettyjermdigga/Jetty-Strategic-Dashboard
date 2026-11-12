@@ -149,3 +149,63 @@
 @media (max-width:760px){
   .fhint{width:auto;flex:none;margin-right:4px}
 }
+
+
+/* ── A colour per person ────────────────────────────────────────────────
+   The validated eight-hue categorical theme, with its own steps for the
+   dark card -- the same eight hues re-stepped, not a second palette, so a
+   person keeps their colour and only its weight changes with the theme.
+
+   Eight, not eleven, and that is a measured limit rather than a shrug.
+   Run against every pair at once (which is what a chip row is -- any two
+   chips can be compared), eight hues clear the colour-blind separation
+   target at delta-E 9.2 light / 9.1 dark. Ten fall to 7.4, twelve to 6.4,
+   and no twelve exist that clear both that and the normal-vision floor;
+   the two objectives trade against each other all the way down.
+
+   So past eight the hues repeat, and the thing that actually tells two
+   people apart is the NAME, which is on every chip. Colour here is for
+   finding yourself again in a row that reorders -- not for identity. */
+:root{
+  --ph1:#2a78d6; --ph2:#eb6834; --ph3:#1baf7a; --ph4:#eda100;
+  --ph5:#e87ba4; --ph6:#008300; --ph7:#6250d6; --ph8:#e34948;
+  --ph-none:#8A8F98;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ph1:#3987e5; --ph2:#d95926; --ph3:#199e70; --ph4:#c98500;
+    --ph5:#d55181; --ph6:#008300; --ph7:#9085e9; --ph8:#e66767;
+    --ph-none:#9DA4AE;
+  }
+}
+:root[data-theme="dark"]{
+  --ph1:#3987e5; --ph2:#d95926; --ph3:#199e70; --ph4:#c98500;
+  --ph5:#d55181; --ph6:#008300; --ph7:#9085e9; --ph8:#e66767;
+  --ph-none:#9DA4AE;
+}
+:root[data-theme="light"]{
+  --ph1:#2a78d6; --ph2:#eb6834; --ph3:#1baf7a; --ph4:#eda100;
+  --ph5:#e87ba4; --ph6:#008300; --ph7:#6250d6; --ph8:#e34948;
+  --ph-none:#8A8F98;
+}
+
+/* The dot carries the colour; the text stays ink. Putting a name ON a
+   coloured fill would mean eight different text-contrast problems, three
+   of which these hues cannot solve on a white card. */
+.fchip .fdot{
+  width:9px;height:9px;border-radius:50%;flex:0 0 9px;
+  background:var(--who,var(--ph-none));
+}
+/* Lit: tinted in the person's own colour rather than the house blue, so
+   the row says whose list you are looking at without reading it. Ink text
+   on a 16% tint keeps every contrast ratio the untinted chip already had. */
+.fchip.who.on{
+  background:color-mix(in srgb, var(--who,var(--ph-none)) 16%, transparent);
+  border-color:var(--who,var(--ph-none));
+  color:inherit;
+}
+/* Weight as well as colour, so "on" survives a mono display, a forced
+   -colors mode, or a browser without color-mix. */
+.fchip.who.on{font-weight:600}
+.fchip.who.on .fn{color:inherit;opacity:.72}
+.fchip.who.on .fdot{box-shadow:0 0 0 2px color-mix(in srgb, var(--who) 28%, transparent)}

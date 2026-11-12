@@ -8,8 +8,10 @@
 // part of that base that people actually maintain, so the tasks are what
 // this draws.
 //
-// An ACTIVE task is one that is not ticked Complete, not flagged Hide From
-// View, and has a Deadline. Everything here is about those.
+// What counts as active is NOT decided here. It is decided by the Airtable
+// view '\u{1F680} DEADLINES - By CAMPAIGN', which this asks for by id. The
+// only thing added on top is that a task needs a Deadline, because a
+// deadline board cannot place one without it.
 
 /** Not a provider limit -- the blast radius of a bad filter. The live set
  *  is around a hundred; a run that suddenly wants a thousand is a bug. */
@@ -99,8 +101,11 @@ function names(v) {
  */
 export function shape(rec, campaignNames) {
   const f = (rec && rec.fields) || {};
-  if (f.Complete === true) return null;
-  if (f['Hide From View'] === true) return null;
+  // Deliberately NOT re-testing Complete or Hide From View here. The view
+  // decides what is active; a second opinion in this file is a second
+  // definition, and the days the two disagree are the days nobody checks.
+  // Hide From View in particular was only ever mine -- the view does not
+  // filter on it, so applying it here HID rows the view shows.
   const deadline = ymd(f.Deadline);
   if (!deadline) return null;
 
@@ -265,15 +270,38 @@ export function whyNotFetching(env) {
 }
 
 /**
- * Only what is still owed, asked for at the source.
+ * THE view -- not a formula that resembles it.
  *
- * Done as a formula rather than by pulling three thousand rows and throwing
- * most away: the live set is about a hundred, and the difference is the
- * whole request. shape() applies the same rule again on the way in, because
- * a filter at the far end of a network is not a guarantee.
+ * '\u{1F680} DEADLINES - By CAMPAIGN'. Asking Airtable for the view by id
+ * means its filters are the board's filters, whoever edits them and
+ * whenever. What was here before was a hand-written formula meant to say
+ * the same thing, and it did not:
+ *
+ *   the view            | the formula
+ *   --------------------|---------------------------------
+ *   campaign status is  | (not checked at all)
+ *   Pending or In       |
+ *   Progress            |
+ *   task not Complete   | task not Complete
+ *   --                  | not Hide From View  <- my own addition
+ *
+ * The missing one is the whole bug. Campaign Status is a lookup through to
+ * the Campaign record, so every task hanging off a Complete or Paused
+ * campaign came through -- old work, on the board, indistinguishable from
+ * live work. Two filters agreeing most of the time is worse than one
+ * filter, because the days they disagree are the days nobody checks.
  */
-export const ACTIVE_FORMULA =
-  "AND(NOT({Complete}), NOT({Hide From View}), {Deadline} != '')";
+export const TASKS_VIEW = 'viw0YplB3wLrLb4R0';
+
+/**
+ * The one thing asked on top of the view, and it is not a policy.
+ *
+ * The view does not require a Deadline; a deadline board cannot place a
+ * task without one. Narrowing at the source rather than fetching and
+ * discarding, because the view holds a few hundred rows and the ones with
+ * no date are not rows this page could draw.
+ */
+export const HAS_DEADLINE = "{Deadline} != ''";
 
 const FIELDS = ['Task Name', 'Deadline', 'Assignee', 'Campaign', 'MKG Division',
                 'Task Type', 'Out for Review', 'Asset Drive Link'];
@@ -332,7 +360,8 @@ export async function fetchBoard(key, get, today) {
     // Built with append, not from an object: a repeated key in an object
     // keeps only the last value, which would ask Airtable for one field and
     // quietly return rows with nothing on them.
-    const q = new URLSearchParams({ pageSize: '100', filterByFormula: ACTIVE_FORMULA });
+    const q = new URLSearchParams({ pageSize: '100', view: TASKS_VIEW,
+                                    filterByFormula: HAS_DEADLINE });
     for (const f of FIELDS) q.append('fields[]', f);
     if (offset) q.append('offset', offset);
     const body = await page(get, key,
