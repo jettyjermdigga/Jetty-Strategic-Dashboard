@@ -236,6 +236,18 @@ const CASES = [
     path: 'campaign.html', wait: '.cp-person' },
   // What it looks like before the secret is set: a page that explains
   // itself rather than one that is broken.
+  // The two flat views, which the overview shot does not reach: a person's
+  // own sequence, and what is already late.
+  { file: 'campaign-person', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'campaign.html', wait: '#fWho .fchip',
+    click: '#fWho .fchip', after: '#fWho .fchip.on' },
+  { file: 'campaign-late', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    path: 'campaign.html', wait: '.fchip.late',
+    click: '.fchip.late', after: '.fchip.late.on' },
+  // A search most people have nothing matching, so the dimmed zero-chips are
+  // on screen and go through the contrast sweep. They were failing it.
+  { file: 'campaign-search', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'campaign.html', wait: '#fWho .fchip', type: ['#q', 'GovX'] },
   { file: 'campaign-nokey', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'campaign.html', wait: '.cp-why', noCampaignKey: true },
   // An address not on CAMPAIGN_USERS. The Worker answers a flat 404; the

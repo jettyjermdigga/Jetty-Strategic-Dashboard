@@ -31,14 +31,26 @@
   <div id="notice"></div>
 
   <div class="bd-bar" id="bar" hidden>
-    <select id="fDiv" class="bd-sel" aria-label="Which part of the business"></select>
     <input id="q" class="lb-q" type="search" placeholder="Find a task&hellip;"
            autocomplete="off" aria-label="Search by task, campaign or person">
     <button class="lb-clr" id="clr" type="button" hidden>Clear</button>
-
     <span class="bd-grow"></span>
     <span class="cp-stamp" id="stamp"></span>
     <button class="lb-add" id="refresh" type="button">Refresh</button>
+  </div>
+
+  <!-- Chips rather than a dropdown, the way the calendar asks the same kind
+       of question: every option and its count visible at once, so you can
+       see where the work is without opening anything. -->
+  <div class="filterbar" id="filters" hidden>
+    <div class="frow">
+      <span class="fhint">View</span>
+      <span class="fchips" id="fView"></span>
+    </div>
+    <div class="frow">
+      <span class="fhint">People</span>
+      <span class="fchips" id="fWho"></span>
+    </div>
   </div>
 
   <div class="cp-strip" id="strip" hidden></div>

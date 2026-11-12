@@ -23,6 +23,13 @@ const DAY = 24 * 60 * 60 * 1000;
 
 /** YYYY-MM-DD, or '' for anything that is not one. */
 export function ymd(v) {
+  // A Date stringifies to 'Thu Nov 12 2026 ...', whose first ten characters
+  // are not a date at all -- so a caller handing this a Date rather than a
+  // string would get '' back, and from there every deadline reads 'none'
+  // and NOTHING is ever late. Silent, and exactly the wrong way round.
+  if (v instanceof Date) {
+    return isFinite(v.getTime()) ? v.toISOString().slice(0, 10) : '';
+  }
   const s = String(v == null ? '' : v).slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
 }

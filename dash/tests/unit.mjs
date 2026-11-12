@@ -2493,6 +2493,205 @@ describe('campaign board', () => {
     ok(/CAMPAIGN_USERS/.test(page), 'the page does not say what to ask for');
   });
 
+  // ── the filter chips ───────────────────────────────────────────────────
+  //
+  // These run the page's REAL functions rather than grepping its source.
+  // The chip row is the one place where a quiet change -- a different key,
+  // a different sort -- shows up as names in the wrong order rather than as
+  // an error, so the tests have to actually execute it.
+  function chipParts(f) {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const a = page.slice(page.indexOf('function keyOf'), page.indexOf('  function chip('));
+    const b = page.slice(page.indexOf('function pickName()'), page.indexOf('  function render()'));
+    ok(a.length > 200 && b.length > 200, 'the chip functions were not found on the page');
+    const D = { tasks: [], asOf: '2026-11-12' };
+    const state = (d) => cDue(d, '2026-11-12');
+    const make = new Function('NOBODY', 'f', 'D', 'state',
+      a + b + ';return {keyOf,tagged,overdue,picked,peopleRows,pickName,settle,D};');
+    return make('(unassigned)', f, D, state);
+  }
+
+  const task = (name, deadline, who) => ({
+    name, deadline, campaign: 'C', division: 'D', review: false,
+    assignees: (who || []).map((w) => (typeof w === 'string'
+      ? { name: w, email: w.toLowerCase() + '@jettylife.com' } : w)),
+  });
+
+  it('lines the people up by who is due first', () => {
+    const P = chipParts({ pick: 'overview', q: '' });
+    // Deliberately back-to-front alphabetically: sorted by name this comes
+    // out Arlynn | Zoe, which is not what was asked for and would otherwise
+    // pass unnoticed.
+    const rows = P.peopleRows([
+      task('a', '2026-12-20', ['Arlynn']),
+      task('b', '2026-11-14', ['Zoe']),
+      task('c', '2026-11-30', ['Arlynn']),
+      task('d', '2026-11-02', []),
+    ]);
+    eq(rows.map((r) => r.name).join(' | '),
+       'Zoe | Arlynn | Nobody assigned',
+       'the chips are not in deadline order with the gap at the end');
+    // Arlynn is on two tasks, appears once, dated by the SOONER of them.
+    eq(rows[1].next, '2026-11-30');
+    // And the gap stays last even though its deadline is the soonest of all.
+    eq(rows[2].next, '2026-11-02');
+  });
+
+  it('keeps two people with one name apart', () => {
+    const P = chipParts({ pick: 'overview', q: '' });
+    const one = { name: 'Taylor', email: 'taylor@jettylife.com' };
+    const two = { name: 'Taylor', email: 'taylor.b@outside.com' };
+    const all = [task('a', '2026-11-14', [one]), task('b', '2026-11-15', [two])];
+    eq(P.peopleRows(all).length, 2, 'two different Taylors collapsed into one chip');
+    eq(P.tagged(all[0], P.keyOf(one)), true);
+    eq(P.tagged(all[0], P.keyOf(two)), false, 'a chip pulled in the other Taylor\u2019s work');
+  });
+
+  it('shows the picked chip and nothing else', () => {
+    const f = { pick: 'overview', q: '' };
+    const P = chipParts(f);
+    const all = [
+      task('late one', '2026-11-01', ['Arlynn']),
+      task('soon', '2026-11-14', ['Cory']),
+      task('orphan', '2026-11-03', []),
+    ];
+    eq(P.picked(all).length, 3, 'Overview dropped something');
+    f.pick = 'late';
+    eq(P.picked(all).map((t) => t.name).sort().join(','), 'late one,orphan',
+       'Past deadline is not showing exactly what is overdue');
+    f.pick = 'cory@jettylife.com';
+    eq(P.picked(all).map((t) => t.name).join(','), 'soon');
+    f.pick = '(unassigned)';
+    eq(P.picked(all).map((t) => t.name).join(','), 'orphan',
+       'the unassigned chip does not find work with nobody on it');
+  });
+
+  // Finish your last task and your chip leaves the board. The page was
+  // standing on it; without settle() it shows an empty list and no lit chip.
+  it('steps off a chip that is no longer there', () => {
+    const f = { pick: 'cory@jettylife.com', q: '' };
+    const P = chipParts(f);
+    P.D.tasks = [task('a', '2026-11-14', ['Arlynn'])];
+    P.settle();
+    eq(f.pick, 'overview', 'the page is stuck on a person who has no work');
+
+    f.pick = 'arlynn@jettylife.com';
+    P.settle();
+    eq(f.pick, 'arlynn@jettylife.com', 'settle() threw away a pick that was fine');
+    eq(P.pickName(), 'Arlynn');
+    f.pick = 'late';
+    P.settle();
+    eq(f.pick, 'late', 'settle() does not know its own view chips');
+  });
+
+  // The row is drawn from every task, the counts from what the search left.
+  // Drawn from the search, a chip would delete itself the moment its last
+  // task stopped matching -- and the row would reshuffle as you typed.
+  it('builds the chip row from the whole board, not the search', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const draw = page.slice(page.indexOf('function drawChips('), page.indexOf('function filtered('));
+    ok(/peopleRows\(all\)/.test(draw), 'the chip row is built from the searched list');
+    ok(/hits\.filter/.test(draw), 'the counts ignore the search');
+    const render = page.slice(page.indexOf('function render() {'), page.indexOf('function stamp('));
+    ok(/var hits = all\.filter\(hit\)/.test(render), 'render no longer separates the two');
+    ok(/drawChips\(all, hits\)/.test(render), 'render hands drawChips the wrong list');
+    // A person's list has to know whose it is, and Past deadline has to know
+    // it is nobody's -- otherwise it would strip a name it should be showing.
+    ok(/drawFlat\(show, pickName\(\), f\.pick === 'late' \? '' : f\.pick\)/.test(render),
+       'render does not tell drawFlat whose list it is');
+  });
+
+  it('dresses a lit chip so you can see which one it is', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const css = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.css'), 'utf8');
+    const on = css.slice(css.indexOf('.fchip.on{'), css.indexOf('.fchip.on{') + 160);
+    ok(/background:var\(--primary\)/.test(on), 'a picked chip is not filled');
+    ok(/color:#fff/.test(on), 'a picked chip keeps dark text on a dark fill');
+    ok(/\.fchip\{/.test(css) && /\.fhint\{/.test(css), 'the chip bar is not styled');
+    // The dash has no --cell. An unknown token voids the whole declaration.
+    ok(!/var\(--cell\)/.test(css), 'the chips reach for a calendar token');
+    const html = fs.readFileSync(path.join(here, '..', 'public/campaign.html'), 'utf8');
+    ok(/id="fView"/.test(html) && /id="fWho"/.test(html), 'the chip rows are not on the page');
+    ok(!/fDiv/.test(html), 'the old division dropdown is still there');
+  });
+
+  // Found by a test stub that handed this a Date and watched every deadline
+  // come back 'none'. A board where nothing is ever late looks calm.
+  it('reads a date whichever way it is handed one', () => {
+    eq(cDue('2026-11-01', new Date('2026-11-12T00:00:00Z')), 'overdue');
+    eq(cDue('2026-11-01', '2026-11-12'), 'overdue');
+    eq(cDue('2026-11-12', new Date('2026-11-12T12:00:00Z')), 'today');
+    eq(cDue('2026-11-01', new Date('nonsense')), 'none');
+  });
+
+  // Taking the viewer's own name off their rows is easy to get wrong in the
+  // direction that loses information: hide the only name and an unassigned
+  // task stops announcing itself, or strip the wrong person and a shared
+  // task looks like it is one person's alone.
+  function rowMaker() {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const cut = (a, b) => {
+      const t = page.slice(page.indexOf(a), page.indexOf(b));
+      ok(t.length > 40, 'could not find ' + a);
+      return t;
+    };
+    const src = cut('function esc(', '  function api(')
+      + cut('function days(', '  // \u2500\u2500 filtering')
+      + cut('function keyOf', '  function chip(')
+      + cut('function taskRow(', '  // One flat list');
+    return new Function('D', src + ';return taskRow;')({ asOf: '2026-11-12' });
+  }
+
+  it('takes your own name off your own list, and nobody else\u2019s', () => {
+    const taskRow = rowMaker();
+    const kate = { name: 'Katie Hehl', email: 'k.hehl@jettylife.com' };
+    const kyle = { name: 'Kyle G', email: 'kyle@jettyrockfoundation.org' };
+    const who = (html) => (html.match(/class="cp-who[^"]*">([^<]*)</) || [])[1];
+
+    // Her own list: her name is the heading, so it comes off the rows.
+    eq(who(taskRow(task('a', '2026-11-20', [kate]), true, kate.email)), '');
+    // But a task she shares still says who with.
+    eq(who(taskRow(task('b', '2026-11-20', [kate, kyle]), true, kate.email)), 'Kyle G');
+    // And work with nobody on it keeps saying so, in any view.
+    const orphan = taskRow(task('c', '2026-11-20', []), true, kate.email);
+    eq(who(orphan), 'Nobody assigned');
+    ok(/cp-who none/.test(orphan), 'unassigned work lost its colour');
+    // Past deadline is not one person's list, so it names everybody.
+    eq(who(taskRow(task('d', '2026-11-20', [kate, kyle]), true, '')), 'Katie Hehl, Kyle G');
+    eq(who(taskRow(task('e', '2026-11-20', []), true, '')), 'Nobody assigned');
+    // The campaign rides along on a flat row and stays off the grouped one.
+    ok(/cp-camp/.test(taskRow(task('f', '2026-11-20', [kate]), true, '')));
+    ok(!/cp-camp/.test(taskRow(task('g', '2026-11-20', [kate]), false, '')),
+       'the campaign is repeated inside its own campaign card');
+  });
+
+  it('does not count the same thing twice in a heading', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const flat = page.slice(page.indexOf('function drawFlat('), page.indexOf('function drawBoard('));
+    ok(/late && late < rows\.length/.test(flat),
+       '"2 tasks \u00b7 2 late" is still printed over a list that is all late');
+  });
+
+  // Every id the page reaches for has to exist in the markup. This is here
+  // because it did not: the Clear button was dropped from the bar during a
+  // rewrite, $('#clr') came back null, and the TypeError was swallowed by
+  // the load() catch -- which then drew the "could not load" notice over a
+  // board that had in fact loaded perfectly. Nothing else noticed.
+  it('only reaches for elements that are on the page', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const html = fs.readFileSync(path.join(here, '..', 'public/campaign.html'), 'utf8');
+    const want = [...page.matchAll(/\$\('#([A-Za-z0-9_-]+)'\)/g)].map((m) => m[1]);
+    ok(want.length >= 6, 'no element lookups were found to check');
+    for (const id of [...new Set(want)]) {
+      ok(html.includes('id="' + id + '"'), 'the page reads #' + id + ', which is not in the markup');
+    }
+  });
+
   it('refuses to shape an unbounded pile', () => {
     const many = [];
     for (let i = 0; i < cMAX + 50; i++) many.push(rec({ id: 'r' + i }));

@@ -12,7 +12,9 @@
   var SIGNED_OUT = 'Your sign-in expired. Reload the page.';
 
   var D = null;
-  var f = { div: '', q: '' };
+  // One pick at a time: 'overview', 'late', or a person's key.
+  var f = { pick: 'overview', q: '' };
+  var NOBODY = '(unassigned)';
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -92,9 +94,12 @@
     return '';
   }
 
-  // ── filtering ───────────────────────────────────────────────────────────
-  function keep(t) {
-    if (f.div && t.division !== f.div) return false;
+  // ── filtering ──────────────────────────────────────────────────────
+  //
+  // The search narrows whatever view is picked; the chips pick the view.
+  // They are separate questions and they compose: search "lookbook" while
+  // standing on Past deadline and you get the late lookbook work.
+  function hit(t) {
     var q = (f.q || '').trim().toLowerCase();
     if (!q) return true;
     var hay = [t.name, t.campaign, t.division,
@@ -103,7 +108,77 @@
     return hay.indexOf(q) >= 0;
   }
 
-  function filtered() { return Boolean(f.div || (f.q || '').trim()); }
+  // Same key the Worker groups people by, so a chip and the Worker's own
+  // per-person counts can never disagree about who two rows are.
+  function keyOf(p) { return p.email || p.name; }
+
+  function tagged(t, key) {
+    if (key === NOBODY) return !(t.assignees || []).length;
+    return (t.assignees || []).some(function (p) { return keyOf(p) === key; });
+  }
+
+  function overdue(t) { return state(t.deadline) === 'overdue'; }
+
+  // Which tasks the picked chip is asking for.
+  function picked(tasks) {
+    if (f.pick === 'overview') return tasks;
+    if (f.pick === 'late') return tasks.filter(overdue);
+    return tasks.filter(function (t) { return tagged(t, f.pick); });
+  }
+
+  // ── who is on the board ─────────────────────────────────────────
+  //
+  // Built from the WHOLE task list, never the searched one -- a chip row
+  // that reshuffles itself under your finger as you type is unusable, and
+  // a person whose last task the search just hid would take their own chip
+  // away with them. Counts come from the search; the row does not.
+  //
+  // Left to right by soonest deadline, so whoever is up next is nearest the
+  // left edge. Ties go alphabetical so the row is the same every load.
+  function peopleRows(all) {
+    var by = {};
+    var add = function (key, label, t) {
+      if (!by[key]) by[key] = { key: key, name: label, next: t.deadline };
+      else if (t.deadline < by[key].next) by[key].next = t.deadline;
+    };
+    all.forEach(function (t) {
+      if (!(t.assignees || []).length) { add(NOBODY, 'Nobody assigned', t); return; }
+      t.assignees.forEach(function (p) { add(keyOf(p), p.name, t); });
+    });
+    return Object.keys(by).map(function (k) { return by[k]; })
+      .sort(function (a, b) {
+        // Nobody assigned sits at the end whatever its dates say: it is a
+        // gap to fill, not a person to go and ask.
+        if ((a.key === NOBODY) !== (b.key === NOBODY)) return a.key === NOBODY ? 1 : -1;
+        return a.next < b.next ? -1 : a.next > b.next ? 1
+          : String(a.name).localeCompare(String(b.name));
+      });
+  }
+
+  function chip(key, label, n, extra) {
+    return '<button type="button" class="fchip' + (f.pick === key ? ' on' : '')
+      + (n ? '' : ' empty') + (extra ? ' ' + extra : '')
+      + '" data-pick="' + esc(key) + '" aria-pressed="' + (f.pick === key) + '">'
+      + esc(label) + '<span class="fn">' + n + '</span></button>';
+  }
+
+  function drawChips(all, hits) {
+    // Nothing to filter, nothing to show. An empty chip bar over an error
+    // notice is just furniture, and on the no-key page it was the only thing
+    // with any ink in it.
+    if (!all.length) { $('#filters').hidden = true; return; }
+    $('#fView').innerHTML =
+      chip('overview', 'Overview', hits.length)
+      + chip('late', 'Past deadline', hits.filter(overdue).length, 'late');
+
+    $('#fWho').innerHTML = peopleRows(all).map(function (r) {
+      var n = hits.filter(function (t) { return tagged(t, r.key); }).length;
+      return chip(r.key, r.name, n);
+    }).join('');
+    $('#filters').hidden = false;
+  }
+
+  function filtered() { return Boolean(f.pick !== 'overview' || (f.q || '').trim()); }
 
   // ── deadlines by campaign ───────────────────────────────────────────────
   //
@@ -111,6 +186,55 @@
   // campaign first. The assignees sit on the row rather than in a view of
   // their own: who owes a thing is a property of the thing, and splitting
   // them apart meant reading two pages to answer one question.
+  // `mine` is the person whose list this is, if any. Their own name comes off
+  // every row: it is already the heading, and repeated down the right-hand
+  // side it crowds out the one thing that column is worth reading for --
+  // who ELSE is on the task with them.
+  function taskRow(t, showCamp, mine) {
+    var c = cls(state(t.deadline));
+    var all = t.assignees || [];
+    var show = mine ? all.filter(function (p) { return keyOf(p) !== mine; }) : all;
+    var who = show.map(function (p) { return p.name; }).join(', ');
+    if (mine && !who) who = all.length ? '' : 'Nobody assigned';
+    return '<div class="cp-task">'
+      + '<span class="cp-when ' + c + '">' + esc(whenWords(t.deadline)) + '</span>'
+      + '<span class="cp-what">' + esc(t.name) + '</span>'
+      + (showCamp ? '<span class="cp-camp">' + esc(t.campaign || '') + '</span>' : '')
+      + '<span class="cp-who' + (who && who !== 'Nobody assigned' ? '' : ' none') + '">'
+      + esc(mine ? who : (who || 'Nobody assigned')) + '</span>'
+      + (t.review ? '<span class="cp-rev">Out for review</span>' : '')
+      + '</div>';
+  }
+
+  // One flat list in date order, for a person or for what is already late.
+  // No campaign grouping here on purpose: the question a person chip asks
+  // is "what do I do next", and that is one sequence, not a set of piles.
+  // The campaign moves onto the row instead, so nothing is lost by it.
+  function drawFlat(tasks, head, mine) {
+    var rows = tasks.slice().sort(function (a, b) {
+      return a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0;
+    });
+    if (!rows.length) {
+      $('#board').innerHTML = '<p class="cp-empty">' + esc(head)
+        + ' has nothing open' + ((f.q || '').trim() ? ' matching that.' : '.') + '</p>';
+      return;
+    }
+    var late = rows.filter(overdue).length;
+    $('#board').innerHTML = '<div class="cp-people"><section class="cp-person">'
+      + '<div class="cp-phead">'
+      + '<span class="cp-pname">' + esc(head) + '</span>'
+      + '<span class="cp-pcount">' + rows.length
+      + (rows.length === 1 ? ' task' : ' tasks') + '</span>'
+      // "2 tasks \u00b7 2 late" says it twice. The flag is only worth ink when
+      // it picks some of the list out from the rest, which on the Past
+      // deadline view it never does.
+      + (late && late < rows.length
+          ? '<span class="cp-pflag late">' + late + ' late</span>' : '')
+      + '</div>'
+      + rows.map(function (t) { return taskRow(t, true, mine); }).join('')
+      + '</section></div>';
+  }
+
   function drawBoard(tasks) {
     var box = $('#board');
 
@@ -162,17 +286,7 @@
         + (r.late ? '<span class="cp-pflag late">' + r.late + ' late</span>' : '')
         + (r.due ? '<span class="cp-pflag due">' + r.due + ' this week</span>' : '')
         + '</div>'
-        + r.tasks.map(function (t) {
-          var c = cls(state(t.deadline));
-          var who = (t.assignees || []).map(function (p) { return p.name; }).join(', ');
-          return '<div class="cp-task">'
-            + '<span class="cp-when ' + c + '">' + esc(whenWords(t.deadline)) + '</span>'
-            + '<span class="cp-what">' + esc(t.name) + '</span>'
-            + '<span class="cp-who' + (who ? '' : ' none') + '">'
-            + esc(who || 'Nobody assigned') + '</span>'
-            + (t.review ? '<span class="cp-rev">Out for review</span>' : '')
-            + '</div>';
-        }).join('')
+        + r.tasks.map(function (t) { return taskRow(t, false); }).join('')
         + '</section>';
     }).join('') + '</div>';
   }
@@ -201,24 +315,48 @@
     $('#strip').hidden = false;
   }
 
-  function render() {
-    var tasks = (D.tasks || []).filter(keep);
-    drawStrip(tasks);
-    drawBoard(tasks);
-    $('#clr').hidden = !filtered();
-    $('#sub').textContent = tasks.length + (tasks.length === 1 ? ' open task' : ' open tasks')
-      + (filtered() ? ' shown' : '');
+  // What the picked chip is called, for the heading over a flat list.
+  function pickName() {
+    if (f.pick === 'late') return 'Past deadline';
+    var rows = peopleRows(D.tasks || []);
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].key === f.pick) return rows[i].name;
+    }
+    return 'Nobody';
   }
 
-  function fillDivisions() {
-    var seen = {};
-    (D.tasks || []).forEach(function (t) { if (t.division) seen[t.division] = true; });
-    var opts = Object.keys(seen).sort();
-    $('#fDiv').innerHTML = '<option value="">Every division</option>'
-      + opts.map(function (d) {
-        return '<option value="' + esc(d) + '"' + (d === f.div ? ' selected' : '')
-          + '>' + esc(d) + '</option>';
-      }).join('');
+  // A chip can go away under you: finish your last task, reload, and the
+  // person you were standing on is no longer on the board. Without this the
+  // page sits on a key nothing matches and shows an empty list with no lit
+  // chip to explain it.
+  function settle() {
+    if (f.pick === 'overview' || f.pick === 'late') return;
+    var rows = peopleRows(D.tasks || []);
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].key === f.pick) return;
+    }
+    f.pick = 'overview';
+  }
+
+  function render() {
+    settle();
+    var all = D.tasks || [];
+    var hits = all.filter(hit);
+    drawChips(all, hits);
+
+    var show = picked(hits);
+    // The strip counts everything the search left, not the picked slice --
+    // it is the headline for the board, and a headline that changes every
+    // time you click a name is not one.
+    drawStrip(hits);
+
+    if (f.pick === 'overview') drawBoard(show);
+    else drawFlat(show, pickName(), f.pick === 'late' ? '' : f.pick);
+
+    $('#clr').hidden = !filtered();
+    $('#sub').textContent = show.length
+      + (show.length === 1 ? ' open task' : ' open tasks')
+      + (filtered() ? ' shown' : '');
   }
 
   function stamp(d) {
@@ -239,7 +377,6 @@
       // A board that cannot be read says why, and says it where somebody is
       // looking rather than in a log.
       say(D.ok === false || D.why ? D.why : '');
-      fillDivisions();
       render();
     }).catch(function (err) {
       var msg = err.message || '';
@@ -249,6 +386,7 @@
       if (/Unknown endpoint|No such endpoint|404/.test(msg)) {
         $('#sub').textContent = 'Not open to you';
         $('#strip').hidden = true;
+        $('#filters').hidden = true;
         say('The Campaign Board is not open to this address. It shows every '
           + 'person\u2019s deadlines, including who is behind, so it sits behind '
           + 'a list of its own. Ask Jeremy to add you to CAMPAIGN_USERS.');
@@ -256,24 +394,34 @@
       }
       $('#sub').textContent = 'Could not load';
       $('#strip').hidden = true;
+      $('#filters').hidden = true;
       say(msg || 'The board did not load.');
     });
   }
 
   $('#bar').addEventListener('click', function (e) {
     if (e.target.closest && e.target.closest('#refresh')) {
-      $('#stamp').textContent = 'reading…';
+      $('#stamp').textContent = 'reading\u2026';
       return load(true);
     }
     if (e.target.closest && e.target.closest('#clr')) {
-      f.div = '';
+      f.pick = 'overview';
       f.q = '';
       $('#q').value = '';
-      $('#fDiv').value = '';
       return render();
     }
   });
-  $('#fDiv').addEventListener('change', function (e) { f.div = e.target.value; render(); });
+
+  // One handler on the bar rather than one per chip: the chips are redrawn
+  // on every render, and listeners bound to them would be thrown away with
+  // them each time.
+  $('#filters').addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('.fchip');
+    if (!b) return;
+    f.pick = b.getAttribute('data-pick');
+    render();
+  });
+
   $('#q').addEventListener('input', function (e) { f.q = e.target.value; render(); });
 
   load(false);
