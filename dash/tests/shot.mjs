@@ -240,6 +240,11 @@ const CASES = [
   // itself rather than one that is broken.
   { file: 'campaign-nokey', scheme: 'light', who: full('jeremy@jettylife.com'),
     path: 'campaign.html', wait: '.cp-why', noCampaignKey: true },
+  // An address not on CAMPAIGN_USERS. The Worker answers a flat 404; the
+  // page has to turn that into something a person can act on, because a
+  // refusal rendered as an empty board reads as "there is no work".
+  { file: 'campaign-shut-out', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'campaign.html', wait: '.cp-why', campaignShutOut: true },
   { file: 'cogs-light', scheme: 'light', adds: true,
     who: full('jeremy@jettylife.com'),
     path: 'cogs.html', wait: '.lb-sel' },
@@ -431,6 +436,9 @@ for (const c of CASES) {
     if (p === '/api/admin/all') return route.fulfill({ json: ADMIN });
     if (p === '/api/music') return route.fulfill({ json: { picks: MUSIC } });
     if (p === '/api/campaign') {
+      if (c.campaignShutOut) {
+        return route.fulfill({ status: 404, json: { error: 'No such endpoint.' } });
+      }
       return c.noCampaignKey
         ? route.fulfill({ json: { ok: false, why: CAMPAIGN_WHY, asOf: CAMPAIGN_TODAY,
                                   tasks: [], people: [], campaigns: [] } })

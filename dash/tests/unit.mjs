@@ -2480,6 +2480,19 @@ describe('campaign board', () => {
     }
   });
 
+  // "You cannot see this" and "there is nothing to see" look identical if a
+  // refusal is rendered as an empty board. It was, until it wasn't.
+  it('turns a refusal into something a person can act on', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    ok(/if \(!res\.ok\)[\s\S]{0,160}throw/.test(page),
+       'a non-ok answer is returned rather than thrown, so it draws as an empty board');
+    ok(/No such endpoint\|404/.test(page) || /No such endpoint/.test(page),
+       'the page does not recognise the Worker\u2019s refusal');
+    ok(/not open to this address/i.test(page), 'the page does not say what the refusal means');
+    ok(/CAMPAIGN_USERS/.test(page), 'the page does not say what to ask for');
+  });
+
   it('refuses to shape an unbounded pile', () => {
     const many = [];
     for (let i = 0; i < cMAX + 50; i++) many.push(rec({ id: 'r' + i }));

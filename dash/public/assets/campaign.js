@@ -26,8 +26,15 @@
       if (res.type === 'opaqueredirect' || res.redirected || res.status === 0) {
         throw new Error(SIGNED_OUT);
       }
-      return res.json().then(function (body) {
-        if (!res.ok && !body) throw new Error('Request failed (' + res.status + ')');
+      return res.json().catch(function () { return null; }).then(function (body) {
+        // A refusal has to be thrown, not returned. Returned, it arrives as
+        // a board with no tasks on it -- and "you cannot see this" and
+        // "there is nothing to see" look identical, which is the worse of
+        // the two to get wrong.
+        if (!res.ok) {
+          throw new Error((body && (body.why || body.error))
+            || ('Request failed (' + res.status + ')'));
+        }
         return body;
       });
     });
@@ -309,8 +316,21 @@
       fillDivisions();
       render();
     }).catch(function (err) {
+      var msg = err.message || '';
+      // The Worker answers an address that is not on the list with a flat
+      // 404, which is right for an outsider and useless to the person
+      // reading it. Say what it means for them.
+      if (/Unknown endpoint|No such endpoint|404/.test(msg)) {
+        $('#sub').textContent = 'Not open to you';
+        $('#strip').hidden = true;
+        say('The Campaign Board is not open to this address. It shows every '
+          + 'person\u2019s deadlines, including who is behind, so it sits behind '
+          + 'a list of its own. Ask Jeremy to add you to CAMPAIGN_USERS.');
+        return;
+      }
       $('#sub').textContent = 'Could not load';
-      say(err.message || 'The board did not load.');
+      $('#strip').hidden = true;
+      say(msg || 'The board did not load.');
     });
   }
 
