@@ -2930,8 +2930,13 @@ describe('campaign board', () => {
     eq(st('2026-10-26'), '17d late');
     eq(st('2026-11-11'), '1d late');
     eq(st('2026-11-12'), 'Due today');
-    eq(st('2026-11-13'), 'Due this week');
-    eq(st('2026-11-19'), 'Due this week');
+    eq(st('2026-11-13'), 'Due tomorrow');
+    // "Due this week" said the same thing six days apart, and on a Friday
+    // it meant tonight. The number is the whole point of the column.
+    eq(st('2026-11-14'), 'Due in 2 days');
+    eq(st('2026-11-19'), 'Due in 7 days');
+    ok(!/this week/.test([st('2026-11-14'), st('2026-11-19')].join(' ')),
+       'the column still says "this week" instead of how many days');
     // Past a week there is no state worth naming, and "49d" in a column
     // beside "17d late" is the ambiguity this was built to remove.
     eq(st('2026-11-20'), '');

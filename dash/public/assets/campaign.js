@@ -89,7 +89,11 @@
     if (n == null) return '';
     if (n < 0) return (-n) + 'd late';
     if (n === 0) return 'Due today';
-    if (n <= 7) return 'Due this week';
+    if (n === 1) return 'Due tomorrow';
+    // Not "Due this week". Read on a Friday that is tonight; read on a
+    // Monday it is six days off, and the column said the same thing both
+    // times. The number is the whole point of the column.
+    if (n <= 7) return 'Due in ' + n + ' days';
     return '';
   }
 
