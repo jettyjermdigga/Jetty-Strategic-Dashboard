@@ -546,6 +546,55 @@ describe('linkCats', () => {
 // The dash page: links and forms used to be a column of their own with a
 // filter of their own. They are pills under the department they belong to
 // now, which is the same question the row along the top already answers.
+// The Harbor sign-in page's bathymetry, now on the band at the top of every
+// module. Three Workers serve it, so there are three copies of the file and
+// three copies of the rule -- the same duplication the rest of this repo
+// pins rather than imports.
+describe('the header band artwork', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const root = path.join(HERE, '..', '..');
+  const copies = ['dash/public/assets/bathy.webp',
+                  'calendar/public/assets/bathy.webp',
+                  'commissions/public/assets/bathy.webp'];
+
+  it('is the same file in all three Workers', () => {
+    const bytes = copies.map((f) => fs.readFileSync(path.join(root, f)));
+    for (const b of bytes) ok(b.length > 0, 'one copy is empty');
+    ok(bytes[0].equals(bytes[1]) && bytes[0].equals(bytes[2]),
+       'the three Workers are serving different artwork');
+    // It loads on every page of every module, so it has a budget.
+    ok(bytes[0].length < 60 * 1024,
+       'the artwork is ' + Math.round(bytes[0].length / 1024) + 'KB, over the 60KB budget');
+    // WebP, not a PNG renamed.
+    eq(bytes[0].slice(0, 4).toString('latin1'), 'RIFF', 'not a WebP');
+    eq(bytes[0].slice(8, 12).toString('latin1'), 'WEBP', 'not a WebP');
+  });
+
+  it('is on the band in all three, over Deep Sea', () => {
+    for (const f of ['dash/public/assets/dash.css',
+                     'calendar/public/assets/site.css',
+                     'commissions/public/assets/site.css']) {
+      const css = fs.readFileSync(path.join(root, f), 'utf8');
+      const band = css.slice(css.indexOf('.site-top{'), css.indexOf('.site-top{') + 900);
+      ok(/url\('\/assets\/bathy\.webp'\)/.test(band), f + ' does not draw the artwork');
+      // The colour has to stay under it: the file is only contour lines.
+      ok(/background:var\(--primary\) url/.test(band), f + ' dropped Deep Sea from under it');
+      // A map is not a tile. Repeating it shows the seam.
+      ok(/no-repeat/.test(band), f + ' repeats the map');
+    }
+  });
+
+  // A harness that cannot serve the file paints a bare band and agrees that
+  // nothing is wrong, which is how this would go unnoticed.
+  it('can be served by every harness that renders a page', () => {
+    for (const f of ['dash/tests/shot.mjs', 'calendar/tests/browser.mjs',
+                     'commissions/tests/browser.mjs']) {
+      const t = fs.readFileSync(path.join(root, f), 'utf8');
+      ok(/'\.webp': 'image\/webp'/.test(t), f + ' would serve the artwork as text');
+    }
+  });
+});
+
 describe('the dash page: links under their department', () => {
   const HERE = path.dirname(fileURLToPath(import.meta.url));
   const page = fs.readFileSync(path.join(HERE, '..', 'public/assets/dash.js'), 'utf8');

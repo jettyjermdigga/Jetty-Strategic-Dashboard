@@ -21,7 +21,7 @@ try {
 }
 
 const MIME = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript',
-               '.png': 'image/png' };
+               '.png': 'image/png', '.webp': 'image/webp' };
 
 const REPS = [
   { key: 'nathan-zelena-llc', name: 'Nathan Zelena LLC', email: 'n@x.com', active: 1 },

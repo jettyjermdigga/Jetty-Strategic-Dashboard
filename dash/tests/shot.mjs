@@ -37,8 +37,12 @@ try {
 }
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
-const OUT = process.argv[2] || '.';
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
+// Defaults to shots/, which is ignored, NOT to '.' -- run with no argument
+// it used to scatter forty screenshots through the repo root, and one
+// `git add -A` later they were committed.
+const OUT = process.argv[2] || 'shots';
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+               '.png': 'image/png', '.webp': 'image/webp' };
 
 // Built the way the Worker builds it, so the screenshots are of the real
 // decision rather than a hand-written payload that agrees with nothing.
@@ -209,7 +213,8 @@ const CASES = [
   { file: 'dash-bare-light', scheme: 'light', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-bare-dark', scheme: 'dark', who: BARE('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-full-dark', scheme: 'dark', who: full('jeremy@jettylife.com'), wait: '.catbar' },
-  { file: 'dash-full-light', scheme: 'light', who: full('jeremy@jettylife.com'), wait: '.catbar' },
+  { file: 'dash-full-light', scheme: 'light', who: full('jeremy@jettylife.com'),
+    wait: '.catbar', bandArt: true },
   // Click a category with both tiles and links in it.
   { file: 'dash-full-marketing', scheme: 'dark', who: full('jeremy@jettylife.com'),
     wait: '.catbar', click: '.cb[data-cat="marketing"]', after: '.cb.on[data-cat="marketing"]' },
@@ -892,6 +897,52 @@ for (const c of CASES) {
   // It reads whatever the filters leave behind, which is the whole request.
   // The things worth driving: that filtering changes it, that the scale
   // covers the tallest column, and that one axis never mixes its units.
+  // ── The header band ───────────────────────────────────────────────────
+  //
+  // The bathymetry is white lines over Deep Sea, and white header text sits
+  // on top of it. Measured from the SHIPPED file rather than trusted: the
+  // browser decodes it, and the brightest pixel in it is the worst case a
+  // letter can land on. A darker re-export would sail through every other
+  // check on this page.
+  if (c.bandArt) {
+    const art = await page.evaluate(async () => {
+      const img = new Image();
+      img.src = '/assets/bathy.webp';
+      try { await img.decode(); } catch (err) { return { failed: String(err) }; }
+      const cv = document.createElement('canvas');
+      cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+      const ctx = cv.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      let maxA = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > maxA) maxA = d[i];
+      const band = getComputedStyle(document.querySelector('.site-top'));
+      return { maxA: maxA / 255, w: cv.width, h: cv.height,
+               img: band.backgroundImage, repeat: band.backgroundRepeat };
+    });
+    if (art.failed) {
+      console.log('  header band: THE ARTWORK DID NOT DECODE: ' + art.failed);
+      process.exitCode = 1;
+    } else {
+      const lin = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      const lum = (rgb) => 0.2126 * lin(rgb[0] / 255) + 0.7152 * lin(rgb[1] / 255)
+        + 0.0722 * lin(rgb[2] / 255);
+      const teal = [0x43, 0x57, 0x5e];
+      const worst = teal.map((v) => art.maxA * 255 + (1 - art.maxA) * v);
+      const ratio = 1.05 / (lum(worst) + 0.05);
+      const okText = ratio >= 4.5;
+      const drawn = /bathy\.webp/.test(art.img);
+      const noTile = art.repeat === 'no-repeat';
+      console.log('  header band: '
+        + (drawn ? 'artwork on the band' : 'THE BAND IS NOT DRAWING THE ARTWORK')
+        + ', lines at ' + Math.round(art.maxA * 100) + '%'
+        + ', ' + (okText ? 'white text holds ' + ratio.toFixed(2) + ':1'
+                         : 'WHITE TEXT FALLS TO ' + ratio.toFixed(2) + ':1 ON A LINE')
+        + ', ' + (noTile ? 'no seam' : 'REPEATING: THE MAP WILL SHOW ITS SEAM'));
+      if (!okText || !drawn || !noTile) process.exitCode = 1;
+    }
+  }
+
   // ── The deadline row ──────────────────────────────────────────────────
   //
   // A layout check, because the unit tests cannot see one. The executor

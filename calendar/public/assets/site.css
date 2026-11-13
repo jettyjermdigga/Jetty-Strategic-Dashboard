@@ -2,7 +2,19 @@
    it, so the font bundle is fetched once and cached. */
 
 .site-top{
-  background:var(--primary);
+  /* The bathymetry from the Harbor sign-in page, so the modules and the
+     door into them look like the same product. White contour lines over
+     Deep Sea, baked to 14% alpha in the file itself.
+
+     14% is measured, not chosen: white header text over a contour line at
+     that strength still reads 5.26:1, against 7.60:1 on bare Deep Sea.
+     At 22% it falls to 4.34:1 and the logo starts swimming in it.
+
+     A horizontal strip rather than the whole square -- the band is ~75px
+     tall and never shows more than a slice, so a strip is sharper at a
+     third of the bytes. Covers rather than repeats: the artwork is a map,
+     not a tile, and repeating it would show the seam. */
+  background:var(--primary) url('/assets/bathy.webp') center/cover no-repeat;
   display:flex;align-items:center;justify-content:space-between;
   gap:24px;padding:18px 32px;
 }

@@ -27,7 +27,8 @@ try {
 }
 
 const { TAXONOMY } = await import('../worker/taxonomy.js');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+               '.png': 'image/png', '.webp': 'image/webp' };
 
 const ev = (o) => Object.assign({
   event_type: 'event', department: 'jrf', departments: '', sub_types: '',

@@ -4,3 +4,6 @@ data/
 output/
 .wrangler/
 node_modules/
+
+# Screenshot harness output. Never the repo.
+shots/
