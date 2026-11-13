@@ -546,6 +546,43 @@ describe('linkCats', () => {
 // The dash page: links and forms used to be a column of their own with a
 // filter of their own. They are pills under the department they belong to
 // now, which is the same question the row along the top already answers.
+// Who may open the Campaign Board. This is a list of SIGN-IN addresses, and
+// three of the ten people on that board are in Airtable under a different
+// one -- so the obvious way to build this list is the wrong way, and the
+// failure is silent: the tile sits on their dash and the board 404s.
+describe('the Campaign Board allow-list', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const toml = fs.readFileSync(path.join(HERE, '..', 'wrangler.toml'), 'utf8');
+  const list = (/CAMPAIGN_USERS = "([^"]*)"/.exec(toml) || [, ''])[1]
+    .split(',').map((e) => e.trim()).filter(Boolean);
+
+  it('only holds addresses Access will admit', () => {
+    ok(list.length > 0, 'the list is empty, which shuts the board to everybody');
+    for (const e of list) {
+      ok(/@(jettylife\.com|jettyrockfoundation\.org)$/.test(e),
+         e + ' is not a domain Access admits -- the board will 404 for them');
+    }
+  });
+
+  it('is lowercase and has nobody twice', () => {
+    // canSeeCampaign lowercases what it compares, so a capital here is a
+    // name that silently never matches.
+    for (const e of list) eq(e, e.toLowerCase(), e + ' will never match');
+    eq(new Set(list).size, list.length, 'somebody is on the list twice');
+  });
+
+  // The three that catch people out, named so a future edit cannot quietly
+  // put the Airtable address back.
+  it('uses the sign-in address, not the Airtable one', () => {
+    for (const bad of ['khehldesign@gmail.com', 'joncoen@comcast.net']) {
+      ok(!list.includes(bad), bad + ' is an Airtable address, not a sign-in');
+    }
+    for (const good of ['k.hehl@jettylife.com', 'joncoen@jettylife.com']) {
+      ok(list.includes(good), good + ' is missing, so they will be refused');
+    }
+  });
+});
+
 // The Harbor sign-in page's bathymetry, now on the band at the top of every
 // module. Three Workers serve it, so there are three copies of the file and
 // three copies of the rule -- the same duplication the rest of this repo

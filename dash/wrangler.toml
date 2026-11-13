@@ -96,8 +96,15 @@ BUDGET_USERS = "jeremy@jettylife.com"
 # person's deadlines, which is the point of the board and also a thing to
 # hand out deliberately rather than by default. Comma-separated.
 #
-# An address here has to be one Cloudflare Access will admit. Note that
-# several people are in the Airtable base under a personal address --
-# khehldesign@gmail.com, joncoen@comcast.net -- which is NOT what they sign
-# in to the dash with. Use their jettylife.com address here.
-CAMPAIGN_USERS = "jeremy@jettylife.com"
+# Everyone tagged on a task in the Deadlines by Campaign view, by the address
+# they SIGN IN with -- which for three of them is not the address they are in
+# Airtable under:
+#
+#   Katie Hehl     khehldesign@gmail.com  ->  k.hehl@jettylife.com
+#   Jon Coen       joncoen@comcast.net    ->  joncoen@jettylife.com
+#   Jessica, Kyle  @jettyrockfoundation.org (approved on Access)
+#
+# Matching on the Airtable address would have shut Katie and Jon out with the
+# tile sitting right there on their dash. An address here has to be one
+# Cloudflare Access will admit; nothing else gets past the 404.
+CAMPAIGN_USERS = "jeremy@jettylife.com,arlynn@jettylife.com,d.bachowski@jettylife.com,john@jettylife.com,k.hehl@jettylife.com,cory@jettylife.com,colleen@jettylife.com,joncoen@jettylife.com,jessica@jettyrockfoundation.org,kyle@jettyrockfoundation.org"
