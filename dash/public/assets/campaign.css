@@ -206,6 +206,14 @@
    has to stay readable. .55 measured 3.41:1 and failed the sweep. */
 .fchip.empty{opacity:.75}
 .fchip.empty.on{opacity:1}
+/* The star on the Priority chip, the same red it is in the rows.
+   ::before, NOT ::first-letter -- the chip is inline-flex and a first-letter
+   rule does not apply to one at all, so the star rendered in plain ink and
+   measured it. Lit, the chip fills with --primary and the star goes white
+   with the rest rather than sitting a second red on a dark fill. */
+.fchip.prio::before{content:'\2605';color:var(--cp-star);margin-right:1px}
+.fchip.prio.on::before{color:#fff}
+
 /* Past deadline is the one chip that should look like what it counts --
    but only when it counts something. A red nought is a false alarm. */
 .fchip.late .fn{color:var(--cp-late);opacity:1}

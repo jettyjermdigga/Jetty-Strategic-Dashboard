@@ -2856,10 +2856,13 @@ describe('campaign board', () => {
     const render = page.slice(page.indexOf('function render() {'), page.indexOf('function stamp('));
     ok(/var hits = all\.filter\(hit\)/.test(render), 'render no longer separates the two');
     ok(/drawChips\(all, hits\)/.test(render), 'render hands drawChips the wrong list');
-    // A person's list has to know whose it is, and Past deadline has to know
-    // it is nobody's -- otherwise it would strip a name it should be showing.
-    ok(/drawFlat\(show, pickName\(\), f\.pick === 'late' \? '' : f\.pick, hueFor\)/.test(render),
-       'render does not tell drawFlat whose list it is');
+    // drawFlat no longer needs to know whose list it is -- the base tells
+    // the two roles apart now, so nothing is inferred from who is looking.
+    // What it does need is the heading and the hue lookup.
+    ok(/drawFlat\(show, pickName\(\), hueFor\)/.test(render),
+       'render is not handing drawFlat its heading and hues');
+    ok(!/f\.pick === 'late' \? '' : f\.pick/.test(render),
+       'render still works out a "whose list is this" that nothing reads');
     // Every pill on every row has to agree with the chip above it, so the
     // lookup is built once here and handed down rather than re-derived.
     ok(/var keys = peopleRows\(all\)/.test(render) && /drawBoard\(show, hueFor\)/.test(render),
@@ -3091,6 +3094,53 @@ describe('campaign board', () => {
     const board = page.slice(page.indexOf('function drawBoard('), page.indexOf('function drawStrip('));
     ok(/headRow\(/.test(board), 'Overview has no column labels');
     ok(/headRow\(/.test(flat), 'a person\u2019s list has no column labels');
+  });
+
+  // A third view beside Overview and Past deadline: what is starred.
+  it('gives the priority star a view of its own', () => {
+    const f = { pick: 'overview', q: '' };
+    const P2 = chipParts(f);
+    const all = [
+      Object.assign(task('late and starred', '2026-11-01', ['Arlynn']), { priority: true }),
+      Object.assign(task('soon and starred', '2026-11-14', ['Cory']), { priority: true }),
+      task('soon, not starred', '2026-11-15', ['Cory']),
+    ];
+    f.pick = 'priority';
+    // NOT forward-only. Overview hides what is already late because it
+    // answers "what is coming"; this answers "what matters", and a starred
+    // task three weeks late is the best example of something that matters.
+    eq(P2.picked(all).map((t) => t.name).sort().join(','),
+       'late and starred,soon and starred',
+       'the priority view is not showing exactly what is starred');
+    eq(P2.pickName(), 'Priority');
+    // It is a view, not a person: settle() must not throw it away.
+    P2.D.tasks = all;
+    P2.settle();
+    eq(f.pick, 'priority', 'settle() dropped the priority view');
+  });
+
+  it('puts the priority chip beside Past deadline, counting stars', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
+    const draw = page.slice(page.indexOf('function drawChips('), page.indexOf('function filtered('));
+    const view = draw.slice(draw.indexOf("$('#fView')"), draw.indexOf("$('#fWho')"));
+    eq([...view.matchAll(/chip\('([a-z]+)'/g)].map((m) => m[1]).join(' '),
+       'overview late priority', 'the priority chip is not beside Past deadline');
+    ok(/t\.priority/.test(view), 'the priority chip is not counting stars');
+    // The star is a ::before on the chip, not text in the label: the chip
+    // is inline-flex, and ::first-letter -- the obvious way -- does not
+    // apply to one at all, so the star rendered in plain ink and a probe
+    // in the browser measured it that way.
+    const here2 = path.dirname(fileURLToPath(import.meta.url));
+    const css = fs.readFileSync(path.join(here2, '..', 'public/assets/campaign.css'), 'utf8');
+    ok(css.includes(".fchip.prio::before{content:'") && css.includes('2605'),
+       'the chip does not carry the star the rows do');
+    ok(css.includes('color:var(--cp-star)'), 'the chip star is not the row star colour');
+    ok(css.includes('.fchip.prio.on::before{color:#fff}'),
+       'the star stays red on a filled chip');
+    // A RULE, not the word -- the comment above it explains why not to.
+    ok(!css.includes('::first-letter{'),
+       '::first-letter does not apply to an inline-flex chip');
   });
 
   // Overdue used to be a colour you had to already be looking for.

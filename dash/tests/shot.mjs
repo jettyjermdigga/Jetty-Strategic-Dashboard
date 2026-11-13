@@ -290,6 +290,9 @@ const CASES = [
   { file: 'campaign-late', scheme: 'dark', who: full('jeremy@jettylife.com'),
     path: 'campaign.html', wait: '.fchip.late',
     click: '.fchip.late', after: '.fchip.late.on' },
+  { file: 'campaign-priority', scheme: 'light', who: full('jeremy@jettylife.com'),
+    path: 'campaign.html', wait: '.fchip.prio',
+    click: '.fchip.prio', after: '.fchip.prio.on' },
   // A search most people have nothing matching, so the dimmed zero-chips are
   // on screen and go through the contrast sweep. They were failing it.
   { file: 'campaign-search', scheme: 'light', who: full('jeremy@jettylife.com'),

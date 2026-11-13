@@ -142,6 +142,11 @@
   function picked(tasks) {
     if (f.pick === 'overview') return tasks.filter(function (t) { return !overdue(t); });
     if (f.pick === 'late') return tasks.filter(overdue);
+    // Priority is NOT forward-only. Overview hides what is already late
+    // because it answers "what is coming"; this one answers "what matters",
+    // and a priority task that is three weeks late is the best example of
+    // something that matters.
+    if (f.pick === 'priority') return tasks.filter(function (t) { return t.priority; });
     return tasks.filter(function (t) { return tagged(t, f.pick); });
   }
 
@@ -211,7 +216,11 @@
     if (!all.length) { $('#filters').hidden = true; return; }
     $('#fView').innerHTML =
       chip('overview', 'Overview', hits.filter(function (t) { return !overdue(t); }).length)
-      + chip('late', 'Past deadline', hits.filter(overdue).length, 'late');
+      + chip('late', 'Past deadline', hits.filter(overdue).length, 'late')
+      // Carries the same star the column does, so the chip and the rows it
+      // produces are recognisably about the same thing.
+      + chip('priority', 'Priority',
+             hits.filter(function (t) { return t.priority; }).length, 'prio');
 
     var rows = peopleRows(all);
     var keys = rows.map(function (r) { return r.key; });
@@ -224,19 +233,11 @@
 
   function filtered() { return Boolean(f.pick !== 'overview' || (f.q || '').trim()); }
 
-  // ── deadlines by campaign ───────────────────────────────────────────────
+  // ── the rows ────────────────────────────────────────────────────────────
   //
-  // One card per campaign, its open work underneath in date order, soonest
-  // campaign first. The assignees sit on the row rather than in a view of
-  // their own: who owes a thing is a property of the thing, and splitting
-  // them apart meant reading two pages to answer one question.
-  // `mine` is the person whose list this is, if any. Their own name comes off
-  // every row: it is already the heading, and repeated down the right-hand
-  // side it crowds out the one thing that column is worth reading for --
-  // who ELSE is on the task with them.
   // The columns, in order. Priority sits between the status and the
-  // campaign because it reads as part of "how urgent is this", not as part
-  // of "what is it".
+  // campaign because it reads as part of "how urgent is this" rather than
+  // part of "what is it".
   function headRow() {
     return '<div class="cp-task cp-hrow">'
       + '<span class="cp-when">Due date</span>'
@@ -292,7 +293,7 @@
   // No campaign grouping here on purpose: the question a person chip asks
   // is "what do I do next", and that is one sequence, not a set of piles.
   // The campaign moves onto the row instead, so nothing is lost by it.
-  function drawFlat(tasks, head, mine, hueFor) {
+  function drawFlat(tasks, head, hueFor) {
     var rows = tasks.slice().sort(function (a, b) {
       return a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0;
     });
@@ -318,6 +319,12 @@
       + '</section></div>';
   }
 
+  // ── deadlines by campaign ───────────────────────────────────────────────
+  //
+  // One card per campaign, its open work underneath in date order, soonest
+  // campaign first. Who is on a task sits on the row rather than in a view
+  // of its own: who owes a thing is a property of the thing, and splitting
+  // them apart meant reading two pages to answer one question.
   function drawBoard(tasks, hueFor) {
     var box = $('#board');
 
@@ -396,6 +403,7 @@
   // What the picked chip is called, for the heading over a flat list.
   function pickName() {
     if (f.pick === 'late') return 'Past deadline';
+    if (f.pick === 'priority') return 'Priority';
     var rows = peopleRows(D.tasks || []);
     for (var i = 0; i < rows.length; i++) {
       if (rows[i].key === f.pick) return rows[i].name;
@@ -408,7 +416,7 @@
   // page sits on a key nothing matches and shows an empty list with no lit
   // chip to explain it.
   function settle() {
-    if (f.pick === 'overview' || f.pick === 'late') return;
+    if (f.pick === 'overview' || f.pick === 'late' || f.pick === 'priority') return;
     var rows = peopleRows(D.tasks || []);
     for (var i = 0; i < rows.length; i++) {
       if (rows[i].key === f.pick) return;
@@ -463,7 +471,7 @@
     drawStrip(hits);
 
     if (f.pick === 'overview') drawBoard(show, hueFor);
-    else drawFlat(show, pickName(), f.pick === 'late' ? '' : f.pick, hueFor);
+    else drawFlat(show, pickName(), hueFor);
 
     // Overview hides what is already late, so Overview says so. A filter
     // you cannot see is how a figure goes missing -- and the thing being
