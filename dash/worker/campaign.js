@@ -109,12 +109,24 @@ export function shape(rec, campaignNames) {
   const deadline = ymd(f.Deadline);
   if (!deadline) return null;
 
-  const who = Array.isArray(f.Assignee) ? f.Assignee.map(person).filter((p) => p.email || p.name) : [];
+  // Two roles now: one Executor doing it, and whoever is supporting. The
+  // base says one executor; it holds up to three on some rows, so this
+  // takes what is there rather than what it was told to expect.
+  const crew = (v) => (Array.isArray(v)
+    ? v.map(person).filter((p) => p.email || p.name) : []);
+  const executor = crew(f.Executor);
+  const supporters = crew(f['Supporter(s)']);
   return {
     id: String((rec && rec.id) || ''),
     name: String(f['Task Name'] || '').trim() || 'Untitled task',
     deadline,
-    assignees: who,
+    executor,
+    supporters,
+    // Everyone on it, in either role. The chips, the filter and the
+    // per-person counts all work off this -- being somebody's supporter
+    // is still their work and still belongs on their list.
+    assignees: executor.concat(supporters),
+    priority: f.Priority === true,
     // A linked-record cell comes back from the REST API as an array of
     // RECORD IDS, not names -- so this needs the campaigns fetched too.
     // Without the map it would read 'recx3PtJyw3prjmBO' on screen, which is
@@ -303,8 +315,13 @@ export const TASKS_VIEW = 'viw0YplB3wLrLb4R0';
  */
 export const HAS_DEADLINE = "{Deadline} != ''";
 
-const FIELDS = ['Task Name', 'Deadline', 'Assignee', 'Campaign', 'MKG Division',
-                'Task Type', 'Out for Review', 'Asset Drive Link'];
+// Airtable rejects an unknown name in fields[] outright, so a field renamed
+// in the base takes the whole fetch down with it and the board quietly
+// serves its last good cache. 'Assignee' was renamed to 'Executor' and that
+// is exactly what happened.
+const FIELDS = ['Task Name', 'Deadline', 'Executor', 'Supporter(s)', 'Priority',
+                'Campaign', 'MKG Division', 'Task Type', 'Out for Review',
+                'Asset Drive Link'];
 
 /** A simple one-value-per-key URL. The task fetch repeats `fields[]` and
  *  builds its own. */

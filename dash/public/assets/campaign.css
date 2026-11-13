@@ -72,7 +72,10 @@
      not a quieter label, it is a missing one. */
   text-transform:uppercase;opacity:.74;font-weight:400;
 }
-.cp-hrow .cp-exs{display:block}
+.cp-hrow .cp-exec,.cp-hrow .cp-sup{display:block}
+/* The header marks the column with the same star rather than the word,
+   because the word is wider than everything underneath it. */
+.cp-hrow .cp-prio{color:var(--cp-star);opacity:1;font-size:11px}
 /* Left to right: date, how late, campaign, what it is, who else is on it.
    Every one of the first three is a FIXED width, so they read as columns
    you can run an eye down rather than five ragged edges. */
@@ -100,7 +103,7 @@
    hold a fixed column and a long task name is not allowed to shove it. */
 .cp-what{
   /* Shrinks, never grows. What actually pins the executors is the auto
-     margin on .cp-exs -- an auto margin takes the free space before any
+     margin on .cp-exec -- an auto margin takes the free space before any
      flex-grow gets a look in -- so this is a statement of intent rather
      than the load-bearing part: the text column has no claim on the
      row's slack, and nothing between it and the executors can move them. */
@@ -112,19 +115,32 @@
    front of it. Flowing straight after the task text put them at a
    different x on every row, which is not a column -- you could not run an
    eye down it to see who was carrying what. */
-.cp-exs{
+/* Two columns now that the base tells them apart: who is doing it, and
+   who is helping. The pair is pinned to the right edge by the auto margin
+   on the first of them, so both start at the same x on every row whatever
+   sits in front -- including the Out for review badge. */
+.cp-exec,.cp-sup{
   display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;
-  /* Pinned to the right edge by the auto margin, so the column starts at
-     the same x on every row whatever sits in front of it. */
-  flex:0 0 300px;min-width:0;margin-left:auto;
+  min-width:0;
 }
+.cp-exec{flex:0 0 156px;margin-left:auto}
+.cp-sup{flex:0 0 176px;margin-left:11px}
+
+/* Priority: the red star from the base, and nothing at all when it is not
+   set. A column of empty boxes would be noise; a column with four stars
+   in it is a list of what matters. */
+.cp-prio{
+  flex:0 0 22px;min-width:22px;text-align:center;
+  font-size:13px;line-height:1;
+}
+.cp-star{color:var(--cp-star)}
 /* The campaign sits BEFORE the task name and holds a fixed column, so the
    list reads "this date, this late, this campaign, this task". A long
    name is clipped rather than allowed to push the task text around --
    the full one is on the element's title. */
 .cp-camp{
   font-family:var(--mono);font-size:10px;opacity:.7;letter-spacing:.04em;
-  flex:0 0 216px;min-width:0;max-width:216px;
+  flex:0 0 200px;min-width:0;max-width:200px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .cp-rev{
@@ -147,7 +163,7 @@
   .cp-status{flex:0 0 auto;min-width:0}
   .cp-camp{flex:1 1 auto;max-width:none}
   /* The executors drop under the task rather than squeezing it. */
-  .cp-exs{flex-basis:100%;margin-left:0}
+  .cp-exec,.cp-sup{flex-basis:100%;margin-left:0}
   .cp-what{margin-right:0}
   .cp-what{white-space:normal;overflow:visible}
   .cp-strip{gap:16px}
@@ -369,3 +385,13 @@
   .cp-task.isLate .cp-status{margin-left:0;padding-left:6px;border-radius:5px}
   .cp-task.isLate .cp-when{border-radius:5px}
 }
+
+/* The priority star. Measured on the card it sits on, both themes, as a
+   non-text icon needing 3:1: light 5.44, dark 5.23. Its own token rather
+   than --cp-late, so tuning "late" never silently restyles "important". */
+:root{ --cp-star:#C0392B; }
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){ --cp-star:#F2705C; }
+}
+:root[data-theme="dark"]{ --cp-star:#F2705C; }
+:root[data-theme="light"]{ --cp-star:#C0392B; }

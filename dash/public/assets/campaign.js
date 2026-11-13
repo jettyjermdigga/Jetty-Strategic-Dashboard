@@ -234,59 +234,57 @@
   // every row: it is already the heading, and repeated down the right-hand
   // side it crowds out the one thing that column is worth reading for --
   // who ELSE is on the task with them.
-  // What the five columns are. Once per card and once per list, because
-  // "4d" in a column of its own needs saying, and a card that is read on
-  // its own should not need the one above it to be legible.
-  // What the five columns are. Once per card and once per list, because
-  // "4d" in a column of its own needs saying, and a card read on its own
-  // should not need the one above it to be legible.
-  //
-  // On a person's own list the last column is not the people doing the
-  // work -- it is already theirs -- it is whoever is on it WITH them. So
-  // there it reads Supporters, and everywhere else Executors.
-  function headRow(mine) {
+  // The columns, in order. Priority sits between the status and the
+  // campaign because it reads as part of "how urgent is this", not as part
+  // of "what is it".
+  function headRow() {
     return '<div class="cp-task cp-hrow">'
       + '<span class="cp-when">Due date</span>'
       + '<span class="cp-status">Status</span>'
+      + '<span class="cp-prio" title="Priority">\u2605</span>'
       + '<span class="cp-camp">Campaign</span>'
       + '<span class="cp-what">Task description</span>'
-      + '<span class="cp-exs">' + (mine ? 'Supporters' : 'Executors') + '</span>'
+      + '<span class="cp-exec">Executor</span>'
+      + '<span class="cp-sup">Supporters</span>'
       + '</div>';
   }
 
-  // One executor, as the same colour-coded pill the filter chips use.
+  // One person, as the same colour-coded pill the filter chips use.
   function exPill(p, hueFor) {
     return '<span class="cp-ex" style="--who:' + hueFor(keyOf(p)) + '">'
       + '<span class="fdot" aria-hidden="true"></span>' + esc(p.name) + '</span>';
   }
 
-  // Date, how late, campaign, what it is, who is doing it -- the same five
-  // in every view, so a row read on Overview and the same row read on a
-  // person's list line up rather than needing to be re-learnt.
-  //
-  // `mine` is the person whose list this is, if any. Their own pill comes
-  // off their own rows: it is already the heading, and repeated down every
-  // line it crowds out the one thing worth reading there -- who ELSE is on
-  // the task with them.
-  function taskRow(t, mine, hueFor) {
+  function crewCell(cls, people, hueFor, none) {
+    var list = people || [];
+    if (!list.length) {
+      return '<span class="' + cls + '">'
+        + (none ? '<span class="cp-ex none"><span class="fdot" aria-hidden="true"></span>'
+                  + esc(none) + '</span>' : '')
+        + '</span>';
+    }
+    return '<span class="' + cls + '">'
+      + list.map(function (p) { return exPill(p, hueFor); }).join('') + '</span>';
+  }
+
+  // Date, status, priority, campaign, what it is, who is doing it, who is
+  // helping. Nobody's name is stripped from their own list any more: the
+  // base distinguishes the two roles now, so the columns just say what it
+  // says rather than inferring it from who is looking.
+  function taskRow(t, hueFor) {
     var c = cls(state(t.deadline));
-    var all = t.assignees || [];
-    var others = mine ? all.filter(function (p) { return keyOf(p) !== mine; }) : all;
-    var pills = all.length
-      ? others.map(function (p) { return exPill(p, hueFor); }).join('')
-      : '<span class="cp-ex none"><span class="fdot" aria-hidden="true"></span>'
-        + 'Nobody assigned</span>';
     return '<div class="cp-task' + (c === 'late' ? ' isLate' : '') + '">'
       + '<span class="cp-when ' + c + '">' + esc(pretty(t.deadline)) + '</span>'
       + '<span class="cp-status ' + c + '">' + esc(statusWords(t.deadline)) + '</span>'
+      + '<span class="cp-prio">' + (t.priority
+          ? '<span class="cp-star" title="Priority" aria-label="Priority">\u2605</span>'
+          : '') + '</span>'
       + '<span class="cp-camp" title="' + esc(t.campaign || '') + '">'
       + esc(t.campaign || '') + '</span>'
       + '<span class="cp-what" title="' + esc(t.name) + '">' + esc(t.name) + '</span>'
-      // Before the executors, not after. Trailing them it took its width
-      // out of the row and dragged that row's executor column left, so the
-      // one task that was out for review had its pill at its own x.
       + (t.review ? '<span class="cp-rev">Out for review</span>' : '')
-      + '<span class="cp-exs">' + pills + '</span>'
+      + crewCell('cp-exec', t.executor, hueFor, 'Nobody assigned')
+      + crewCell('cp-sup', t.supporters, hueFor, '')
       + '</div>';
   }
 
@@ -315,8 +313,8 @@
       + (late && late < rows.length
           ? '<span class="cp-pflag late">' + late + ' late</span>' : '')
       + '</div>'
-      + headRow(mine)
-      + rows.map(function (t) { return taskRow(t, mine, hueFor); }).join('')
+      + headRow()
+      + rows.map(function (t) { return taskRow(t, hueFor); }).join('')
       + '</section></div>';
   }
 
@@ -365,8 +363,8 @@
         + '<div class="cp-phead">'
         + '<span class="cp-pname">' + esc(r.name) + '</span>'
         + '</div>'
-        + headRow('')
-        + r.tasks.map(function (t) { return taskRow(t, '', hueFor); }).join('')
+        + headRow()
+        + r.tasks.map(function (t) { return taskRow(t, hueFor); }).join('')
         + '</section>';
     }).join('') + '</div>';
   }

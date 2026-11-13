@@ -2521,6 +2521,59 @@ describe('campaign board', () => {
        'shape() is applying a filter the view does not have');
   });
 
+  // Airtable rejects an unknown name in fields[] outright, so a field
+  // renamed in the base takes the WHOLE fetch down and the board falls
+  // back to its last good cache -- stale, and silent about it. That is
+  // exactly what 'Assignee' -> 'Executor' did.
+  it('asks for fields that exist in the base', async () => {
+    const seen = [];
+    const get = async (u) => {
+      seen.push(String(u));
+      return { ok: true, status: 200, json: async () => ({ records: [] }) };
+    };
+    await cFetchBoard('key', get, TODAY);
+    const url = seen.filter((u) => u.includes(cTASKS_TABLE)).join(' ');
+    for (const f of ['Executor', 'Supporter%28s%29', 'Priority', 'Deadline', 'Campaign']) {
+      ok(url.includes('fields%5B%5D=' + f) || url.includes(decodeURIComponent(f)),
+         'the fetch does not ask for ' + decodeURIComponent(f));
+    }
+    // The name that was renamed. Asking for it again breaks everything.
+    ok(!/fields%5B%5D=Assignee\b/.test(url) && !/=Assignee&/.test(url),
+       'the fetch still asks for Assignee, which no longer exists');
+  });
+
+  it('keeps the two roles apart, and together where it matters', () => {
+    const r = (over) => cShape({ id: 'r1', fields: Object.assign({
+      'Task Name': 'A task', Deadline: '2026-11-20', Campaign: ['recA'],
+    }, over) }, CAMPS);
+    const kate = { id: 'k', name: 'Katie', email: 'k@j.com' };
+    const kyle = { id: 'y', name: 'Kyle', email: 'y@j.org' };
+
+    const t = r({ Executor: [kate], 'Supporter(s)': [kyle] });
+    eq(t.executor.map((p) => p.name), ['Katie']);
+    eq(t.supporters.map((p) => p.name), ['Kyle']);
+    // Being somebody's supporter is still their work: the chips, the
+    // filter and the per-person counts all run off assignees.
+    eq(t.assignees.map((p) => p.name), ['Katie', 'Kyle'],
+       'a supporter is missing from the list their own chip is built from');
+
+    // The base says one executor and holds three on some rows.
+    eq(r({ Executor: [kate, kyle] }).executor.length, 2, 'a second executor was dropped');
+    // Neither field set is not a crash.
+    eq(r({}).assignees, []);
+    eq(r({}).supporters, []);
+  });
+
+  it('reads the priority box', () => {
+    const r = (over) => cShape({ id: 'r1', fields: Object.assign({
+      'Task Name': 'A task', Deadline: '2026-11-20',
+    }, over) }, CAMPS);
+    eq(r({ Priority: true }).priority, true);
+    eq(r({ Priority: false }).priority, false);
+    // Airtable leaves an unticked checkbox out of the payload entirely.
+    eq(r({}).priority, false, 'a missing checkbox is not false');
+  });
+
   // The whole fix, pinned: the request must name the view. A formula that
   // merely resembles it is what put finished campaigns on the board.
   it('asks Airtable for the view by id, not for a lookalike formula', async () => {
@@ -2708,11 +2761,14 @@ describe('campaign board', () => {
     return make('(unassigned)', f, D, state);
   }
 
-  const task = (name, deadline, who) => ({
-    name, deadline, campaign: 'C', division: 'D', review: false,
-    assignees: (who || []).map((w) => (typeof w === 'string'
-      ? { name: w, email: w.toLowerCase() + '@jettylife.com' } : w)),
-  });
+  const person = (w) => (typeof w === 'string'
+    ? { name: w, email: w.toLowerCase() + '@jettylife.com' } : w);
+  const task = (name, deadline, who, extra) => Object.assign({
+    name, deadline, campaign: 'C', division: 'D', review: false, priority: false,
+    executor: (who || []).map(person),
+    supporters: [],
+    assignees: (who || []).map(person),
+  }, extra || {});
 
   it('lines the people up by who is due first', () => {
     const P = chipParts({ pick: 'overview', q: '' });
@@ -2848,39 +2904,52 @@ describe('campaign board', () => {
     const src = cut('function esc(', '  function api(')
       + cut('function days(', '  // \u2500\u2500 filtering')
       + cut('function keyOf', '  function chip(')
-      + cut('function exPill(', '  // One flat list');
-    const made = new Function('D', src + ';return {taskRow,exPill};')({ asOf: '2026-11-12' });
+      + cut('function headRow(', '  // One flat list');
+    const made = new Function('D', src + ';return {taskRow,headRow};')({ asOf: '2026-11-12' });
     // A stand-in for the real lookup: enough to prove the pill carries
     // whatever hue it is handed, keyed by the person.
     const hueFor = (k) => 'var(--ph'
       + (([...k].reduce((n, c) => n + c.charCodeAt(0), 0) % 8) + 1) + ')';
-    return (t, mine) => made.taskRow(t, mine, hueFor);
+    return (t) => made.taskRow(t, hueFor);
   }
 
-  it('takes your own name off your own list, and nobody else\u2019s', () => {
+  // Two roles, two columns, straight from the base. Nobody's name is
+  // stripped from their own list any more -- that was a guess standing in
+  // for a distinction Airtable did not record, and now it does.
+  it('keeps the executor and the supporters in columns of their own', () => {
     const taskRow = rowMaker();
     const kate = { name: 'Katie Hehl', email: 'k.hehl@jettylife.com' };
     const kyle = { name: 'Kyle G', email: 'kyle@jettyrockfoundation.org' };
-    const pills = (html) => [...html.matchAll(/class="cp-ex[^"]*"[^>]*>(?:<[^>]*>)*([^<]*)</g)]
-      .map((m) => m[1]);
+    // Cut at the NEXT column, not at the next closing tag -- two pills in
+    // one column close a span between them, and cutting there read half
+    // the column and reported the other half missing.
+    const names = (html, c) => {
+      const open = html.indexOf('class="' + c + '"');
+      if (open < 0) return '?';
+      const after = c === 'cp-exec' ? html.indexOf('class="cp-sup"') : html.length;
+      const seg = html.slice(open, after > open ? after : html.length);
+      return [...seg.matchAll(/class="cp-ex[^"]*"[^>]*>(?:<[^>]*>)*([^<]*)</g)]
+        .map((x) => x[1]).join(',');
+    };
+    const both = taskRow(task('t', '2026-11-20', [kate], { supporters: [kyle] }));
+    eq(names(both, 'cp-exec'), 'Katie Hehl', 'the executor column is wrong');
+    eq(names(both, 'cp-sup'), 'Kyle G', 'the supporters column is wrong');
 
-    // Her own list: her name is the heading, so her pill comes off the rows.
-    eq(pills(taskRow(task('a', '2026-11-20', [kate]), kate.email)).join(','), '');
-    // But a task she shares still says who with.
-    eq(pills(taskRow(task('b', '2026-11-20', [kate, kyle]), kate.email)).join(','), 'Kyle G');
-    // And work with nobody on it keeps saying so, in any view.
-    const orphan = taskRow(task('c', '2026-11-20', []), kate.email);
-    eq(pills(orphan).join(','), 'Nobody assigned');
-    ok(/cp-ex none/.test(orphan), 'unassigned work lost its colour');
-    // Past deadline is not one person's list, so it names everybody.
-    eq(pills(taskRow(task('d', '2026-11-20', [kate, kyle]), '')).join(','),
-       'Katie Hehl,Kyle G');
-    eq(pills(taskRow(task('e', '2026-11-20', []), '')).join(','), 'Nobody assigned');
-    // Each pill carries its own person's hue, not one hue for the row.
-    const two = taskRow(task('f', '2026-11-20', [kate, kyle]), '');
-    const hues = [...two.matchAll(/--who:(var\(--ph\d\))/g)].map((m) => m[1]);
-    eq(hues.length, 2, 'the pills are not individually coloured');
-    ok(hues[0] !== hues[1], 'both executors were painted the same colour');
+    // The base allows more than one executor and really does hold two or
+    // three on some rows, whatever it was set up to mean.
+    eq(names(taskRow(task('t', '2026-11-20', [kate, kyle])), 'cp-exec'),
+       'Katie Hehl,Kyle G', 'a second executor was dropped');
+
+    // No supporters is an empty column, not the word "none": most rows
+    // have none, and a column of "none" is a column of noise.
+    eq(names(taskRow(task('t', '2026-11-20', [kate])), 'cp-sup'), '',
+       'an empty supporters column is being filled in');
+    // Nobody executing it IS worth saying.
+    eq(names(taskRow(task('t', '2026-11-20', [])), 'cp-exec'), 'Nobody assigned');
+
+    const hues = [...both.matchAll(/--who:(var\(--ph\d\))/g)].map((m) => m[1]);
+    eq(hues.length, 2, 'the two roles are not individually coloured');
+    ok(hues[0] !== hues[1], 'the two roles were painted the same colour');
   });
 
   // The column order was asked for explicitly: date, how late, campaign,
@@ -2889,40 +2958,39 @@ describe('campaign board', () => {
   it('lays the row out in the order it was asked for, in every view', () => {
     const taskRow = rowMaker();
     const kate = { name: 'Katie Hehl', email: 'k@j.com' };
-    const html = taskRow(Object.assign(task('Staff web fixes', '2026-11-05', [kate]),
-                                       { campaign: 'Datmos Website Re-Launch (2026)' }), '');
-    const order = [...html.matchAll(/class="(cp-[a-z]+)/g)].map((m) => m[1]);
-    eq(order.join(' > '),
-       'cp-task > cp-when > cp-status > cp-camp > cp-what > cp-exs > cp-ex',
+    const kyle = { name: 'Kyle G', email: 'kyle@j.org' };
+    const html = taskRow(task('Staff web fixes', '2026-11-05', [kate],
+      { campaign: 'Datmos Website Re-Launch (2026)', supporters: [kyle], priority: true }));
+    eq([...html.matchAll(/class="(cp-[a-z]+)/g)].map((m) => m[1]).join(' > '),
+       'cp-task > cp-when > cp-status > cp-prio > cp-star > cp-camp > cp-what'
+       + ' > cp-exec > cp-ex > cp-sup > cp-ex',
        'the columns are not in the order they were asked for');
-    const cell = (c) => (new RegExp('class="' + c + '[^"]*"[^>]*>([^<]*)<').exec(html) || [])[1];
-    eq(cell('cp-when'), '5 Nov', 'the date column is carrying something other than the date');
-    eq(cell('cp-status'), '7d late', 'how late it is did not get its own column');
-    eq(cell('cp-camp'), 'Datmos Website Re-Launch (2026)');
-    eq(cell('cp-what'), 'Staff web fixes');
-    // The campaign is on the row in EVERY view now, grouped or flat -- the
-    // rows line up instead of having to be re-learnt per view.
-    const page = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)),
-                                           '..', 'public/assets/campaign.js'), 'utf8');
-    ok(!/showCamp/.test(page), 'the campaign column is still conditional on the view');
+    const one = (c) => (new RegExp('class="' + c + '[^"]*"[^>]*>([^<]*)<').exec(html) || [])[1];
+    eq(one('cp-when'), '5 Nov', 'the date column is carrying something other than the date');
+    eq(one('cp-status'), '7d late', 'the deadline\u2019s state did not get its own column');
+    eq(one('cp-camp'), 'Datmos Website Re-Launch (2026)');
+    eq(one('cp-what'), 'Staff web fixes');
 
-    // Out for review goes BEFORE the executors. Trailing them it took its
-    // width out of the row and dragged that row's executor column left,
-    // so the one reviewed task had its pills at an x of their own.
-    const reviewed = taskRow(Object.assign(
-      task('A Frame Story Signage', '2026-11-16', [kate]),
-      { campaign: 'Oyster Shooter Campaign (2026)', review: true }), '');
-    eq([...reviewed.matchAll(/class="(cp-[a-z]+)/g)].map((m) => m[1]).join(' > '),
-       'cp-task > cp-when > cp-status > cp-camp > cp-what > cp-rev > cp-exs > cp-ex',
-       'the review badge is not in front of the executors');
+    // Out for review goes BEFORE the crew columns. Trailing them it took
+    // its width out of the row and dragged them left on that row alone.
+    const reviewed = taskRow(task('A Frame', '2026-11-16', [kate], { review: true }));
+    const order = [...reviewed.matchAll(/class="(cp-[a-z]+)/g)].map((m) => m[1]);
+    ok(order.indexOf('cp-rev') < order.indexOf('cp-exec'),
+       'the review badge is not in front of the crew columns');
   });
 
-  // The column is headed "Days late". It says days late, and nothing else.
-  // It used to put "4d" on work due in four days, which under that heading
-  // reads as four days LATE -- the exact opposite of what it meant.
-  // One column, one direction. It used to be headed "Days late" and carry
-  // "4d" for work due in four days, which under that heading reads as four
-  // days LATE -- the opposite of what it meant.
+  // The star only appears when the box is ticked. A column of empty boxes
+  // is noise; a column with four stars in it is a list of what matters.
+  it('shows the priority star only on a priority task', () => {
+    const taskRow = rowMaker();
+    ok(/class="cp-star"/.test(taskRow(task('t', '2026-11-20', [], { priority: true }))),
+       'a priority task has no star');
+    const plain = taskRow(task('t', '2026-11-20', []));
+    ok(!/cp-star/.test(plain), 'an ordinary task was given a star');
+    // The cell is still there, so the column stays a column.
+    ok(/class="cp-prio"/.test(plain), 'the priority column vanishes on ordinary rows');
+  });
+
   it('reads the same way round for every value in the status column', () => {
     const taskRow = rowMaker();
     const st = (ymd) => (/class="cp-status[^"]*"[^>]*>([^<]*)</.exec(
@@ -3006,50 +3074,23 @@ describe('campaign board', () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
     const head = page.slice(page.indexOf('function headRow('), page.indexOf('function exPill('));
-    for (const label of ['Due date', 'Status', 'Campaign', 'Task description']) {
+    for (const label of ['Due date', 'Status', 'Campaign', 'Task description',
+                         'Executor', 'Supporters']) {
       ok(head.includes('>' + label + '<'), 'the header row does not name ' + label);
     }
     // The labels must sit in the same column classes as the data, or they
     // line up with nothing.
     eq([...head.matchAll(/class="(cp-[a-z]+)"/g)].map((m) => m[1]).join(' '),
-       'cp-when cp-status cp-camp cp-what cp-exs',
+       'cp-when cp-status cp-prio cp-camp cp-what cp-exec cp-sup',
        'the labels are not in the columns they label');
-    // On your own list the last column is not the people doing the work --
-    // it is already yours -- it is whoever is on it WITH you.
-    ok(/mine \? 'Supporters' : 'Executors'/.test(head),
-       'the last column does not change its name on a person\u2019s own list');
-    const flatCall = page.slice(page.indexOf('function drawFlat('), page.indexOf('function drawBoard('));
-    ok(/headRow\(mine\)/.test(flatCall),
-       'a person\u2019s list does not tell the header whose list it is');
-    const boardCall = page.slice(page.indexOf('function drawBoard('), page.indexOf('function drawStrip('));
-    ok(/headRow\(''\)/.test(boardCall), 'Overview is labelling its column Supporters');
-    // Called by the grouped view AND the flat one, not just whichever was
-    // looked at last.
-    ok(/headRow\(/.test(boardCall), 'Overview has no column labels');
-    ok(/headRow\(/.test(flatCall), 'a person\u2019s list has no column labels');
-  });
-
-  // The campaign card header carries the campaign's name and nothing else.
-  // The division chip, the task count and the "N this week" badge came over
-  // from Airtable because they were there, not because they were read.
-  it('keeps the campaign card header to the campaign', () => {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const page = fs.readFileSync(path.join(here, '..', 'public/assets/campaign.js'), 'utf8');
-    const board = page.slice(page.indexOf('function drawBoard('), page.indexOf('function drawStrip('));
-    const head = board.slice(board.indexOf('cp-phead'), board.indexOf('headRow('));
-    ok(/cp-pname/.test(head), 'the card lost its name too');
-    for (const [cls, what] of [['cp-div', 'the division chip'],
-                               ['cp-pcount', 'the task count'],
-                               ['cp-pflag', 'the this-week badge']]) {
-      ok(!head.includes(cls), what + ' is still on the campaign card');
-    }
-    // And nothing is still being counted for a badge that is not drawn.
-    ok(!/r\.late|r\.due|r\.division/.test(board),
-       'drawBoard still works out figures nothing shows');
-    // A person's own list keeps its count and late flag -- different header,
-    // and the one place that summary is the point.
+    // Priority is marked with the star rather than the word: "Priority" is
+    // wider than every cell under it.
+    ok(/cp-prio" title="Priority">\\u2605/.test(head) || /cp-prio[^>]*>\u2605/.test(head),
+       'the priority column is not marked');
     const flat = page.slice(page.indexOf('function drawFlat('), page.indexOf('function drawBoard('));
-    ok(/cp-pcount/.test(flat), 'a person\u2019s list lost its task count');
+    const board = page.slice(page.indexOf('function drawBoard('), page.indexOf('function drawStrip('));
+    ok(/headRow\(/.test(board), 'Overview has no column labels');
+    ok(/headRow\(/.test(flat), 'a person\u2019s list has no column labels');
   });
 
   // Overdue used to be a colour you had to already be looking for.

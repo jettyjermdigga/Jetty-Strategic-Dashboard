@@ -191,11 +191,17 @@ const CAMPAIGN_NAMES = { recA: 'Datmos Website Re-Launch (2026)', recB: 'Clam Ja
                          recC: 'Wholesale General Tasks (2026)',
                          recD: 'Promotions (General) (2026)' };
 function campaignBoard() {
+  // Shaped like the base: the first name is the Executor, anyone after it
+  // is a Supporter. Priority on every third row so the star column has
+  // something in it and something not in it.
+  const who2 = (list) => list.map(([n, e]) => ({ id: e, name: n, email: e }));
   const records = CAMPAIGN_RECS.map(([name, deadline, who, camp, div, review], i) => ({
     id: 'rec' + i,
     fields: {
       'Task Name': name, Deadline: deadline, Campaign: [camp],
-      Assignee: who.map(([n, e]) => ({ id: e, name: n, email: e })),
+      Executor: who2(who.slice(0, 1)),
+      'Supporter(s)': who2(who.slice(1)),
+      Priority: i % 3 === 0,
       'MKG Division': div ? [[div]] : [],
       'Out for Review': Boolean(review),
     },
@@ -972,15 +978,15 @@ for (const c of CASES) {
       const lefts = (sel) => [...new Set(rows.map((r) => left(r.querySelector(sel))))];
       const first = rows[0];
       return {
-        cols: ['.cp-when', '.cp-status', '.cp-camp', '.cp-what', '.cp-exs']
-          .map((sel) => left(first.querySelector(sel))),
-        exLefts: lefts('.cp-exs').length,
+        cols: ['.cp-when', '.cp-status', '.cp-prio', '.cp-camp', '.cp-what',
+               '.cp-exec', '.cp-sup'].map((sel) => left(first.querySelector(sel))),
+        exLefts: lefts('.cp-exec').length + lefts('.cp-sup').length,
         whatLefts: lefts('.cp-what').length,
         campLefts: lefts('.cp-camp').length,
         // The tightest row on the page: if ANY task name runs up against
         // the executors, the column is too narrow.
         room: Math.round(Math.min(...rows.map((r) =>
-          left(r.querySelector('.cp-exs')) - textEnd(r)))),
+          left(r.querySelector('.cp-exec')) - textEnd(r)))),
         // Geometry cannot see this one: without clipping a long name does
         // not move the pills, it paints straight over them, and every box
         // still measures exactly where it should.
@@ -996,7 +1002,9 @@ for (const c of CASES) {
       const ordered = got.cols.every((x, i) => i === 0 || x > got.cols[i - 1]);
       // A column is a column only ACROSS rows. On one row a content-width
       // cell looks identical to a fixed one; the next row gives it away.
-      const lined = got.exLefts === 1 && got.whatLefts === 1 && got.campLefts === 1;
+      // Two crew columns now: each must hold its own x across rows, so
+      // the pair sums to 2 when both are straight.
+      const lined = got.exLefts === 2 && got.whatLefts === 1 && got.campLefts === 1;
       // 18, not 10. The tightest real row measures 25px; the 14px margin
       // in front of the column is most of that, and a floor of 10 let the
       // margin be deleted without a word.
@@ -1004,7 +1012,7 @@ for (const c of CASES) {
       console.log('  deadline row: ' + got.rows + ' rows'
         + ', ' + (ordered ? 'five columns left to right'
                           : 'COLUMNS OUT OF ORDER: ' + got.cols.join(','))
-        + ', ' + (lined ? 'executors hold one column'
+        + ', ' + (lined ? 'crew columns hold their x'
                         : 'RAGGED ACROSS ROWS: ' + got.exLefts + ' executor starts, '
                           + got.whatLefts + ' task starts, ' + got.campLefts + ' campaign starts')
         + ', ' + (roomy ? 'room before them (' + got.room + 'px at the tightest)'
