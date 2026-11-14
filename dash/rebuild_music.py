@@ -94,7 +94,12 @@ def youtube_id(url):
 
 
 def airtable(token, offset=None):
-    q = [("pageSize", "100")]
+    # returnFieldsByFieldId is not optional here. Airtable accepts field IDs
+    # in the fields[] selector but keys the RESPONSE by field NAME unless it
+    # is asked otherwise -- so every lookup by ID comes back empty and the
+    # run reports a table with nothing in it. The importer this replaces had
+    # the same bug and was never run, so it was never found.
+    q = [("pageSize", "100"), ("returnFieldsByFieldId", "true")]
     for f in FIELDS:
         q.append(("fields[]", f))
     if offset:
@@ -154,7 +159,21 @@ def main():
     print("Of those, %d are MUSIC MONDAY (the rest are BUZZ, social, PR, blog, events)."
           % len(music))
     if not music:
-        print("::error::No MUSIC MONDAY rows matched. The Type choice may have changed.")
+        print("::error::No MUSIC MONDAY rows matched.")
+        # Say what WAS there. A bare count of zero cannot tell the difference
+        # between a renamed choice and a response keyed the other way.
+        sample = next((r for r in rows if r.get("fields")), None)
+        if sample:
+            print("A record's field keys look like: %s"
+                  % ", ".join(sorted(sample.get("fields", {}).keys())))
+            print("Expected the Type field at %s. If those are names rather "
+                  "than fld... ids, returnFieldsByFieldId is not being sent."
+                  % F_TYPE)
+        seen = {}
+        for r in rows:
+            seen[text(r.get("fields", {}).get(F_TYPE))] = seen.get(
+                text(r.get("fields", {}).get(F_TYPE)), 0) + 1
+        print("Types seen: %s" % sorted(seen.items(), key=lambda kv: -kv[1])[:8])
         sys.exit(1)
 
     # One row per Monday. Where Airtable has more than one, the one with an
