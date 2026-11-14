@@ -96,6 +96,17 @@ BUDGET_USERS = "jeremy@jettylife.com"
 # Left empty it falls back to DASH_ADMINS.
 MUSIC_PICKERS = "jeremy@jettylife.com"
 
+# SLACK_WEBHOOK_URL is NOT here, deliberately. It is a credential, and
+# everything under [vars] is overwritten on every deploy -- so it lives as a
+# Worker Secret in the Cloudflare dashboard, where a deploy cannot clear it.
+# Set it and the dash tells the marketing channel each time a pick is posted.
+# Leave it unset and posting still works; the reply just says the channel was
+# not told, rather than pretending it was.
+#
+# This replaces the "Music Monday Selection" Airtable automation, which fired
+# on a ticked checkbox and can never fire again once picks stop going into
+# Airtable.
+
 # Who may open the Campaign board. Its own list rather than the budget's:
 # what is on Marketing's plate is not next year's margin, and the people who
 # need it are a different set.

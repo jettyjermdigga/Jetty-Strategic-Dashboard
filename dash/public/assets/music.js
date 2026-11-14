@@ -118,7 +118,8 @@
 
   function today() { return new Date().toISOString().slice(0, 10); }
 
-  var ALL = [];
+  var ALL = [];    // what the archive shows
+  var EVERY = [];  // every pick the server holds, future ones included
   var CAN = false;
 
 
@@ -132,6 +133,27 @@
   function opt(d) {
     return '<button type="button" class="mu-gap" data-d="' + esc(d) + '">'
       + esc(nice(d)) + '</button>';
+  }
+
+  // A week already filed means this post is a correction, and a correction
+  // must not ping the channel again. Checked against EVERY rather than the
+  // archive: next Monday's pick is filed but deliberately not on show yet.
+  function filed(date) {
+    for (var i = 0; i < EVERY.length; i++) {
+      if (EVERY[i].date === date && EVERY[i].artist) return true;
+    }
+    return false;
+  }
+
+  function syncNotify() {
+    var box = $('#f-tell');
+    var d = $('#f-date').value;
+    if (!box) return;
+    var correction = filed(d);
+    box.checked = !correction;
+    $('#f-tell-l').lastChild.nodeValue = correction
+      ? ' Tell Slack (this week is already filed \u2014 a correction)'
+      : ' Tell Slack';
   }
 
   function postHtml(missing) {
@@ -159,6 +181,8 @@
       + '</div>'
       + '<div class="mu-post-go">'
         + '<button id="f-go" type="submit" class="mu-save">Post it</button>'
+        + '<label id="f-tell-l" class="mu-tell">'
+          + '<input id="f-tell" type="checkbox" checked> Tell Slack</label>'
         + '<span id="f-say" class="mu-say" role="status"></span>'
       + '</div>'
     + '</form>';
@@ -205,7 +229,8 @@
   function absorb(d) {
     CAN = Boolean(d.canPick);
     var t = today();
-    ALL = (d.picks || []).filter(function (p) { return p.date <= t && p.artist; });
+    EVERY = d.picks || [];
+    ALL = EVERY.filter(function (p) { return p.date <= t && p.artist; });
     var now = ALL[0] || null;
     $('#now').innerHTML = nowHtml(now);
     $('#now').hidden = !now;
@@ -213,6 +238,7 @@
       var keep = $('#f-by') ? $('#f-by').value : '';
       $('#post').innerHTML = postHtml(d.missing || []);
       $('#f-by').value = keep || store('mu-by') || '';
+      syncNotify();
     }
     paint();
     if (ALL.length) {
@@ -249,6 +275,7 @@
         song: $('#f-song').value,
         by: $('#f-by').value,
         watch: $('#f-watch').value,
+        notify: $('#f-tell') ? $('#f-tell').checked : false,
       }),
     })
       .then(function (r) {
@@ -288,7 +315,12 @@
       })
       .then(function (b) {
         absorb(b);
-        say('Posted.');
+        // Named, not assumed. A pick that went up while the channel was
+        // never told is the failure this whole move was meant to prevent,
+        // so it is said out loud rather than left to be discovered.
+        if (b.slack && b.slack.told) say('Posted, and Slack told.');
+        else if (b.slack && b.slack.why) say('Posted. Slack was NOT told: ' + b.slack.why, true);
+        else say('Posted.');
       })
       .catch(function (err) { say(err.message, true); })
       .then(function () { if ($('#f-go')) $('#f-go').disabled = false; });
@@ -333,6 +365,7 @@
 
   document.addEventListener('input', function (e) {
     if (e.target && e.target.id === 'q') paint();
+    if (e.target && e.target.id === 'f-date') syncNotify();
   });
 
   document.addEventListener('submit', function (e) {
@@ -344,6 +377,7 @@
     var b = e.target && e.target.closest ? e.target.closest('.mu-gap') : null;
     if (!b) return;
     $('#f-date').value = b.getAttribute('data-d');
+    syncNotify();
     $('#f-artist').focus();
   });
 })();

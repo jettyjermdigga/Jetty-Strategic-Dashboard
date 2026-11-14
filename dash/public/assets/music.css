@@ -154,3 +154,12 @@
   .mu-f{grid-template-columns:1fr 1fr}
   .mu-l-w,.mu-l-p{grid-column:1/3}
 }
+
+/* Whether the channel gets told. Beside the button rather than up in the
+   fields, because it is a decision about this post, not a property of the
+   pick -- and it flips itself when the date names a week already filed. */
+.mu-tell{
+  display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+  font-family:var(--body);font-size:12.5px;opacity:.85;
+}
+.mu-tell input{width:14px;height:14px;accent-color:var(--primary);cursor:pointer}

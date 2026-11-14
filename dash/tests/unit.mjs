@@ -10,7 +10,7 @@ import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker
 import { canonicalTarget } from '../worker/canon.js';
 import {
   cleanPick, cleanDate as mDate, mondayOf, youtubeId, isYouTube,
-  weekLabel, missingMondays,
+  weekLabel, missingMondays, slackText, niceDate, SLACK_TAGS,
 } from '../worker/music.js';
 import {
   rows as budgetRows, value, spread, summary, csv, cleanLine, cleanYear,
@@ -3387,6 +3387,107 @@ describe('Music Monday: the page and the worker agree', () => {
       ok(route[1].split('|').includes(ext), ext + ' can be uploaded but not served back');
     }
     ok(page.includes("'image/webp'"), 'the page no longer shrinks to webp');
+  });
+});
+
+
+describe('Music Monday: telling the channel', () => {
+  const pick = {
+    date: '2026-11-16', artist: 'Generationals', song: 'Carried Away',
+    by: 'Jerm DeFilippis', youtube: 'abcdefghijk', video: '',
+  };
+
+  it('tags the same three people the Airtable automation did', () => {
+    const t = slackText(pick, '2026-11-16', 'www.jettydash.com');
+    for (const u of ['U0BPU0W4BCK', 'U05R0TN7X8Q', 'UTX7Q0P7S']) {
+      ok(t.includes('<@' + u + '>'), 'stopped notifying ' + u);
+    }
+    eq(SLACK_TAGS.length, 3);
+  });
+
+  it('names the Monday when the pick is filed ahead of it', () => {
+    // The point of the warning is that it arrives EARLY, so the old
+    // "this week's" was wrong most of the times it was sent.
+    ok(slackText(pick, '2026-11-09', 'h').includes("Monday 16 Nov's"));
+    ok(!slackText(pick, '2026-11-09', 'h').includes("This week's"));
+  });
+
+  it("says this week's only when it is this week", () => {
+    ok(slackText(pick, '2026-11-16', 'h').includes("This week's"));
+    ok(slackText(pick, '2026-11-20', 'h').includes("This week's"));  // same week
+    ok(slackText(pick, '2026-11-23', 'h').includes("Monday 16 Nov's"));
+  });
+
+  it('keeps the song, the artist and the thanks', () => {
+    const t = slackText(pick, '2026-11-16', 'h');
+    ok(t.includes('*Carried Away*'));
+    ok(t.includes('*Generationals*'));
+    ok(t.includes('Thanks to *Jerm DeFilippis*'));
+  });
+
+  it('leaves the thanks out rather than thanking nobody', () => {
+    const t = slackText({ ...pick, by: '' }, '2026-11-16', 'h');
+    ok(!t.includes('Thanks to'));
+    ok(t.includes('*Carried Away*'));
+  });
+
+  it('builds a watchable link from the id, or uses the other one', () => {
+    ok(slackText(pick, '2026-11-16', 'h')
+      .includes('https://www.youtube.com/watch?v=abcdefghijk'));
+    const sc = { ...pick, youtube: '', video: 'https://soundcloud.com/a/b' };
+    ok(slackText(sc, '2026-11-16', 'h').includes('https://soundcloud.com/a/b'));
+    const none = { ...pick, youtube: '', video: '' };
+    ok(!slackText(none, '2026-11-16', 'h').includes('*Video*'));
+  });
+
+  it('points at the dash rather than at a picture Slack cannot fetch', () => {
+    // The artwork is in R2 behind Access now. A raw link to it would not
+    // unfurl and would read as broken, so the message links the page.
+    const t = slackText(pick, '2026-11-16', 'www.jettydash.com');
+    ok(t.includes('https://www.jettydash.com/music.html'));
+    ok(!/music\/photo\//.test(t));
+  });
+
+  it('writes a date the way a person says it', () => {
+    eq(niceDate('2026-11-16'), '16 Nov');
+    eq(niceDate('2026-01-05'), '5 Jan');
+    eq(niceDate(''), '');
+  });
+});
+
+describe('Music Monday: when the channel gets told', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
+  const page = fs.readFileSync(path.join(HERE, '..', 'public/assets/music.js'), 'utf8');
+
+  it('works out whether the week was already filed BEFORE saving it', () => {
+    // After the save every post looks like a correction, so the channel
+    // would never be told about anything again.
+    const before = idx.indexOf('const before = await readMusic');
+    const save = idx.indexOf('await savePick(');
+    ok(before > 0 && save > 0, 'the save path no longer looks like this');
+    ok(before < save, 'freshness is read after the save, when it is always false');
+  });
+
+  it('never lets a Slack failure fail the post', () => {
+    const fn = idx.slice(idx.indexOf('async function tellSlack'),
+                         idx.indexOf('async function music('));
+    ok(/try\s*{/.test(fn), 'tellSlack can throw, which would 500 a saved pick');
+    ok(/catch/.test(fn), 'tellSlack has no catch');
+    ok(!/throw/.test(fn), 'tellSlack rethrows, which would 500 a saved pick');
+  });
+
+  it('tells the page when Slack was not told, instead of saying "Posted."', () => {
+    ok(page.includes('Slack was NOT told'),
+      'a pick can go up with the channel silent and nobody is told');
+  });
+
+  it('decides the default against every pick, not just the visible ones', () => {
+    // Next Monday is filed but filtered out of the archive until its date.
+    // Checking the visible list would call it fresh and ping twice.
+    const fn = page.slice(page.indexOf('function filed('), page.indexOf('function syncNotify'));
+    ok(fn.includes('EVERY['), 'filed() reads the archive, not every pick');
+    ok(!fn.includes('ALL['), 'filed() reads the visible archive, which omits future picks');
   });
 });
 

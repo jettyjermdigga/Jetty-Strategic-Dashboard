@@ -141,3 +141,55 @@ export function missingMondays(have, today, weeks = 8) {
   }
   return out;
 }
+
+// ── Telling Slack ───────────────────────────────────────────────────────
+//
+// This used to be an Airtable automation: a record typed MUSIC MONDAY with
+// a checkbox ticked fired a message to the marketing channel. Once picks
+// are posted on the dash, nothing touches Airtable any more and that
+// automation would simply never fire again -- the archive would look
+// perfect and the team would quietly stop being told.
+//
+// So the message moves here, worded as closely to the original as the move
+// allows. The differences, both deliberate:
+//
+//   - "This week's" only when it IS this week. Picks are filed weeks
+//     ahead, which is the whole point of the warning, and the old message
+//     said "this week's" whenever the box happened to get ticked.
+//   - The artist photo is a link to the dash rather than to the picture.
+//     The picture lives in R2 behind Access now, so Slack cannot fetch it
+//     to unfurl and a raw link would just look broken.
+
+/** Who gets tagged. The three from the Airtable automation, kept as ids so
+ *  a display-name change in Slack cannot quietly stop notifying somebody. */
+export const SLACK_TAGS = ['U0BPU0W4BCK', 'U05R0TN7X8Q', 'UTX7Q0P7S'];
+
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+             'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** 16 Nov, built from the parts rather than through Date, which would shift
+ *  the day backwards for anyone west of UTC. */
+export function niceDate(d) {
+  const p = String(d || '').split('-');
+  if (p.length !== 3) return String(d || '');
+  return Number(p[2]) + ' ' + (MON[Number(p[1]) - 1] || '');
+}
+
+/** The message, as the channel will read it. */
+export function slackText(pick, today, host) {
+  const who = SLACK_TAGS.map((u) => '<@' + u + '>').join(' ');
+  const when = weekLabel(pick.date, today) === 'This week'
+    ? "This week's"
+    : 'Monday ' + niceDate(pick.date) + "'s";
+
+  let out = who + '  ' + when + ' *Music Monday* is *' + (pick.song || '?')
+    + '* by *' + pick.artist + '*.';
+  if (pick.by) out += '  Thanks to *' + pick.by + '* for picking this one!';
+
+  const watch = pick.youtube
+    ? 'https://www.youtube.com/watch?v=' + pick.youtube
+    : (pick.video || '');
+  if (watch) out += '\n\n*Video*: ' + watch;
+  if (host) out += '\n*On the dash*: https://' + host + '/music.html';
+  return out;
+}
