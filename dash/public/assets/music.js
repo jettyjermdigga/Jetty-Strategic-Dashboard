@@ -263,6 +263,13 @@
     if (go.disabled) return;
     var date = $('#f-date').value;
     var file = $('#f-photo').files[0];
+    // Held here rather than read off the last reply in the chain. The
+    // picture upload answers with its OWN body, which has no slack in it,
+    // so reading the outcome off the end swallowed it whenever a picture
+    // was attached -- reporting a bare "Posted." for a told channel and an
+    // untold one alike.
+    var asked = $('#f-tell') ? $('#f-tell').checked : false;
+    var told = null;
     go.disabled = true;
     say('Posting\u2026');
 
@@ -275,7 +282,7 @@
         song: $('#f-song').value,
         by: $('#f-by').value,
         watch: $('#f-watch').value,
-        notify: $('#f-tell') ? $('#f-tell').checked : false,
+        notify: asked,
       }),
     })
       .then(function (r) {
@@ -290,6 +297,7 @@
       // therefore loses the picture, never the pick.
       .then(function (b) {
         store('mu-by', $('#f-by').value);
+        told = b.slack || null;
         if (!file) return b;
         say('Posted. Sending the picture\u2026');
         return shrink(file)
@@ -317,10 +325,13 @@
         absorb(b);
         // Named, not assumed. A pick that went up while the channel was
         // never told is the failure this whole move was meant to prevent,
-        // so it is said out loud rather than left to be discovered.
-        if (b.slack && b.slack.told) say('Posted, and Slack told.');
-        else if (b.slack && b.slack.why) say('Posted. Slack was NOT told: ' + b.slack.why, true);
-        else say('Posted.');
+        // so it is said out loud rather than left to be discovered -- and
+        // "I did not ask" is said differently from "I asked and it failed",
+        // because a bare "Posted." for both is a guessing game.
+        if (told && told.told) say('Posted, and Slack told.');
+        else if (told && told.why) say('Posted. Slack was NOT told: ' + told.why, true);
+        else if (!asked) say('Posted. Slack not told \u2014 the box was unticked.');
+        else say('Posted. Slack said nothing at all, which should not happen.', true);
       })
       .catch(function (err) { say(err.message, true); })
       .then(function () { if ($('#f-go')) $('#f-go').disabled = false; });

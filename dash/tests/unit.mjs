@@ -3549,6 +3549,23 @@ describe('Music Monday: when the channel gets told', () => {
       'a pick can go up with the channel silent and nobody is told');
   });
 
+
+  it('keeps the Slack outcome when a picture is attached too', () => {
+    // The picture upload answers with its own body, which carries no slack.
+    // Reading the outcome off the end of the chain therefore swallowed it
+    // whenever a picture went up -- a told channel and an untold one both
+    // reported a bare "Posted."
+    const fn = page.slice(page.indexOf('function post(e)'), page.indexOf('document.addEventListener'));
+    ok(/told = b\.slack/.test(fn), 'the outcome is not captured before the picture step');
+    ok(!/if \(b\.slack && b\.slack\.told\)/.test(fn),
+      'the outcome is still read off the last reply, which may be the picture\'s');
+  });
+
+  it('says "I did not ask" differently from "I asked and it failed"', () => {
+    ok(page.includes('the box was unticked'),
+      'an unticked box and a Slack failure both report the same thing');
+  });
+
   it('decides the default against every pick, not just the visible ones', () => {
     // Next Monday is filed but filtered out of the archive until its date.
     // Checking the visible list would call it fresh and ping twice.
