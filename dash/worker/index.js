@@ -53,7 +53,8 @@ import {
   cleanTile, cleanPerson, cleanKey, saveTile, deleteTile, savePerson, deletePerson,
   saveCategory, deleteCategory, saveGroup, deleteGroup,
 } from './store.js';
-import { cleanPick, cleanDate, missingMondays, slackText } from './music.js';
+import { cleanPick, cleanDate, missingMondays, tellSlack } from './music.js';
+import { postToChannel } from './slack.js';
 
 // UTC, the same clock the stored dates are in.
 const today = () => new Date().toISOString().slice(0, 10);
@@ -248,33 +249,6 @@ async function me(request, env, who) {
 // nothing here is sent to a request that did not come through it -- the
 // same rule /api/me follows.
 
-// Telling the channel a pick is up.
-//
-// Never fatal. The pick is already in the database by the time this runs,
-// and a Slack outage must not make a successful post look like a failure
-// -- somebody who thinks it failed posts it again. The reply says what
-// happened either way, so a silent channel is never a mystery.
-async function tellSlack(env, pick) {
-  const hook = env.SLACK_WEBHOOK_URL || '';
-  if (!hook) return { told: false, why: 'No Slack webhook is configured.' };
-  try {
-    const res = await fetch(hook, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        text: slackText(pick, today(), env.CANONICAL_HOST || ''),
-        unfurl_links: true,
-      }),
-    });
-    if (!res.ok) {
-      return { told: false, why: 'Slack answered ' + res.status + '.' };
-    }
-    return { told: true };
-  } catch (err) {
-    return { told: false, why: 'Slack could not be reached.' };
-  }
-}
-
 async function music(request, env, url, who) {
   if (who.accessConfigured && !who.verified) {
     return json({ picks: [], canPick: false, reason: who.reason || '' });
@@ -319,7 +293,15 @@ async function music(request, env, url, who) {
 
     // The page asks; it defaults to on for a new week and off for a
     // correction, so a fixed typo does not ping the channel again.
-    const slack = body.notify ? await tellSlack(env, out.row) : { told: false };
+    // Through the same bot token the calendar posts with, not a webhook of
+    // its own: the Slack app already exists, and a second credential for
+    // the same workspace is one more thing to rotate and to forget.
+    const slack = body.notify
+      ? await tellSlack({
+        token: env.SLACK_BOT_TOKEN, channel: env.MUSIC_SLACK_CHANNEL,
+        tags: env.MUSIC_SLACK_TAGS, host: env.CANONICAL_HOST || '', today: today(),
+      }, out.row, postToChannel)
+      : { told: false };
 
     const picks = await readMusic(env.DB);
     return json({

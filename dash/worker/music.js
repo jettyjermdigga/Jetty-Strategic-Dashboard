@@ -160,9 +160,21 @@ export function missingMondays(have, today, weeks = 8) {
 //     The picture lives in R2 behind Access now, so Slack cannot fetch it
 //     to unfurl and a raw link would just look broken.
 
-/** Who gets tagged. The three from the Airtable automation, kept as ids so
- *  a display-name change in Slack cannot quietly stop notifying somebody. */
-export const SLACK_TAGS = ['U0BPU0W4BCK', 'U05R0TN7X8Q', 'UTX7Q0P7S'];
+/** Who gets tagged, read from config rather than written into the code.
+ *
+ *  Slack member ids, not handles: a display-name change must not quietly
+ *  stop notifying somebody. Who needs telling is a marketing decision that
+ *  will change without any code needing to, so it lives in wrangler.toml
+ *  where editing it is a push with a diff rather than an edit here.
+ */
+export function slackTags(raw) {
+  return String(raw == null ? '' : raw)
+    .split(',').map((s) => s.trim())
+    // A Slack member id is U or W and then alphanumerics. Anything else is
+    // a handle somebody typed by mistake, and <@jerm> notifies nobody at
+    // all -- it renders as literal text and looks like it worked.
+    .filter((s) => /^[UW][A-Z0-9]{6,}$/i.test(s));
+}
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
              'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -176,13 +188,13 @@ export function niceDate(d) {
 }
 
 /** The message, as the channel will read it. */
-export function slackText(pick, today, host) {
-  const who = SLACK_TAGS.map((u) => '<@' + u + '>').join(' ');
+export function slackText(pick, today, host, tags) {
+  const who = slackTags(tags).map((u) => '<@' + u + '>').join(' ');
   const when = weekLabel(pick.date, today) === 'This week'
     ? "This week's"
     : 'Monday ' + niceDate(pick.date) + "'s";
 
-  let out = who + '  ' + when + ' *Music Monday* is *' + (pick.song || '?')
+  let out = (who ? who + '  ' : '') + when + ' *Music Monday* is *' + (pick.song || '?')
     + '* by *' + pick.artist + '*.';
   if (pick.by) out += '  Thanks to *' + pick.by + '* for picking this one!';
 
@@ -192,4 +204,27 @@ export function slackText(pick, today, host) {
   if (watch) out += '\n\n*Video*: ' + watch;
   if (host) out += '\n*On the dash*: https://' + host + '/music.html';
   return out;
+}
+
+/** Tell the channel a pick is up, and say plainly what happened.
+ *
+ *  The posting itself is injected rather than reached for, so this can be
+ *  run in Node against a Slack that succeeds, refuses, or is not there at
+ *  all. Tests that only read the source for a try/catch pass whether or
+ *  not the catch does anything useful -- two of mine did exactly that.
+ *
+ *  Never throws. The pick is in the database before this runs, and a Slack
+ *  outage must not make a saved pick look like a failed one: somebody who
+ *  thinks a post failed posts it again.
+ */
+export async function tellSlack(cfg, pick, post) {
+  const c = cfg || {};
+  if (!c.token) return { told: false, why: 'This Worker has no SLACK_BOT_TOKEN set.' };
+  if (!c.channel) return { told: false, why: 'No MUSIC_SLACK_CHANNEL is configured.' };
+  try {
+    await post(c.token, c.channel, slackText(pick, c.today, c.host, c.tags));
+    return { told: true };
+  } catch (err) {
+    return { told: false, why: (err && err.message) || 'Slack could not be reached.' };
+  }
 }

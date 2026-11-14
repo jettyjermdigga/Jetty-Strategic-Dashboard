@@ -10,7 +10,7 @@ import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker
 import { canonicalTarget } from '../worker/canon.js';
 import {
   cleanPick, cleanDate as mDate, mondayOf, youtubeId, isYouTube,
-  weekLabel, missingMondays, slackText, niceDate, SLACK_TAGS,
+  weekLabel, missingMondays, slackText, niceDate, slackTags, tellSlack,
 } from '../worker/music.js';
 import {
   rows as budgetRows, value, spread, summary, csv, cleanLine, cleanYear,
@@ -3397,53 +3397,66 @@ describe('Music Monday: telling the channel', () => {
     by: 'Jerm DeFilippis', youtube: 'abcdefghijk', video: '',
   };
 
-  it('tags the same three people the Airtable automation did', () => {
-    const t = slackText(pick, '2026-11-16', 'www.jettydash.com');
-    for (const u of ['U0BPU0W4BCK', 'U05R0TN7X8Q', 'UTX7Q0P7S']) {
-      ok(t.includes('<@' + u + '>'), 'stopped notifying ' + u);
-    }
-    eq(SLACK_TAGS.length, 3);
+  const TAGS = 'U0BPU0W4BCK,U05R0TN7X8Q,UTX7Q0P7S';
+
+  it('mentions whoever the config names', () => {
+    const t = slackText(pick, '2026-11-16', 'www.jettydash.com', TAGS);
+    for (const u of TAGS.split(',')) ok(t.includes('<@' + u + '>'), 'lost ' + u);
+  });
+
+  it('drops a handle somebody typed where an id belongs', () => {
+    // <@jerm> renders as literal text and notifies nobody, while looking
+    // exactly like it worked. Better to drop it than to ship a dead ping.
+    eq(slackTags('U0BPU0W4BCK, jerm, @katie, U05R0TN7X8Q').join(','),
+      'U0BPU0W4BCK,U05R0TN7X8Q');
+    eq(slackTags('').length, 0);
+    eq(slackTags(undefined).length, 0);
+  });
+
+  it('still reads as a sentence when nobody is configured', () => {
+    const t = slackText(pick, '2026-11-16', 'h', '');
+    ok(t.startsWith("This week's"), 'left a stray gap where the mentions were');
   });
 
   it('names the Monday when the pick is filed ahead of it', () => {
     // The point of the warning is that it arrives EARLY, so the old
     // "this week's" was wrong most of the times it was sent.
-    ok(slackText(pick, '2026-11-09', 'h').includes("Monday 16 Nov's"));
-    ok(!slackText(pick, '2026-11-09', 'h').includes("This week's"));
+    ok(slackText(pick, '2026-11-09', 'h', TAGS).includes("Monday 16 Nov's"));
+    ok(!slackText(pick, '2026-11-09', 'h', TAGS).includes("This week's"));
   });
 
   it("says this week's only when it is this week", () => {
-    ok(slackText(pick, '2026-11-16', 'h').includes("This week's"));
-    ok(slackText(pick, '2026-11-20', 'h').includes("This week's"));  // same week
-    ok(slackText(pick, '2026-11-23', 'h').includes("Monday 16 Nov's"));
+    ok(slackText(pick, '2026-11-16', 'h', TAGS).includes("This week's"));
+    ok(slackText(pick, '2026-11-20', 'h', TAGS).includes("This week's"));  // same week
+    ok(slackText(pick, '2026-11-23', 'h', TAGS).includes("Monday 16 Nov's"));
   });
 
   it('keeps the song, the artist and the thanks', () => {
-    const t = slackText(pick, '2026-11-16', 'h');
+    const t = slackText(pick, '2026-11-16', 'h', TAGS);
     ok(t.includes('*Carried Away*'));
     ok(t.includes('*Generationals*'));
     ok(t.includes('Thanks to *Jerm DeFilippis*'));
   });
 
   it('leaves the thanks out rather than thanking nobody', () => {
-    const t = slackText({ ...pick, by: '' }, '2026-11-16', 'h');
+    const t = slackText({ ...pick, by: '' }, '2026-11-16', 'h', TAGS);
     ok(!t.includes('Thanks to'));
     ok(t.includes('*Carried Away*'));
   });
 
   it('builds a watchable link from the id, or uses the other one', () => {
-    ok(slackText(pick, '2026-11-16', 'h')
+    ok(slackText(pick, '2026-11-16', 'h', TAGS)
       .includes('https://www.youtube.com/watch?v=abcdefghijk'));
     const sc = { ...pick, youtube: '', video: 'https://soundcloud.com/a/b' };
-    ok(slackText(sc, '2026-11-16', 'h').includes('https://soundcloud.com/a/b'));
+    ok(slackText(sc, '2026-11-16', 'h', TAGS).includes('https://soundcloud.com/a/b'));
     const none = { ...pick, youtube: '', video: '' };
-    ok(!slackText(none, '2026-11-16', 'h').includes('*Video*'));
+    ok(!slackText(none, '2026-11-16', 'h', TAGS).includes('*Video*'));
   });
 
   it('points at the dash rather than at a picture Slack cannot fetch', () => {
     // The artwork is in R2 behind Access now. A raw link to it would not
     // unfurl and would read as broken, so the message links the page.
-    const t = slackText(pick, '2026-11-16', 'www.jettydash.com');
+    const t = slackText(pick, '2026-11-16', 'www.jettydash.com', TAGS);
     ok(t.includes('https://www.jettydash.com/music.html'));
     ok(!/music\/photo\//.test(t));
   });
@@ -3460,6 +3473,22 @@ describe('Music Monday: when the channel gets told', () => {
   const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
   const page = fs.readFileSync(path.join(HERE, '..', 'public/assets/music.js'), 'utf8');
 
+
+  it('posts with the same call the calendar uses', () => {
+    // Duplicated, not imported -- separate Workers, separate bundles. The
+    // two copies are pinned so a fix to one cannot silently miss the other.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const mine = fs.readFileSync(path.join(here, '..', 'worker', 'slack.js'), 'utf8');
+    const theirs = fs.readFileSync(
+      path.join(here, '..', '..', 'calendar', 'worker', 'slack.js'), 'utf8');
+    const grab = (src) => {
+      const at = src.indexOf('export async function postToChannel');
+      ok(at > 0, 'postToChannel is gone');
+      return src.slice(at, src.indexOf('\n}', at) + 2).replace(/\s+/g, ' ');
+    };
+    eq(grab(mine), grab(theirs));
+  });
+
   it('works out whether the week was already filed BEFORE saving it', () => {
     // After the save every post looks like a correction, so the channel
     // would never be told about anything again.
@@ -3469,12 +3498,50 @@ describe('Music Monday: when the channel gets told', () => {
     ok(before < save, 'freshness is read after the save, when it is always false');
   });
 
-  it('never lets a Slack failure fail the post', () => {
-    const fn = idx.slice(idx.indexOf('async function tellSlack'),
-                         idx.indexOf('async function music('));
-    ok(/try\s*{/.test(fn), 'tellSlack can throw, which would 500 a saved pick');
-    ok(/catch/.test(fn), 'tellSlack has no catch');
-    ok(!/throw/.test(fn), 'tellSlack rethrows, which would 500 a saved pick');
+  const CFG = {
+    token: 'xoxb-test', channel: 'C123', tags: 'U0BPU0W4BCK',
+    host: 'www.jettydash.com', today: '2026-11-16',
+  };
+  const PICK = { date: '2026-11-16', artist: 'Generationals', song: 'Carried Away' };
+
+  it('reports a Slack refusal as a failure, not as success', async () => {
+    const out = await tellSlack(CFG, PICK, async () => {
+      throw new Error('chat.postMessage: channel_not_found');
+    });
+    eq(out.told, false);
+    ok(/channel_not_found/.test(out.why), 'lost the reason Slack gave');
+  });
+
+  it('never throws, because the pick is already saved by then', async () => {
+    const out = await tellSlack(CFG, PICK, async () => { throw new Error('boom'); });
+    eq(out.told, false);   // got here at all == it did not throw
+  });
+
+  it('says so rather than claiming success when there is no token', async () => {
+    let called = false;
+    const out = await tellSlack({ ...CFG, token: '' }, PICK,
+      async () => { called = true; });
+    eq(out.told, false);
+    eq(called, false, 'tried to post to Slack with no token');
+    ok(/SLACK_BOT_TOKEN/.test(out.why));
+  });
+
+  it('says so when no channel is configured', async () => {
+    const out = await tellSlack({ ...CFG, channel: '' }, PICK, async () => {});
+    eq(out.told, false);
+    ok(/MUSIC_SLACK_CHANNEL/.test(out.why));
+  });
+
+  it('posts the message to the configured channel and reports success', async () => {
+    let got = null;
+    const out = await tellSlack(CFG, PICK, async (tok, ch, text) => {
+      got = { tok, ch, text };
+    });
+    eq(out.told, true);
+    eq(got.tok, 'xoxb-test');
+    eq(got.ch, 'C123');
+    ok(got.text.includes('<@U0BPU0W4BCK>'));
+    ok(got.text.includes('*Carried Away*'));
   });
 
   it('tells the page when Slack was not told, instead of saying "Posted."', () => {

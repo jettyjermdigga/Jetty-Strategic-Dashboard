@@ -96,16 +96,37 @@ BUDGET_USERS = "jeremy@jettylife.com"
 # Left empty it falls back to DASH_ADMINS.
 MUSIC_PICKERS = "jeremy@jettylife.com"
 
-# SLACK_WEBHOOK_URL is NOT here, deliberately. It is a credential, and
-# everything under [vars] is overwritten on every deploy -- so it lives as a
-# Worker Secret in the Cloudflare dashboard, where a deploy cannot clear it.
-# Set it and the dash tells the marketing channel each time a pick is posted.
-# Leave it unset and posting still works; the reply just says the channel was
-# not told, rather than pretending it was.
+# Telling Slack a Music Monday pick is up.
 #
-# This replaces the "Music Monday Selection" Airtable automation, which fired
-# on a ticked checkbox and can never fire again once picks stop going into
-# Airtable.
+# SLACK_BOT_TOKEN is NOT here, deliberately. It is a credential, and
+# everything under [vars] is overwritten on every deploy -- so it lives as a
+# Worker Secret in the Cloudflare dashboard. It is the SAME token the
+# calendar Worker already posts with: one Slack app, one credential to
+# rotate. Copy the value across rather than making a second app.
+#
+# Unset, posting a pick still works; the reply just says the channel was not
+# told rather than pretending it was.
+#
+# This replaces the "Music Monday Selection" Airtable automation, which
+# fired on a ticked checkbox and can never fire again once picks stop going
+# into Airtable.
+
+# The channel the pick is announced in.
+MUSIC_SLACK_CHANNEL = "CAVAJ82AH"
+
+# Who gets @mentioned, as Slack MEMBER IDS, comma separated.
+#
+# Ids rather than handles: a display name change must not quietly stop
+# notifying somebody, and <@jerm> renders as literal text that notifies
+# nobody while looking like it worked. Anything here that is not shaped like
+# a member id is dropped rather than printed.
+#
+# To find one: Slack -> click the person -> View full profile -> the three
+# dots -> Copy member ID.
+#
+# These three came across from the Airtable automation and are whoever it has
+# been pinging. Replace them with the people who actually need the warning.
+MUSIC_SLACK_TAGS = "U0BPU0W4BCK,U05R0TN7X8Q,UTX7Q0P7S"
 
 # Who may open the Campaign board. Its own list rather than the budget's:
 # what is on Marketing's plate is not next year's margin, and the people who
