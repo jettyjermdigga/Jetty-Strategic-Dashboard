@@ -88,6 +88,14 @@ DASH_ADMINS = "jeremy@jettylife.com"
 # so it can never be accidentally empty.
 BUDGET_USERS = "jeremy@jettylife.com"
 
+# Who may post the week's Music Monday pick.
+#
+# Reading the archive is for everybody behind Access; filing the week is not.
+# Its own list because picking the song has never been an admin job -- Joe,
+# Kevin and John have all had the honour -- so this is meant to be widened.
+# Left empty it falls back to DASH_ADMINS.
+MUSIC_PICKERS = "jeremy@jettylife.com"
+
 # Who may open the Campaign board. Its own list rather than the budget's:
 # what is on Marketing's plate is not next year's margin, and the people who
 # need it are a different set.

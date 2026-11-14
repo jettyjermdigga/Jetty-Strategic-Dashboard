@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { visibleTiles, dashCategories, linkCats, greeting, TILES, CATEGORIES } from '../worker/tiles.js';
 import { PEOPLE } from '../worker/people.js';
 import { PICKS } from '../worker/music-seed.js';
+import { missingMondays } from '../worker/music.js';
 import { shapeAll as cShapeAll, byPerson as cByPerson,
          timeline as cTimeline, totals as cTotals } from '../worker/campaign.js';
 import {
@@ -233,6 +234,11 @@ const CASES = [
     path: 'music.html', wait: '.mu-row' },
   { file: 'music-search', scheme: 'dark', who: full('jeremy@jettylife.com'),
     path: 'music.html', wait: '.mu-row', type: ['#q', 'bridges'], after: '.mu-row' },
+  // What whoever posts the week sees: the form, and the Mondays it is late on.
+  { file: 'music-post', scheme: 'light', who: full('jeremy@jettylife.com'),
+    canPick: true, path: 'music.html', wait: '.mu-post' },
+  { file: 'music-post-dark', scheme: 'dark', who: full('jeremy@jettylife.com'),
+    canPick: true, path: 'music.html', wait: '.mu-post' },
   { file: 'dash-director-dark', scheme: 'dark',  who: me('jeremy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-amy-dark', scheme: 'dark', who: me('amy@jettylife.com'), wait: '.catbar' },
   { file: 'dash-admin-dark', scheme: 'dark', who: me('jeremy@jettylife.com'),
@@ -344,6 +350,13 @@ const ADMIN = {
   admins: ['jeremy@jettylife.com'],
   you: 'jeremy@jettylife.com',
 };
+
+// The Mondays with nothing filed against them, as the Worker works them out.
+// The real clock, because the page works out its own "this week" from the
+// same one: a fixture date here would put the form and the hero in
+// different weeks and the shot would show a state nobody can ever see.
+const musicGaps = (picks) => missingMondays(
+  picks.map((p) => p.date), new Date().toISOString().slice(0, 10));
 
 // The real thirteen years, newest first, exactly as the Worker sends them.
 const MUSIC = [...PICKS].reverse().map((p) => ({
@@ -493,7 +506,14 @@ for (const c of CASES) {
     const p = new URL(route.request().url()).pathname;
     if (p === '/api/me') return route.fulfill({ json: c.who });
     if (p === '/api/admin/all') return route.fulfill({ json: ADMIN });
-    if (p === '/api/music') return route.fulfill({ json: { picks: MUSIC } });
+    if (p === '/api/music') {
+      return route.fulfill({ json: {
+        picks: MUSIC,
+        canPick: Boolean(c.canPick),
+        you: c.who.email || '',
+        missing: c.canPick ? musicGaps(MUSIC) : [],
+      } });
+    }
     if (p === '/api/campaign') {
       if (c.campaignShutOut) {
         return route.fulfill({ status: 404, json: { error: 'No such endpoint.' } });

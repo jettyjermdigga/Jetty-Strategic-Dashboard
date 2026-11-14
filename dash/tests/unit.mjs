@@ -9,6 +9,10 @@ import { groupsFor, roster, PEOPLE } from '../worker/people.js';
 import { cleanTile, cleanPerson, cleanLink, cleanKey, cleanUrl } from '../worker/clean.js';
 import { canonicalTarget } from '../worker/canon.js';
 import {
+  cleanPick, cleanDate as mDate, mondayOf, youtubeId, isYouTube,
+  weekLabel, missingMondays,
+} from '../worker/music.js';
+import {
   rows as budgetRows, value, spread, summary, csv, cleanLine, cleanYear,
   calendar, WEEK_CURVE, CURVE_IS_PLACEHOLDER, LINES as BUDGET_LINES, NEW_LINES,
   BASELINE_YEAR, FIRST_YEAR, LAST_YEAR, cleanLaborYear,
@@ -3188,6 +3192,151 @@ describe('campaign board', () => {
     const many = [];
     for (let i = 0; i < cMAX + 50; i++) many.push(rec({ id: 'r' + i }));
     eq(cShapeAll(many, CAMPS).length, cMAX);
+  });
+});
+
+
+describe('Music Monday: what a week has to look like', () => {
+  const good = { date: '2026-11-09', artist: 'Ratboys', song: 'Anywhere', by: 'Jerm' };
+
+  it('takes a plain week', () => {
+    const out = cleanPick(good);
+    eq(out.errors, undefined);
+    eq(out.row.date, '2026-11-09');
+    eq(out.row.artist, 'Ratboys');
+  });
+
+  it('will not file a week with no artist, which is what froze the archive', () => {
+    ok(cleanPick({ ...good, artist: '   ' }).errors.length > 0);
+  });
+
+  it('refuses a date that is not a date', () => {
+    eq(mDate('2026-02-31'), '');
+    eq(mDate('2026-13-01'), '');
+    eq(mDate('9 Nov 2026'), '');
+    eq(mDate('2026-11-09'), '2026-11-09');
+  });
+
+  it('refuses a year before Music Monday existed', () => {
+    eq(mDate('2012-12-31'), '');
+    eq(mDate('2013-02-01'), '2013-02-01');
+  });
+
+  it('files a pick under the Monday of its week, whatever day it was posted', () => {
+    eq(mondayOf('2026-11-09'), '2026-11-09');  // the Monday itself
+    eq(mondayOf('2026-11-14'), '2026-11-09');  // Saturday
+    eq(mondayOf('2026-11-15'), '2026-11-09');  // Sunday belongs to the Monday BEFORE
+    eq(mondayOf('2026-11-16'), '2026-11-16');  // next Monday
+  });
+
+  it('digs the video id out of whatever was copied', () => {
+    const id = 'KYUMoL9FrIA';
+    eq(youtubeId('https://www.youtube.com/watch?v=' + id), id);
+    eq(youtubeId('https://www.youtube.com/watch?v=' + id + '&t=42s'), id);
+    eq(youtubeId('https://youtu.be/' + id), id);
+    eq(youtubeId('https://www.youtube.com/embed/' + id), id);
+    eq(youtubeId('https://www.youtube.com/shorts/' + id), id);
+    eq(youtubeId(id), id);
+    eq(youtubeId(''), '');
+  });
+
+  it('leaves a SoundCloud link as a link rather than calling it a video id', () => {
+    const out = cleanPick({ ...good, watch: 'https://soundcloud.com/x/y' });
+    eq(out.row.youtube, '');
+    eq(out.row.video, 'https://soundcloud.com/x/y');
+  });
+
+  it('says so when a YouTube link has no id in it, rather than losing the player', () => {
+    const out = cleanPick({ ...good, watch: 'https://www.youtube.com/watch?v=short' });
+    ok(out.errors && out.errors.some((e) => /video id/.test(e)));
+    ok(isYouTube('https://youtu.be/abc'));
+    eq(isYouTube('https://soundcloud.com/x'), false);
+  });
+
+  it('refuses a link that is not a link', () => {
+    ok(cleanPick({ ...good, watch: 'just some words' }).errors.length > 0);
+  });
+
+  it('only says "this week" when it is this week', () => {
+    eq(weekLabel('2026-11-09', '2026-11-14'), 'This week');   // same Monday
+    eq(weekLabel('2026-11-02', '2026-11-14'), 'Latest pick'); // a fortnight back
+    eq(weekLabel('2026-11-09', '2026-11-15'), 'This week');   // Sunday, still that week
+    eq(weekLabel('2026-11-09', '2026-11-16'), 'Latest pick'); // next Monday: stale
+  });
+
+  it('names the Mondays with nothing filed against them', () => {
+    const have = ['2026-11-02', '2026-10-19', '2026-10-12'];
+    const gaps = missingMondays(have, '2026-11-14', 4);
+    // 9 Nov and 26 Oct are the holes; 2 Nov and 19 Oct are filled.
+    eq(gaps.join(','), '2026-11-09,2026-10-26');
+  });
+
+  it('names nothing when every recent Monday is filed', () => {
+    eq(missingMondays(['2026-11-09', '2026-11-02'], '2026-11-14', 2).length, 0);
+  });
+
+  it('counts a pick filed mid-week as filling that Monday', () => {
+    // Posted on the Wednesday, stored under its Monday: not a gap.
+    eq(missingMondays(['2026-11-11'], '2026-11-14', 1).length, 0);
+  });
+});
+
+describe('Music Monday: the page and the worker agree', () => {
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const page = fs.readFileSync(path.join(HERE, '..', 'public/assets/music.js'), 'utf8');
+
+  it('the page keeps a copy of weekLabel that answers the same', () => {
+    // The copy is duplicated on purpose, the same as the rest of the portal.
+    // Lifted out and run so the two cannot drift apart unnoticed.
+    const src = page.slice(page.indexOf('function mondayOf'), page.indexOf('function watchUrl'));
+    ok(src.includes('function weekLabel'), 'the page has no weekLabel to check');
+    // eslint-disable-next-line no-new-func
+    const copy = new Function(src + '; return { mondayOf: mondayOf, weekLabel: weekLabel };')();
+    for (const [d, t] of [
+      ['2026-11-09', '2026-11-14'], ['2026-11-02', '2026-11-14'],
+      ['2026-11-09', '2026-11-16'], ['2026-11-09', '2026-11-15'],
+      ['2013-02-01', '2026-11-14'],
+    ]) {
+      eq(copy.weekLabel(d, t), weekLabel(d, t));
+      eq(copy.mondayOf(d), mondayOf(d));
+    }
+  });
+
+  it('every element the page reads is in the markup', () => {
+    const html = fs.readFileSync(path.join(HERE, '..', 'public/music.html'), 'utf8');
+    // Ids the page itself draws before reading them again.
+    const drawn = new Set([...page.matchAll(/id="([A-Za-z0-9_-]+)"/g)].map((m) => m[1]));
+    const want = [...page.matchAll(/\$\('#([A-Za-z0-9_-]+)'\)/g)].map((m) => m[1]);
+    ok(want.length >= 5, 'no element lookups were found to check');
+    for (const id of [...new Set(want)]) {
+      ok(html.includes('id="' + id + '"') || drawn.has(id),
+        'the page reads #' + id + ', which is neither in the markup nor drawn by it');
+    }
+  });
+
+
+  it('reaches the artwork route before handing off to the files on disk', () => {
+    const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
+    const art = idx.indexOf("url.pathname.startsWith('/music/photo/')");
+    const assets = idx.indexOf("return env.ASSETS.fetch(request)");
+    ok(art > 0, 'the artwork route is gone');
+    ok(assets > 0, 'the asset hand-off is gone');
+    // Below the hand-off the route is unreachable and every cover 404s --
+    // which the page hides with an onerror, so it fails in total silence.
+    ok(art < assets,
+      'the artwork route sits below the asset hand-off, where it can never run');
+  });
+
+  it('the picture the page sends is one the photo route will serve back', () => {
+    const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
+    // The upload names the key <date>.<ext>; the serving route only answers
+    // for that shape. A change to either that forgets the other is silence.
+    const route = idx.match(/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\\\.\(([a-z|]+)\)/);
+    ok(route, 'the photo route no longer pins a key shape');
+    for (const ext of ['webp', 'jpg', 'png']) {
+      ok(route[1].split('|').includes(ext), ext + ' can be uploaded but not served back');
+    }
+    ok(page.includes("'image/webp'"), 'the page no longer shrinks to webp');
   });
 });
 

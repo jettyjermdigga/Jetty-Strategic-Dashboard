@@ -46,13 +46,17 @@ import {
 } from './cogs.js';
 import {
   ensureSchema, readCatalogue, readPeople, tilesFor,
-  readLinks, cleanLink, saveLink, deleteLink, readMusic,
+  readLinks, cleanLink, saveLink, deleteLink, readMusic, savePick, setPickPhoto,
   readCogs, saveCogsLine, removeCogsLine,
   readBudget, saveBudgetLine,
   readLabor, saveLaborPerson, removeLaborPerson, classifyPeople,
   cleanTile, cleanPerson, cleanKey, saveTile, deleteTile, savePerson, deletePerson,
   saveCategory, deleteCategory, saveGroup, deleteGroup,
 } from './store.js';
+import { cleanPick, cleanDate, missingMondays } from './music.js';
+
+// UTC, the same clock the stored dates are in.
+const today = () => new Date().toISOString().slice(0, 10);
 
 const json = (body, status) => new Response(JSON.stringify(body), {
   status: status || 200,
@@ -85,6 +89,22 @@ function budgetList(env) {
   const own = String(env.BUDGET_USERS || '')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
   return own.length ? own : adminList(env);
+}
+
+// Who may post a week's pick.
+//
+// Its own list, falling back to the admins, the same shape as the budget's.
+// Picking the song has never been an admin job -- Joe, Kevin and John have
+// all had the honour -- so the list exists to be widened without a deploy.
+function musicList(env) {
+  const own = String(env.MUSIC_PICKERS || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return own.length ? own : adminList(env);
+}
+
+function canPickMusic(env, who) {
+  return Boolean(who.email) && who.verified
+    && musicList(env).includes(who.email.toLowerCase());
 }
 
 const CAMPAIGN_KEY = 'campaign-board';
@@ -132,6 +152,16 @@ export default {
     );
     if (go) return Response.redirect(go, 302);
 
+    // The artwork is not under /api/ but is not a file on disk either: it
+    // comes out of R2, through the Worker, so the same Access that guards
+    // the portal guards the pictures. Checked BEFORE the asset hand-off --
+    // below it this route is unreachable and every cover silently 404s,
+    // which the archive page hides with an onerror and nobody ever sees.
+    // No database needed: the key is the week and the bytes are in R2.
+    if (url.pathname.startsWith('/music/photo/')) {
+      return await photo(request, env, await identify(request, env), url);
+    }
+
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 
     if (!env.DB) {
@@ -142,10 +172,7 @@ export default {
       await ensureSchema(env.DB);
       const who = await identify(request, env);
       if (url.pathname === '/api/me') return await me(request, env, who);
-      if (url.pathname === '/api/music') return await music(request, env, who);
-      if (url.pathname.startsWith('/music/photo/')) {
-        return await photo(request, env, who, url);
-      }
+      if (url.pathname.startsWith('/api/music')) return await music(request, env, url, who);
       if (url.pathname.startsWith('/api/budget')) return await budget(request, env, url, who);
       if (url.pathname.startsWith('/api/labor')) return await labor(request, env, url, who);
       if (url.pathname.startsWith('/api/cogs')) return await cogs(request, env, url, who);
@@ -220,12 +247,72 @@ async function me(request, env, who) {
 // The Music Monday archive. Behind the same Access as everything else, so
 // nothing here is sent to a request that did not come through it -- the
 // same rule /api/me follows.
-async function music(request, env, who) {
-  if (request.method !== 'GET') return json({ error: 'Read only.' }, 405);
+async function music(request, env, url, who) {
   if (who.accessConfigured && !who.verified) {
-    return json({ picks: [], reason: who.reason || '' });
+    return json({ picks: [], canPick: false, reason: who.reason || '' });
   }
-  return json({ picks: await readMusic(env.DB) });
+
+  const what = url.pathname.slice('/api/music'.length);
+  const mine = canPickMusic(env, who);
+
+  if (what === '' && request.method === 'GET') {
+    const picks = await readMusic(env.DB);
+    return json({
+      picks,
+      canPick: mine,
+      you: who.email || '',
+      // Only to whoever can act on it. A gap is a to-do for the person who
+      // posts, and noise for the two hundred who only ever read.
+      missing: mine ? missingMondays(picks.map((p) => p.date), today()) : [],
+    });
+  }
+
+  // Posting the week. The whole archive comes back rather than the one row,
+  // so the hero, the count and the gap list are all redrawn from the same
+  // answer instead of three guesses made in the page.
+  if (what === '' && request.method === 'POST') {
+    if (!mine) return json({ error: 'No such endpoint.' }, 404);
+    const body = await request.json().catch(() => null);
+    if (!body) return json({ error: 'That was not JSON.' }, 400);
+    const out = cleanPick(body);
+    if (out.errors) return json(out, 400);
+    await savePick(env.DB, out.row, who.email);
+    const picks = await readMusic(env.DB);
+    return json({
+      ok: true, picks, canPick: true, you: who.email || '',
+      missing: missingMondays(picks.map((p) => p.date), today()),
+    });
+  }
+
+  // The week's picture. Sent as bytes rather than a form: the page has
+  // already shrunk it on a canvas, so what arrives is a webp of a few tens
+  // of kilobytes and there is nothing else in the envelope to parse.
+  if (what === '/photo' && request.method === 'POST') {
+    if (!mine) return json({ error: 'No such endpoint.' }, 404);
+    if (!env.MUSIC) return json({ error: 'There is no picture store bound.' }, 503);
+
+    const date = cleanDate(url.searchParams.get('date'));
+    if (!date) return json({ error: 'Which week is this a picture of?' }, 400);
+
+    const type = (request.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const ext = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png' }[type];
+    if (!ext) return json({ error: 'Pictures have to be webp, jpeg or png.' }, 415);
+
+    const body = await request.arrayBuffer();
+    // The page sends a shrunk webp, so anything near this is a page that
+    // failed to shrink it -- refused rather than quietly filling the bucket.
+    if (body.byteLength > 2 * 1024 * 1024) {
+      return json({ error: 'That picture is over 2MB even after shrinking.' }, 413);
+    }
+    if (!body.byteLength) return json({ error: 'That picture was empty.' }, 400);
+
+    const key = date + '.' + ext;
+    await env.MUSIC.put(key, body, { httpMetadata: { contentType: type } });
+    await setPickPhoto(env.DB, date, key);
+    return json({ ok: true, photo: key, picks: await readMusic(env.DB) });
+  }
+
+  return json({ error: 'Read only.' }, 405);
 }
 
 // Music Monday artwork out of R2.

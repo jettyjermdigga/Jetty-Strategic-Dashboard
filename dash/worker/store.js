@@ -720,6 +720,32 @@ export async function readMusic(db) {
   }));
 }
 
+/** File one week's pick, or correct one already filed.
+ *
+ *  Upsert on the date, which is the primary key: posting the same Monday
+ *  twice is a correction, never a duplicate. photo_key is deliberately not
+ *  touched -- the picture is uploaded separately and a text correction must
+ *  not wipe it.
+ */
+export async function savePick(db, row, who) {
+  const now = new Date().toISOString();
+  await db.prepare(
+    'INSERT INTO music (pick_date, artist, song, chosen_by, youtube, video_url, '
+    + "photo_key, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?) "
+    + 'ON CONFLICT(pick_date) DO UPDATE SET artist = excluded.artist, '
+    + 'song = excluded.song, chosen_by = excluded.chosen_by, '
+    + 'youtube = excluded.youtube, video_url = excluded.video_url, '
+    + 'updated_at = excluded.updated_at, updated_by = excluded.updated_by')
+    .bind(row.date, row.artist, row.song, row.by, row.youtube, row.video, now, who || '')
+    .run();
+  return { ok: true };
+}
+
+/** Remember that a week has artwork, once R2 has the file. */
+export async function setPickPhoto(db, date, key) {
+  await db.prepare('UPDATE music SET photo_key = ? WHERE pick_date = ?').bind(key, date).run();
+}
+
 // ── the budget ──────────────────────────────────────────────────────────
 
 /** Every decision made for a year, keyed by line. */
