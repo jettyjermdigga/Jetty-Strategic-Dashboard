@@ -3327,6 +3327,22 @@ describe('Music Monday: the page and the worker agree', () => {
       'the artwork route sits below the asset hand-off, where it can never run');
   });
 
+
+  it('the rebuild script reads a YouTube link exactly as the dash does', () => {
+    // rebuild_music.py writes the archive and worker/music.js reads it. If
+    // they disagree about what an id is, a rebuilt row loses its player --
+    // silently, because a pick with no id is a perfectly normal pick.
+    const py = fs.readFileSync(path.join(HERE, '..', 'rebuild_music.py'), 'utf8');
+    const js = fs.readFileSync(path.join(HERE, '..', 'worker', 'music.js'), 'utf8');
+    const bodies = (src, re) => [...src.matchAll(re)]
+      .map((m) => m[1].replace(/\\\//g, '/'));   // JS escapes the slash; Python does not
+    const inPy = bodies(py, /re\.compile\(r"([^"]+)"\)/g);
+    const inJs = bodies(js, /^\s*\/(.+?)\/,\s*\/\//gm);
+    ok(inPy.length >= 5, 'the rebuild script has no link patterns to compare');
+    eq(inJs.length, inPy.length);
+    eq(inJs.join('\n'), inPy.join('\n'));
+  });
+
   it('the picture the page sends is one the photo route will serve back', () => {
     const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
     // The upload names the key <date>.<ext>; the serving route only answers

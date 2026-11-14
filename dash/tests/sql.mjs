@@ -21,6 +21,18 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const schema = fs.readFileSync(path.join(HERE, '..', 'worker', 'schema.sql'), 'utf8');
 const store = fs.readFileSync(path.join(HERE, '..', 'worker', 'store.js'), 'utf8');
 
+// rebuild_music.py builds SQL by hand and runs it straight at the remote
+// database from a workflow. Nothing else ever looks at it: a mistyped column
+// there fails in production after 243 pictures have already been downloaded
+// and uploaded, which is the most expensive possible moment to find out.
+const rebuild = fs.readFileSync(path.join(HERE, '..', 'rebuild_music.py'), 'utf8')
+  // Python builds that statement out of adjacent string literals. Left as
+  // they are, a column lands glued to a quote, fails the \\w+ test below and
+  // is skipped -- so the check passes while never looking at it. Joining the
+  // literals first is what makes this test able to fail at all.
+  .replace(/"\s*\n\s*"/g, '');
+const sources = store + '\n' + rebuild;
+
 let ran = 0;
 let failed = 0;
 const fail = (msg) => { failed++; console.log('  FAIL ' + msg); };
@@ -48,7 +60,7 @@ for (const m of store.matchAll(/\[\s*'(\w+)'\s*,\s*'(\w+)[^']*'\s*\]/g)) {
 console.log('schema: ' + [...tables.keys()].join(', '));
 
 // INSERT INTO <table> (a, b, c)
-for (const m of store.matchAll(/INTO\s+(\w+)\s*\(([^)]*)\)/gi)) {
+for (const m of sources.matchAll(/INTO\s+(\w+)\s*\(([^)]*)\)/gi)) {
   const [, table, cols] = m;
   ran++;
   if (!tables.has(table)) { fail('no such table: ' + table); continue; }
@@ -63,7 +75,7 @@ for (const m of store.matchAll(/INTO\s+(\w+)\s*\(([^)]*)\)/gi)) {
 }
 
 // UPDATE <table> SET a = ?, b = ?
-for (const m of store.matchAll(/UPDATE\s+(\w+)\s+SET\s+([\s\S]*?)(?:\s+WHERE\b|')/gi)) {
+for (const m of sources.matchAll(/UPDATE\s+(\w+)\s+SET\s+([\s\S]*?)(?:\s+WHERE\b|')/gi)) {
   const [, table, sets] = m;
   ran++;
   if (!tables.has(table)) { fail('no such table: ' + table); continue; }
@@ -72,6 +84,32 @@ for (const m of store.matchAll(/UPDATE\s+(\w+)\s+SET\s+([\s\S]*?)(?:\s+WHERE\b|'
     if (!col) continue;
     if (!tables.get(table).has(col)) {
       fail(table + ' has no column ' + col + '  (it has: '
+        + [...tables.get(table)].join(', ') + ')');
+    }
+  }
+}
+
+
+// INSERT ... ON CONFLICT(...) DO UPDATE SET a = excluded.a, b = excluded.b
+//
+// The upsert's SET half was checked by nothing: the UPDATE scan above wants
+// "UPDATE <table> SET" and this reads "DO UPDATE SET", with the table named
+// back at the INSERT. Every upsert in the portal went unexamined, and the
+// rebuild leans on one to correct the rows the first import got wrong.
+// Tempered against INTO and ';' so the window cannot run past the end of
+// its own statement: an INSERT with no upsert clause otherwise reaches
+// forward and is blamed for the NEXT statement's SET list, which is how
+// this first reported `meta has no column label`.
+const UPSERT = /INTO\s+(\w+)\s*\([^)]*\)(?:(?!INTO\s|;)[\s\S]){0,2000}?DO UPDATE SET\s+((?:(?!INTO\s|;)[\s\S]){0,800})/gi;
+for (const m of sources.matchAll(UPSERT)) {
+  const [, table, sets] = m;
+  ran++;
+  if (!tables.has(table)) { fail('no such table: ' + table); continue; }
+  for (const part of sets.split(',')) {
+    const col = (part.trim().match(/^(\w+)\s*=/) || [])[1];
+    if (!col) continue;
+    if (!tables.get(table).has(col)) {
+      fail(table + ' has no column ' + col + ' in its upsert  (it has: '
         + [...tables.get(table)].join(', ') + ')');
     }
   }
