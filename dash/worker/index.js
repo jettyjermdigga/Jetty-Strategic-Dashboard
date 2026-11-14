@@ -263,7 +263,12 @@ async function music(request, env, url, who) {
       you: who.email || '',
       // Only to whoever can act on it. A gap is a to-do for the person who
       // posts, and noise for the two hundred who only ever read.
-      missing: mine ? missingMondays(picks.map((p) => p.date), today()) : [],
+      // Only weeks with an artist count as filed. A date with an empty row
+      // behind it is exactly the week that still needs chasing, and counting
+      // it would silence the reminder meant to chase it.
+      missing: mine
+        ? missingMondays(picks.filter((p) => p.artist).map((p) => p.date), today())
+        : [],
     });
   }
 

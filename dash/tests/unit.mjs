@@ -3328,6 +3328,40 @@ describe('Music Monday: the page and the worker agree', () => {
   });
 
 
+
+  it('an empty week is still a gap, not a week already filed', () => {
+    // Mondays exist in Airtable weeks before anybody picks anything, and
+    // the dash hides a row with no artist. If such a row counted as filed,
+    // the reminder would go quiet on exactly the week that needs chasing.
+    const picks = [
+      { date: '2026-11-09', artist: 'Clap Your Hands Say Yeah' },
+      { date: '2026-11-02', artist: '' },
+    ];
+    const filed = picks.filter((p) => p.artist).map((p) => p.date);
+    eq(missingMondays(filed, '2026-11-14', 2).join(','), '2026-11-02');
+    // Counting the blank one instead hides it, which is the bug.
+    eq(missingMondays(picks.map((p) => p.date), '2026-11-14', 2).length, 0);
+  });
+
+  it('the endpoint is the thing that filters them out', () => {
+    const idx = fs.readFileSync(path.join(HERE, '..', 'worker', 'index.js'), 'utf8');
+    const at = idx.indexOf('missing:');
+    ok(at > 0, 'the endpoint no longer works out the missing weeks');
+    // A window, not a capture: the argument contains arrow functions, so
+    // anything trying to match to a closing paren stops at the first `(p)`
+    // and reads `picks.filter((p` -- which passes nothing and proves less.
+    const win = idx.slice(at, at + 320);
+    ok(win.includes('missingMondays('), 'missing is no longer worked out here');
+    ok(win.includes('filter((p) => p.artist)'),
+      'the endpoint counts every row as filed, blank weeks included');
+  });
+
+  it('the rebuild leaves an unfilled Monday out of the archive', () => {
+    const py = fs.readFileSync(path.join(HERE, '..', 'rebuild_music.py'), 'utf8');
+    ok(/if not text\(f\.get\(F_ARTIST\)\):/.test(py),
+      'the rebuild would write Airtable\'s empty placeholder weeks as picks');
+  });
+
   it('the rebuild script reads a YouTube link exactly as the dash does', () => {
     // rebuild_music.py writes the archive and worker/music.js reads it. If
     // they disagree about what an id is, a rebuilt row loses its player --

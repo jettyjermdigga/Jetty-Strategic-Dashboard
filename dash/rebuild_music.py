@@ -180,11 +180,18 @@ def main():
     # artist wins; a tie goes to whichever was created last, on the grounds
     # that it is the correction.
     picks = {}
-    dupes = 0
+    dupes = blank = 0
     for rec in music:
         f = rec.get("fields", {})
         date = text(f.get(F_DATE))
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            continue
+        # Mondays are created in Airtable weeks ahead and filled in later.
+        # An empty one is not a pick: the page hides it anyway, and filing it
+        # would tell the dash that week is done, silencing the very reminder
+        # that is supposed to chase it.
+        if not text(f.get(F_ARTIST)):
+            blank += 1
             continue
         cur = picks.get(date)
         if cur:
@@ -195,7 +202,8 @@ def main():
                 continue
         picks[date] = {"f": f, "rec": rec}
 
-    print("%d distinct Mondays (%d duplicate rows resolved)." % (len(picks), dupes))
+    print("%d distinct Mondays (%d duplicates resolved, %d empty weeks left alone)."
+          % (len(picks), dupes, blank))
 
     # ── the artwork ────────────────────────────────────────────────────
     os.makedirs(OUT, exist_ok=True)
